@@ -4,7 +4,7 @@ An audio-first personal context hub: a continuous speech-to-speech loop that
 mediates between you and the streams of information, attention demands, and
 capture surfaces in your life — hands-free and eyes-free.
 
-Nothing is built yet. These are the design documents.
+Nothing is built yet. These are the design documents; see [Development setup](#development-setup) for the toolchain.
 
 | Document | What it is |
 | --- | --- |
@@ -36,3 +36,24 @@ echoes and stores everything you say, assigning a Bucket when you name one
 aloud. Because a named Bucket is known with certainty, every declaration is a
 free labelled training example — the system bootstraps the classifier that
 eventually makes declaring optional.
+
+## Development setup
+
+The Android toolchain is installed per user, with no sudo, and pinned in the
+repo:
+
+1. Install [mise](https://mise.jdx.dev), then in the repo run `mise install`.
+   This installs the JDK pinned in [`mise.toml`](./mise.toml), and sets
+   `ANDROID_HOME` (`~/Android/Sdk`) and the SDK tool paths while you are in the
+   repo.
+2. Run `scripts/setup-android.sh`. It installs the Android command-line tools,
+   then uses the Android CLI (`android sdk`) to install platform-tools (adb),
+   the Android platform, build-tools, the NDK and CMake at the versions pinned
+   in the script. Re-running it once everything is installed changes nothing.
+
+Using the Android CLI is subject to the
+[Android SDK terms](https://developer.android.com/studio/terms); there is no
+separate license-acceptance step any more. The script passes `--no-metrics`.
+
+The NDK and CMake are needed because sherpa-onnx ships no prebuilt AAR; its
+native libraries are built locally.
