@@ -56,7 +56,25 @@ Using the Android CLI is subject to the
 separate license-acceptance step any more. The script passes `--no-metrics`.
 
 The NDK and CMake are needed because sherpa-onnx ships no prebuilt AAR; its
-native libraries are built locally.
+native libraries are built locally:
+
+3. Run `scripts/build-sherpa-onnx.sh`. It clones sherpa-onnx at the pinned
+   tag and commit (`v1.13.8`, `11afbd0`) into `~/.cache/stsloop`, builds it
+   for `arm64-v8a` with the pinned NDK (about 2 minutes), and copies
+   `libsherpa-onnx-jni.so` and `libonnxruntime.so` into
+   `audio/src/main/jniLibs/`. It also refreshes the vendored Kotlin API in
+   `audio/src/main/kotlin/com/k2fsa/sherpa/onnx/`, copied from upstream's
+   `sherpa-onnx/kotlin-api/` (the example apps symlink to it).
+4. Run `scripts/fetch-models.sh`. It downloads the int8 `chunk-16-left-128`
+   files of `sherpa-onnx-streaming-zipformer-en-2023-06-26` and Silero VAD
+   (about 70 MB) into `audio/src/main/assets/`, checks each against a pinned
+   SHA-256, and generates `bpe.vocab` from `bpe.model` with
+   `scripts/export_bpe_vocab.py` (run through `uv`).
+
+The `.so` files and models are git-ignored, so the repo stays small. CI builds
+without them: it checks that everything compiles and the JVM tests pass, and
+its APK has no speech. The on-device test needs both scripts run first:
+`mise exec -- ./gradlew :audio:connectedDebugAndroidTest`.
 
 `mise.toml` puts `adb` on the PATH only in shells where mise is activated; in
 any other shell use `mise exec -- adb …`.

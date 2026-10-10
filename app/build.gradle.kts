@@ -16,6 +16,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    androidResources { noCompress += "onnx" } // sherpa-onnx models: ~0.3 s faster load
 }
 
 dependencies {

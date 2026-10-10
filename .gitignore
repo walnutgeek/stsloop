@@ -4,3 +4,8 @@
 build/
 local.properties
 *.apk
+
+# Produced by scripts/build-sherpa-onnx.sh and scripts/fetch-models.sh
+audio/src/main/jniLibs/
+audio/src/main/assets/
+audio/src/androidTest/assets/
