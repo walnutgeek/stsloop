@@ -14,13 +14,49 @@ import kotlin.random.Random
  */
 class SegmenterTest {
     private val timings = Timings(trailingSilenceMs = 100, maxUtteranceMs = 1000, minUtteranceMs = 30, preRollMs = 20)
+    private companion object {
+        /** At 1000 Hz a sample is a millisecond. */
+        const val MS = 1_000_000L
+    }
+
     private val loudVad = SpeechProbability { w -> if (w.any { abs(it) >= 0.25f }) 1f else 0f }
 
     private class Sink : UtteranceSink {
         val closed = mutableListOf<Pair<Utterance, ShortArray>>()
+        val endedAtNs = mutableListOf<Long>()
         val discarded = mutableListOf<TurnEvent.Discarded>()
-        override fun closed(utterance: Utterance, pcm: ShortArray) { closed += utterance to pcm }
-        override fun discarded(event: TurnEvent.Discarded) { discarded += event }
+
+        /** Where each utterance was opened, in order. */
+        val opened = mutableListOf<Long>()
+
+        /** Everything streamed into each closed utterance, in order. */
+        val streamed = mutableListOf<FloatArray>()
+
+        /** Samples streamed into the utterance still open; null while listening. */
+        var live: MutableList<Float>? = null
+
+        override fun opened(startSample: Long) {
+            check(live == null) { "opened twice" }
+            opened += startSample
+            live = mutableListOf()
+        }
+
+        override fun captured(samples: FloatArray) {
+            checkNotNull(live) { "captured while no utterance is open" }.addAll(samples.toList())
+        }
+
+        override fun closed(utterance: Utterance, pcm: ShortArray, endedAtNs: Long) {
+            this.endedAtNs += endedAtNs
+            streamed += checkNotNull(live) { "closed without opening" }.toFloatArray()
+            live = null
+            closed += utterance to pcm
+        }
+
+        override fun discarded(event: TurnEvent.Discarded) {
+            checkNotNull(live) { "discarded without opening" }
+            live = null
+            discarded += event
+        }
     }
 
     /** A stream of quiet (|x| < 1000, nonzero) and loud (|x| >= 9000) stretches, in ms. */
@@ -45,7 +81,7 @@ class SegmenterTest {
         while (i < pcm.size) {
             val n = minOf(chunk, pcm.size - i)
             pcm.copyInto(buf, 0, i, i + n)
-            seg.accept(buf, n)
+            seg.accept(buf, n, capturedAtNs = (i + n) * MS)
             i += n
         }
         if (finish) seg.finish()
@@ -102,7 +138,7 @@ class SegmenterTest {
     fun `the caller's buffer is not mutated`() {
         val pcm = threeUtterances.copyOf()
         val seg = Segmenter(timings, 1000, 10, loudVad, Sink())
-        seg.accept(pcm, pcm.size)
+        seg.accept(pcm, pcm.size, 0)
         assertArrayEquals(threeUtterances, pcm)
     }
 
@@ -111,10 +147,10 @@ class SegmenterTest {
         val sink = Sink()
         val seg = Segmenter(timings, 1000, 10, loudVad, sink)
         val chunk = ShortArray(100) { 20000 }
-        seg.accept(chunk, 0) // nothing
-        seg.accept(ShortArray(100), 50)
-        seg.accept(chunk, 60)
-        seg.accept(ShortArray(200), 200)
+        seg.accept(chunk, 0, 0) // nothing
+        seg.accept(ShortArray(100), 50, 0)
+        seg.accept(chunk, 60, 0)
+        seg.accept(ShortArray(200), 200, 0)
         val (u, pcm) = sink.closed.single()
         assertEquals(30L, u.startSample)
         assertEquals(60L, u.speechSamples)
@@ -146,7 +182,7 @@ class SegmenterTest {
         val sink = Sink()
         val seg = Segmenter(timings, 1000, 10, loudVad, sink)
         val pcm = stream(speech(300))
-        seg.accept(pcm, pcm.size)
+        seg.accept(pcm, pcm.size, 0)
         seg.finish()
         seg.finish()
         assertEquals(1, sink.closed.size)
@@ -190,7 +226,7 @@ class SegmenterTest {
     fun `a long listening stretch keeps only pre-roll plus a partial window in memory`() {
         val seg = Segmenter(timings, 1000, 10, loudVad, Sink())
         val chunk = stream(quiet(1600))
-        repeat(1000) { seg.accept(chunk, chunk.size) }
+        repeat(1000) { seg.accept(chunk, chunk.size, 0) }
         assertTrue(seg.retainedSamples <= 20 + 10, "retained ${seg.retainedSamples}")
     }
 
@@ -198,11 +234,109 @@ class SegmenterTest {
     fun `capturing retains the whole utterance, and closing releases it`() {
         val seg = Segmenter(timings, 1000, 10, loudVad, Sink())
         val talk = stream(quiet(100), speech(800))
-        seg.accept(talk, talk.size)
+        seg.accept(talk, talk.size, 0)
         assertEquals(820, seg.retainedSamples)
         val q = stream(quiet(300))
-        seg.accept(q, q.size)
+        seg.accept(q, q.size, 0)
         assertTrue(seg.retainedSamples <= 30, "retained ${seg.retainedSamples}")
+    }
+
+    private fun assertStreamedExactly(pcm: ShortArray, sink: Sink, label: String) {
+        assertEquals(sink.closed.size + sink.discarded.size, sink.opened.size, label)
+        sink.closed.forEachIndexed { k, (u, audio) ->
+            assertTrue(u.startSample in sink.opened, "$label: utterance $k opened at ${u.startSample}")
+            val expected = FloatArray(audio.size) { audio[it] / 32768f }
+            assertArrayEquals(expected, sink.streamed[k], "$label: utterance $k streams exactly its Recording")
+            assertArrayEquals(pcm.copyOfRange(u.startSample.toInt(), u.endSample.toInt()), audio, label)
+        }
+    }
+
+    @Test
+    fun `each utterance streams exactly its Recording as floats, whatever the chunk size`() {
+        for (chunk in listOf(1, 7, 10, 160, 333, threeUtterances.size)) {
+            val sink = run(threeUtterances, chunk)
+            assertEquals(3, sink.closed.size)
+            assertStreamedExactly(threeUtterances, sink, "chunk $chunk")
+        }
+    }
+
+    @Test
+    fun `cuts inside a window never stream samples past the utterance's end`() {
+        // 105 ms trailing silence and 1003 ms max: both cuts fall mid-window, where
+        // a chunk's unjudged tail lies beyond the end.
+        val odd = Timings(trailingSilenceMs = 105, maxUtteranceMs = 1003, minUtteranceMs = 30, preRollMs = 20)
+        val pcm = stream(quiet(300), speech(400), quiet(500), speech(1500), quiet(300))
+        for (chunk in listOf(7, 13, 160, 333)) {
+            val sink = Sink()
+            val seg = Segmenter(odd, 1000, 10, loudVad, sink)
+            var i = 0
+            while (i < pcm.size) {
+                val n = minOf(chunk, pcm.size - i)
+                seg.accept(pcm.copyOfRange(i, i + n), n, 0)
+                i += n
+            }
+            seg.finish()
+            assertTrue(sink.closed.any { it.first.closedBy == CloseReason.MAX_DURATION }, "chunk $chunk")
+            assertTrue(sink.closed.any { it.first.endSample % 10 != 0L }, "chunk $chunk")
+            assertStreamedExactly(pcm, sink, "chunk $chunk")
+        }
+    }
+
+    @Test
+    fun `runaway speech streams each max-length utterance separately and contiguously`() {
+        val pcm = stream(quiet(100), speech(2500), quiet(200))
+        val sink = run(pcm, 1600)
+        assertEquals(listOf(80L, 1080L, 2080L), sink.opened)
+        assertStreamedExactly(pcm, sink, "runaway")
+    }
+
+    @Test
+    fun `an utterance closed by finish streams up to the last captured sample`() {
+        val pcm = stream(quiet(100), speech(300), quiet(47))
+        val sink = run(pcm, 160)
+        assertEquals(447L, sink.closed.single().first.endSample)
+        assertStreamedExactly(pcm, sink, "finish")
+    }
+
+    @Test
+    fun `a discarded blip is opened, then dropped, and streams into nothing else`() {
+        val sink = run(threeUtterances, 160)
+        assertEquals(4, sink.opened.size)
+        assertEquals(1, sink.discarded.size)
+        assertTrue(sink.discarded.single().startSample in sink.opened)
+    }
+
+    @Test
+    fun `while capturing, samples are streamed as soon as the vad has judged them`() {
+        val sink = Sink()
+        val seg = Segmenter(timings, 1000, 10, loudVad, sink)
+        val talk = stream(quiet(100), speech(305))
+        seg.accept(talk, talk.size, 0)
+        // Opened at 80 (20 ms pre-roll); windows judged up to 400, the last 5 samples are not.
+        assertEquals(listOf(80L), sink.opened)
+        assertEquals(320, sink.live!!.size)
+        val q = stream(quiet(5))
+        seg.accept(q, q.size, 0)
+        assertEquals(330, sink.live!!.size)
+    }
+
+    @Test
+    fun `each utterance's end is placed on the capture clock of the chunk that held it`() {
+        // run() stamps each chunk with its last sample's time on a 1 ms-per-sample clock.
+        for (chunk in listOf(1, 7, 160, 333)) {
+            val sink = run(threeUtterances, chunk)
+            assertEquals(sink.closed.map { it.first.endSample * MS }, sink.endedAtNs, "chunk $chunk")
+        }
+    }
+
+    @Test
+    fun `an utterance closed by finish ends at the last chunk's capture time`() {
+        val sink = Sink()
+        val seg = Segmenter(timings, 1000, 10, loudVad, sink)
+        val pcm = stream(quiet(100), speech(300), quiet(47))
+        seg.accept(pcm, pcm.size, capturedAtNs = 9_000 * MS)
+        seg.finish()
+        assertEquals(listOf(9_000 * MS), sink.endedAtNs)
     }
 
     @Test

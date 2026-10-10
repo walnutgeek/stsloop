@@ -3,10 +3,12 @@ package com.walnutgeek.stsloop.audio
 import com.walnutgeek.stsloop.core.AUDIO_FILE
 import com.walnutgeek.stsloop.core.CorpusWriter
 import com.walnutgeek.stsloop.core.TURN_FILE
+import com.walnutgeek.stsloop.core.Transcript
 import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.TurnAudio
 import com.walnutgeek.stsloop.core.TurnInProgress
 import com.walnutgeek.stsloop.core.TurnJson
+import com.walnutgeek.stsloop.core.TurnKind
 import com.walnutgeek.stsloop.core.TurnVad
 import com.walnutgeek.stsloop.core.Wav
 import com.walnutgeek.stsloop.core.turnDirectoryName
@@ -21,7 +23,7 @@ import java.security.MessageDigest
  *
  * A Turn is assembled in [stagingDir] (outside the Corpus, so a folder sync
  * never sees a half-written Turn) and published with one atomic rename once
- * `audio.wav` and `turn.json` are complete and synced. Both directories must be
+ * `audio.wav` and `turn.json` (transcript included) are complete and synced. Both directories must be
  * on the same filesystem.
  */
 class FileCorpusWriter(
@@ -57,7 +59,7 @@ class FileCorpusWriter(
             this.samples += count
         }
 
-        override fun finish(appVersion: String, vad: TurnVad?): Turn {
+        override fun finish(appVersion: String, vad: TurnVad?, transcript: Transcript?, kind: TurnKind?): Turn {
             val dataBytes = samples * Wav.BYTES_PER_SAMPLE
             require(dataBytes <= Int.MAX_VALUE - Wav.HEADER_BYTES) { "Recording too long for a WAV file" }
             wav.seek(0)
@@ -77,6 +79,8 @@ class FileCorpusWriter(
                 ),
                 appVersion = appVersion,
                 vad = vad,
+                transcript = transcript,
+                kind = kind,
             )
             FileOutputStream(File(staged, TURN_FILE)).use {
                 it.write(TurnJson.encode(turn).toByteArray(Charsets.UTF_8))

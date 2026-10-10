@@ -17,9 +17,11 @@ import android.media.MediaRecorder
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import com.k2fsa.sherpa.onnx.Vad
 import com.walnutgeek.stsloop.audio.speech.SpeechModels
+import com.walnutgeek.stsloop.audio.speech.SttRecognizer
 import com.walnutgeek.stsloop.core.Ids
 import com.walnutgeek.stsloop.core.SessionAction
 import com.walnutgeek.stsloop.core.SessionControls
@@ -30,13 +32,16 @@ import com.walnutgeek.stsloop.core.SessionState
 import com.walnutgeek.stsloop.core.StartGate
 import com.walnutgeek.stsloop.core.StartRefusal
 import com.walnutgeek.stsloop.core.Transition
+import com.walnutgeek.stsloop.core.turn.SttTiming
 import com.walnutgeek.stsloop.core.Wav
 import java.io.File
 
 /**
  * A Session: a `microphone`-typed foreground service that owns the mic from
- * Start until Stop. Each utterance the VAD finds becomes its own Turn in the
- * Corpus ([TurnCapture]).
+ * Start until Stop. Each utterance the VAD finds becomes its own transcribed
+ * Turn in the Corpus ([TurnCapture]). Speech recognition is sherpa-onnx only:
+ * the system SpeechRecognizer is never started, because it would capture
+ * the same mic and one of the two would silently get silence.
  *
  * Its notification is the Session's eyes-free control surface: Stop while a
  * Session runs and, once it ends, a detached plain notification that keeps
@@ -57,6 +62,8 @@ class SessionService : Service() {
         private const val CHANNEL_ID = "session-controls"
         private const val NOTIFICATION_ID = 1
         private const val CHUNK_SAMPLES = SAMPLE_RATE_HZ / 10 // 100 ms
+        // A teardown hurries the capture first (no more decoding), so all that is
+        // left is at most one in-flight native call (~0.2 s) and the Turn writes.
         private const val DESTROY_JOIN_MS = 5_000L
 
         /** Owned by the main thread; readable anywhere for display. */
@@ -94,6 +101,10 @@ class SessionService : Service() {
     @Volatile
     private var capturing = false
     private var captureThread: Thread? = null
+
+    /** The running Session's capture, so a teardown can [TurnCapture.hurry] it. */
+    @Volatile
+    private var turnCapture: TurnCapture? = null
     private var lastStartId = 0
     private var destroyed = false
     private var posted: SessionControls? = null // what the notification currently shows
@@ -208,7 +219,10 @@ class SessionService : Service() {
         commit(SessionMachine.on(state, SessionEvent.CaptureEnded))
     }
 
-    /** Capture thread: mic → [TurnCapture] until [capturing] goes false, then publish any open Turn. */
+    /**
+     * Capture thread: mic → [TurnCapture] until [capturing] goes false, then
+     * publish any open Turn and wait for every transcript to be written.
+     */
     @SuppressLint("MissingPermission") // the activity holds RECORD_AUDIO before starting a Session
     private fun capture(sessionId: String) {
         val writer = FileCorpusWriter(corpusDir(this), File(filesDir, "corpus-staging"))
@@ -233,20 +247,27 @@ class SessionService : Service() {
             val turns = TurnCapture(
                 writer, sessionId, startedAt, appVersion(), timings,
                 TurnCapture.silero(vad), SpeechModels.vadConfig().sileroVadModelConfig.windowSize,
-            ) { turn, u ->
-                Log.i(TAG, "Session $sessionId wrote Turn ${turn.directoryName} (${turn.audio.durationMs} ms, ${u.closedBy}, samples ${u.startSample}..${u.endSample})")
+                recognizer = { SttRecognizer.load(assets) },
+            ) { turn, u, timing ->
+                Log.i(
+                    TAG,
+                    "Session $sessionId wrote Turn ${turn.directoryName} (${turn.audio.durationMs} ms, ${u.closedBy}, " +
+                        "samples ${u.startSample}..${u.endSample}): ${SttTiming.summary(turn, timing)}",
+                )
             }
             capture = turns
+            turnCapture = turns
 
             val buf = ShortArray(CHUNK_SAMPLES)
             var peak = 0
             var samples = 0L
             while (capturing) {
                 val n = record.read(buf, 0, buf.size)
+                val readAtNs = SystemClock.elapsedRealtimeNanos() // ~when the chunk's last sample was captured
                 if (n < 0) error("AudioRecord.read returned $n")
                 for (i in 0 until n) peak = maxOf(peak, kotlin.math.abs(buf[i].toInt()))
                 samples += n
-                turns.accept(buf, n)
+                turns.accept(buf, n, readAtNs)
             }
             record.stop()
             turns.finish()
@@ -254,15 +275,20 @@ class SessionService : Service() {
             Log.i(
                 TAG,
                 "Session $sessionId ended: ${Wav.durationMs(samples, SAMPLE_RATE_HZ)} ms captured, " +
-                    "${turns.publishedTurns} Turns, ${turns.failedTurns} failed to write, peak $peak",
+                    "${turns.publishedTurns} Turns (${turns.untranscribedTurns} without a transcript), " +
+                    "${turns.failedTurns} failed to write, peak $peak",
             )
-        } catch (e: Exception) {
-            Log.e(TAG, "Session $sessionId failed", e)
-            // Best effort: publish the utterance that was open when capture broke.
+        } catch (e: Throwable) {
+            // Errors too: a native library missing or broken mid-Session must not lose the open Turn.
+            if (e is LinkageError) {
+                Log.e(TAG, "Session $sessionId has no speech natives; run scripts/build-sherpa-onnx.sh", e)
+            } else {
+                Log.e(TAG, "Session $sessionId failed", e)
+            }
+            // Best effort: publish the utterance that was open when capture broke, and drain the queue.
             capture?.let { c -> runCatching { c.finish() }.onFailure { Log.e(TAG, "Session $sessionId lost its open Turn", it) } }
-        } catch (e: LinkageError) {
-            Log.e(TAG, "Session $sessionId has no speech natives; run scripts/build-sherpa-onnx.sh", e)
         } finally {
+            turnCapture = null
             record?.release()
             vad?.release()
             main.post(::onCaptureEnded)
@@ -274,6 +300,7 @@ class SessionService : Service() {
         // mid-Session, give the capture thread a bounded chance to publish the Turn.
         destroyed = true
         capturing = false
+        turnCapture?.hurry() // write queued Turns now, without waiting for their transcripts
         captureThread?.join(DESTROY_JOIN_MS)
         if (state.isActive) {
             state = SessionState.NoSession

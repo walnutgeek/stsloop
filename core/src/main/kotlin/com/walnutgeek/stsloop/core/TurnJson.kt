@@ -22,6 +22,16 @@ object TurnJson {
             append("  \"vad\": { \"speech_ms\": ").append(v.speechMs)
             append(", \"trailing_silence_ms\": ").append(v.trailingSilenceMs).append(" },\n")
         }
+        turn.transcript?.let { t ->
+            append("  \"transcript\": {\n")
+            append("    \"text\": ").str(t.text).append(",\n")
+            append("    \"engine\": ").str(t.engine).append(",\n")
+            append("    \"model\": ").str(t.model).append(",\n")
+            append("    \"finished_at\": ").str(UtcTimestamp.format(t.finishedAtMs)).append(",\n")
+            append("    \"latency_ms\": ").append(t.latencyMs).append("\n")
+            append("  },\n")
+        }
+        turn.kind?.let { append("  \"kind\": ").str(it.json).append(",\n") }
         append("  \"app_version\": ").str(turn.appVersion).append(",\n")
         append("  \"tombstoned_by\": ").strOrNull(turn.tombstonedBy).append("\n")
         append("}\n")

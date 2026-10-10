@@ -1,9 +1,11 @@
 package com.walnutgeek.stsloop.core.turn
 
 import com.walnutgeek.stsloop.core.CorpusWriter
+import com.walnutgeek.stsloop.core.Transcript
 import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.TurnAudio
 import com.walnutgeek.stsloop.core.TurnInProgress
+import com.walnutgeek.stsloop.core.TurnKind
 import com.walnutgeek.stsloop.core.TurnVad
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -29,10 +31,13 @@ class CorpusSinkTest {
                     pcm += samples.copyOf(count)
                 }
 
-                override fun finish(appVersion: String, vad: TurnVad?): Turn {
+                override fun finish(appVersion: String, vad: TurnVad?, transcript: Transcript?, kind: TurnKind?): Turn {
                     if (failFinishOn == n) throw IOException("fsync failed")
                     written += pcm
-                    return Turn(id, sessionId, startedAtMs, TurnAudio("audio.wav", "x", sampleRate, pcm.size * 1000L / sampleRate), appVersion, vad)
+                    return Turn(
+                        id, sessionId, startedAtMs, TurnAudio("audio.wav", "x", sampleRate, pcm.size * 1000L / sampleRate),
+                        appVersion, vad, transcript, kind,
+                    )
                 }
 
                 override fun abandon() {
@@ -45,13 +50,17 @@ class CorpusSinkTest {
 
     private val writer = FakeWriter()
     private val published = mutableListOf<Pair<Turn, Utterance>>()
+    private val timings = mutableListOf<SttTiming?>()
     private val failures = mutableListOf<Pair<Utterance, Exception>>()
     private var ids = 0
     private val sink = CorpusSink(
         writer, sessionId = "5e5510", sessionStartedAtMs = 1_000_000, sampleRate = 1000, appVersion = "t",
         newId = { "id${++ids}" },
         listener = object : CorpusSink.Listener {
-            override fun published(turn: Turn, utterance: Utterance) { published += turn to utterance }
+            override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) {
+                published += turn to utterance
+                timings += timing
+            }
             override fun failed(utterance: Utterance, error: Exception) { failures += utterance to error }
         },
     )
@@ -68,6 +77,26 @@ class CorpusSinkTest {
         assertEquals(1200, turn.audio.durationMs)
         assertArrayEquals(pcm(1200), writer.written.single())
         assertEquals(1, sink.published)
+    }
+
+    @Test
+    fun `the transcript goes into the same publish, and every Turn is unclassified`() {
+        val transcript = Transcript("HELLO THERE", "sherpa-onnx", "m", 1_003_900, latencyMs = 200)
+        val timing = SttTiming(computeMs = 120, queuedMs = 10, finalizeMs = 40)
+        sink.closed(u(2500, 3700), pcm(1200), Transcription(transcript, timing))
+        val (turn, _) = published.single()
+        assertEquals(transcript, turn.transcript)
+        assertEquals(TurnKind.UNCLASSIFIED, turn.kind)
+        assertEquals(timing, timings.single())
+    }
+
+    @Test
+    fun `a Turn the recognizer could not transcribe is still published, unclassified`() {
+        sink.closed(u(0, 500), pcm(500))
+        val (turn, _) = published.single()
+        assertEquals(null, turn.transcript)
+        assertEquals(TurnKind.UNCLASSIFIED, turn.kind)
+        assertEquals(null, timings.single())
     }
 
     @Test
