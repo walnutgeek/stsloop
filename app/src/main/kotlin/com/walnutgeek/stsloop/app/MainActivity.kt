@@ -14,6 +14,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.walnutgeek.stsloop.audio.SessionService
 import com.walnutgeek.stsloop.core.StartGate
+import com.walnutgeek.stsloop.core.StartRefusal
 
 class MainActivity : Activity() {
     private lateinit var status: TextView
@@ -72,12 +73,12 @@ class MainActivity : Activity() {
 
     private fun launchSession() {
         when (gate()) {
-            StartGate.Verdict.NEEDS_MICROPHONE -> {
+            StartRefusal.MICROPHONE -> {
                 refresh()
                 status.text = "Microphone permission is required to start a Session."
                 return
             }
-            StartGate.Verdict.NEEDS_NOTIFICATIONS -> {
+            StartRefusal.NOTIFICATIONS -> {
                 // The notification is the only eyes-free way to stop or restart a Session,
                 // and the only sign besides the mic indicator that one is running.
                 refresh()
@@ -85,7 +86,7 @@ class MainActivity : Activity() {
                     "notification, so it will not start without one."
                 return
             }
-            StartGate.Verdict.ALLOWED -> Unit
+            StartRefusal.NOT_ALLOWED, null -> Unit // NOT_ALLOWED comes only from the platform, below
         }
         try {
             SessionService.start(this)
