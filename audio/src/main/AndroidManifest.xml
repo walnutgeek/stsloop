@@ -6,10 +6,12 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application>
-        <!-- A Session. Typed `microphone` (a while-in-use type), never shortService. -->
+        <!-- A Session. Typed `microphone` (a while-in-use type), never shortService.
+             shortService is declared only for the moment a refused Start must
+             still call startForeground() before stopping; no Session runs as it. -->
         <service
             android:name=".SessionService"
             android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="microphone|shortService" />
     </application>
 </manifest>
