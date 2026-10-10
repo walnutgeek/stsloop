@@ -166,7 +166,17 @@ class TranscriberTest {
         transcriber.start()
         utterance(0, 400) // 400 samples * 10 ms + 50 ms finish
         worker.runAll()
-        assertEquals(SttTiming(computeMs = 4050, finalizeMs = 50), published.single().third)
+        assertEquals(SttTiming(computeMs = 4050, backlogMs = 4000, finalizeMs = 50), published.single().third)
+    }
+
+    @Test
+    fun `backlog is the time from the close being posted to the worker reaching it`() {
+        transcriber.start()
+        transcriber.opened(0)
+        transcriber.captured(FloatArray(30)) // 300 ms of decoding still queued at the close
+        transcriber.closed(u(0, 30), ShortArray(30))
+        worker.runAll()
+        assertEquals(300L, published.single().third!!.backlogMs)
     }
 
     @Test
@@ -266,10 +276,10 @@ class TranscriberTest {
         )
         assertEquals(250L, turn.transcriptLatencyMs)
         assertNull(turn.copy(transcript = null).transcriptLatencyMs)
-        val timing = SttTiming(computeMs = 348, finalizeMs = 96)
+        val timing = SttTiming(computeMs = 348, backlogMs = 120, finalizeMs = 96)
         assertEquals(0.087, timing.rtf(4000), 1e-9)
         assertEquals(
-            "transcript 250 ms after ended_at (finish 96 ms), RTF 0.087 (348 ms for 4000 ms of audio)",
+            "transcript 250 ms after ended_at (backlog 120 ms, finish 96 ms), RTF 0.087 (348 ms for 4000 ms of audio)",
             timing.summary(turn),
         )
         assertEquals("no transcript", SttTiming.summary(turn.copy(transcript = null), null))

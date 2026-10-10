@@ -76,7 +76,12 @@ class Transcriber(
         timed { attempt { s.accept(samples) } } ?: dropStream()
     }
 
-    override fun closed(utterance: Utterance, pcm: ShortArray) = worker.post {
+    override fun closed(utterance: Utterance, pcm: ShortArray) {
+        val postedNs = nanoTime()
+        worker.post { publish(utterance, pcm, postedNs) }
+    }
+
+    private fun publish(utterance: Utterance, pcm: ShortArray, postedNs: Long) {
         val s = stream
         stream = null
         var transcript: Transcript? = null
@@ -93,7 +98,11 @@ class Transcriber(
             val r = recognizer
             if (text != null && r != null) {
                 transcript = Transcript(TranscriptText.normalize(text), r.engine, r.model, wallClock())
-                timing = SttTiming(computeMs = computeNs / NS_PER_MS, finalizeMs = finishNs / NS_PER_MS)
+                timing = SttTiming(
+                    computeMs = computeNs / NS_PER_MS,
+                    backlogMs = (t0 - postedNs) / NS_PER_MS,
+                    finalizeMs = finishNs / NS_PER_MS,
+                )
             }
         }
         sink.closed(utterance, pcm, transcript, timing)
@@ -148,6 +157,8 @@ class Transcriber(
 data class SttTiming(
     /** Everything spent in the recognizer on this Turn's stream: open, feeding while captured, and finish. */
     val computeMs: Long,
+    /** From the cut to the worker reaching it: decoding of earlier audio still queued. */
+    val backlogMs: Long,
     /** The final flush alone: what decoding adds after the utterance is cut. */
     val finalizeMs: Long,
 ) {
@@ -162,7 +173,7 @@ data class SttTiming(
             val latency = turn.transcriptLatencyMs
             if (latency == null || timing == null) return "no transcript"
             val audioMs = turn.audio.durationMs
-            return "transcript $latency ms after ended_at (finish ${timing.finalizeMs} ms), " +
+            return "transcript $latency ms after ended_at (backlog ${timing.backlogMs} ms, finish ${timing.finalizeMs} ms), " +
                 "RTF ${threeDecimals(timing.rtf(audioMs))} (${timing.computeMs} ms for $audioMs ms of audio)"
         }
 

@@ -82,7 +82,7 @@ class CorpusSinkTest {
     @Test
     fun `the transcript goes into the same publish, and every Turn is unclassified`() {
         val transcript = Transcript("hello there", "sherpa-onnx", "m", 1_003_900)
-        val timing = SttTiming(computeMs = 120, finalizeMs = 40)
+        val timing = SttTiming(computeMs = 120, backlogMs = 10, finalizeMs = 40)
         sink.closed(u(2500, 3700), pcm(1200), transcript, timing)
         val (turn, _) = published.single()
         assertEquals(transcript, turn.transcript)

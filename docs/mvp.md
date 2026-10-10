@@ -143,6 +143,15 @@ AudioRecord → Segmenter ─ opened ───→  recognizer.open()       (one 
 - **Latency is `finished_at - ended_at`**, and it is logged per Turn with the
   RTF (recognizer time over audio time) under `stsloop.Session`.
 
+Measured on the Pixel 10 Pro (#10), with upstream test wavs fed at real time
+through the service's pipeline, the latency was 313–352 ms per Turn. About
+70 ms of that is the close being seen (a 100 ms chunk, 32 ms VAD windows),
+200–225 ms is decoding still queued at the cut, and 45 ms is the final flush.
+Paced at real time the recognizer's RTF is about 0.52; in a batch it is
+0.08–0.12. That gap is probably CPU frequency scaling between chunks, and it
+is where any further latency would come from. Decoding only on close would
+cost about 0.6 s for a 7.5 s Turn even at the batch RTF, so streaming stays.
+
 ### Never run the system recognizer concurrently
 
 This is the sharpest finding of the research, and it is a hard rule.
