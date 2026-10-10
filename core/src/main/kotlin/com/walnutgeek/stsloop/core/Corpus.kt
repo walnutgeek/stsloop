@@ -30,9 +30,6 @@ data class Turn(
 ) {
     val endedAtMs: Long get() = startedAtMs + audio.durationMs
 
-    /** End of utterance → final transcript: `finished_at - ended_at`; null without a transcript. */
-    val transcriptLatencyMs: Long? get() = transcript?.let { it.finishedAtMs - endedAtMs }
-
     /** `<started_at>-<id>`, e.g. `2026-10-06T14:22:07.431Z-a3f1c9`. */
     val directoryName: String get() = turnDirectoryName(startedAtMs, id)
 }
@@ -57,15 +54,21 @@ data class TurnVad(
 )
 
 /**
- * What the on-device recognizer heard in a Turn's Recording. [finishedAtMs]
- * is wall time when the text was final, so `finished_at - ended_at` is the
- * end-of-utterance to transcript latency.
+ * What the on-device recognizer heard in a Turn's Recording.
+ *
+ * [text] is exactly what the engine produced (this model: upper case, no
+ * punctuation); readers normalise it themselves.
+ * [finishedAtMs] is wall time when the text was final. [latencyMs] is the
+ * end-of-utterance to transcript latency on one monotonic clock: from when
+ * the Turn's last sample was captured to when the text was final. It is not
+ * `finished_at - ended_at`, which mixes the wall clock with the sample clock.
  */
 data class Transcript(
     val text: String,
     val engine: String,
     val model: String,
     val finishedAtMs: Long,
+    val latencyMs: Long,
 )
 
 /** `kind` in `turn.json`. Without a phrase grammar every Turn is [UNCLASSIFIED]. */

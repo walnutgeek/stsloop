@@ -21,22 +21,11 @@ interface RecognitionStream {
     /** Feeds `[-1, 1)` samples at the capture rate and decodes whatever is ready. */
     fun accept(samples: FloatArray)
 
-    /** No more samples: flushes the model and returns the final text. */
+    /** No more samples: flushes the model and returns the final text, as the engine produced it. */
     fun finish(): String
 
     /** Frees the native stream. Call exactly once, after [finish] or instead of it. */
     fun release()
-}
-
-object TranscriptText {
-    /**
-     * The text stored in `transcript.text`. The model emits upper-case BPE
-     * words with stray spacing; casing carries no information, so it is
-     * lower-cased (as in the `docs/mvp.md` example) and whitespace collapsed.
-     */
-    fun normalize(raw: String): String = raw.trim().split(WHITESPACE).filter { it.isNotEmpty() }.joinToString(" ").lowercase()
-
-    private val WHITESPACE = Regex("\\s+")
 }
 
 /**

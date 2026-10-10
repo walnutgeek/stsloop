@@ -5,25 +5,6 @@ import org.junit.jupiter.api.Test
 
 class RecognizerTest {
     @Test
-    fun `transcript text is trimmed, whitespace-collapsed and lowercased`() {
-        assertEquals(
-            "after early nightfall the yellow lamps",
-            TranscriptText.normalize("  AFTER EARLY  NIGHTFALL\tTHE YELLOW LAMPS "),
-        )
-    }
-
-    @Test
-    fun `apostrophes and other characters survive normalisation`() {
-        assertEquals("don't stop", TranscriptText.normalize("DON'T STOP"))
-    }
-
-    @Test
-    fun `no words is an empty transcript, not a missing one`() {
-        assertEquals("", TranscriptText.normalize("   "))
-        assertEquals("", TranscriptText.normalize(""))
-    }
-
-    @Test
     fun `model id names the model directory, the encoder variant and the decoding method`() {
         val spec = RecognizerSpec(
             transducerEncoder = "sherpa-onnx-streaming-zipformer-en-2023-06-26/encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",

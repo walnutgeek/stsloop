@@ -21,8 +21,12 @@ interface UtteranceSink {
      */
     fun captured(samples: FloatArray) {}
 
-    /** [pcm] is exactly samples `[startSample, endSample)` of the stream. */
-    fun closed(utterance: Utterance, pcm: ShortArray)
+    /**
+     * [pcm] is exactly samples `[startSample, endSample)` of the stream.
+     * [endedAtNs] is when sample `endSample - 1` was captured, on the clock
+     * passed to [Segmenter.accept].
+     */
+    fun closed(utterance: Utterance, pcm: ShortArray, endedAtNs: Long)
 
     fun discarded(event: TurnEvent.Discarded) {}
 }
@@ -37,7 +41,7 @@ interface UtteranceSink {
  */
 class Segmenter(
     timings: Timings,
-    sampleRate: Int,
+    private val sampleRate: Int,
     private val windowSamples: Int,
     private val vad: SpeechProbability,
     private val sink: UtteranceSink,
@@ -53,14 +57,22 @@ class Segmenter(
     /** Samples of the open utterance streamed so far end here; -1 while none is open. */
     private var streamedTo = -1L
 
+    /** When the newest sample ([SampleBuffer.end] - 1) was captured, on the caller's monotonic clock. */
+    private var endCapturedAtNs = 0L
+
     val state: TurnState get() = machine.state
 
     /** Samples currently held in memory. */
     val retainedSamples: Int get() = buffer.size
 
-    /** Tees the first [count] samples of [samples] in; [samples] is not modified or kept. */
-    fun accept(samples: ShortArray, count: Int) {
+    /**
+     * Tees the first [count] samples of [samples] in; [samples] is not modified
+     * or kept. [capturedAtNs] is when the last of them was captured, on a
+     * monotonic clock; earlier samples are placed on it by the sample rate.
+     */
+    fun accept(samples: ShortArray, count: Int, capturedAtNs: Long) {
         buffer.append(samples, count)
+        endCapturedAtNs = capturedAtNs
         while (buffer.end - machine.position >= windowSamples) {
             buffer.toFloats(machine.position, window)
             emit(machine.window(windowSamples, vad.of(window)))
@@ -86,7 +98,8 @@ class Segmenter(
                 val u = event.utterance
                 stream(to = u.endSample)
                 streamedTo = -1
-                sink.closed(u, buffer.copy(u.startSample, u.endSample))
+                val endedAtNs = endCapturedAtNs - (buffer.end - u.endSample) * 1_000_000_000L / sampleRate
+                sink.closed(u, buffer.copy(u.startSample, u.endSample), endedAtNs)
             }
             is TurnEvent.Discarded -> {
                 streamedTo = -1

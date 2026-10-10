@@ -26,6 +26,7 @@ class SttRecognizer(private val stt: Stt) : StreamingRecognizer {
             drain()
         }
 
+        /** The engine's raw text, unaltered: this model emits upper case without punctuation. */
         override fun finish(): String {
             // Zeros past the end push the last frames through the encoder's chunk.
             stream.acceptWaveform(TAIL_PADDING, SAMPLE_RATE_HZ)
@@ -47,15 +48,7 @@ class SttRecognizer(private val stt: Stt) : StreamingRecognizer {
         /** 300 ms, as in the #6 benchmark; a silence-closed Turn already ends in 1.5 s of room tone. */
         private val TAIL_PADDING = FloatArray(SAMPLE_RATE_HZ * 3 / 10)
 
-        /**
-         * Loads the shipped model. A missing native library is a [LinkageError];
-         * it is rethrown as an exception so the loop reports it and carries on
-         * without transcripts.
-         */
-        fun load(assets: AssetManager): SttRecognizer = try {
-            SttRecognizer(Stt(assets))
-        } catch (e: LinkageError) {
-            throw IllegalStateException("no speech natives; run scripts/build-sherpa-onnx.sh", e)
-        }
+        /** Loads the shipped model. A missing native library throws a [LinkageError]. */
+        fun load(assets: AssetManager): SttRecognizer = SttRecognizer(Stt(assets))
     }
 }

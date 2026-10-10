@@ -2,7 +2,6 @@ package com.walnutgeek.stsloop.core.turn
 
 import com.walnutgeek.stsloop.core.CorpusWriter
 import com.walnutgeek.stsloop.core.Ids
-import com.walnutgeek.stsloop.core.Transcript
 import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.TurnKind
 
@@ -39,13 +38,13 @@ class CorpusSink(
     var failed = 0
         private set
 
-    /** Publishes [pcm] (exactly the [utterance]'s samples) with its [transcript], if the recognizer gave one. */
-    fun closed(utterance: Utterance, pcm: ShortArray, transcript: Transcript? = null, timing: SttTiming? = null) {
+    /** Publishes [pcm] (exactly the [utterance]'s samples) with its [transcription], if the recognizer gave one. */
+    fun closed(utterance: Utterance, pcm: ShortArray, transcription: Transcription? = null) {
         val turn = try {
             val inProgress = writer.begin(newId(), sessionId, utterance.startedAtMs(sessionStartedAtMs, sampleRate), sampleRate)
             try {
                 inProgress.append(pcm, pcm.size)
-                inProgress.finish(appVersion, utterance.vad(sampleRate), transcript, TurnKind.UNCLASSIFIED)
+                inProgress.finish(appVersion, utterance.vad(sampleRate), transcription?.transcript, TurnKind.UNCLASSIFIED)
             } catch (e: Exception) {
                 runCatching { inProgress.abandon() }
                 throw e
@@ -56,7 +55,7 @@ class CorpusSink(
             return
         }
         published++
-        listener.published(turn, utterance, timing.takeIf { transcript != null })
+        listener.published(turn, utterance, transcription?.timing)
     }
 
     fun discarded(event: TurnEvent.Discarded) = listener.discarded(event)

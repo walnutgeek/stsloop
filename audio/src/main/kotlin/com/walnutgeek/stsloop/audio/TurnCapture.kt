@@ -29,9 +29,12 @@ import java.util.concurrent.TimeUnit
  *
  * Decoding and Corpus writes run on this Session's own STT thread, so
  * [accept] never waits on them and the mic is never starved. The recognizer
- * is loaded there too, as soon as the capture is created.
+ * is loaded there too, as soon as the capture is created. If decoding falls
+ * more than [maxQueuedMs] of audio behind, the Turn being captured stops
+ * being fed and is written without a transcript; its audio is always kept.
  *
- * Not thread-safe: call [accept] and [finish] from the capture thread.
+ * Not thread-safe: call [accept] and [finish] from the capture thread;
+ * [hurry] may be called from any thread.
  */
 class TurnCapture(
     writer: CorpusWriter,
@@ -43,6 +46,7 @@ class TurnCapture(
     windowSamples: Int,
     /** Loads the Session's one recognizer; called once, on the STT thread. */
     recognizer: () -> StreamingRecognizer,
+    maxQueuedMs: Long = MAX_QUEUED_MS,
     /** Called on the STT thread after each Turn is published, with the stream range it holds. */
     private val onTurn: (Turn, Utterance, SttTiming?) -> Unit = { _, _, _ -> },
 ) {
@@ -69,14 +73,23 @@ class TurnCapture(
         },
         sink,
         wallClock = System::currentTimeMillis,
-        nanoTime = System::nanoTime,
+        nanoTime = SystemClock::elapsedRealtimeNanos, // the clock accept() stamps samples with
+        maxQueuedSamples = maxQueuedMs * SAMPLE_RATE_HZ / 1000,
         listener = object : Transcriber.Listener {
-            override fun unavailable(error: Exception) {
+            override fun unavailable(error: Throwable) {
                 Log.e(TAG, "Session $sessionId has no recognizer; Turns are written without transcripts", error)
             }
 
-            override fun failed(startSample: Long, error: Exception) {
+            override fun failed(startSample: Long, error: Throwable) {
                 Log.e(TAG, "Session $sessionId lost the transcript of the Turn at sample $startSample", error)
+            }
+
+            override fun fellBehind(startSample: Long, queuedSamples: Long) {
+                Log.w(
+                    TAG,
+                    "Session $sessionId: decoding ${queuedSamples * 1000 / SAMPLE_RATE_HZ} ms behind; " +
+                        "the Turn at sample $startSample is written without a transcript",
+                )
             }
         },
     ).apply { start() }
@@ -87,31 +100,72 @@ class TurnCapture(
     val publishedTurns: Int get() = sink.published
     val failedTurns: Int get() = sink.failed
 
-    /** Tees the first [count] samples of [samples] in. Returns without waiting for decoding or writing. */
-    fun accept(samples: ShortArray, count: Int) = segmenter.accept(samples, count)
+    /** Published without a transcript; final once [finish] returns. */
+    val untranscribedTurns: Int get() = transcriber.untranscribed
+
+    /**
+     * Tees the first [count] samples of [samples] in. [capturedAtNs] is when
+     * the last of them was captured, on `SystemClock.elapsedRealtimeNanos`:
+     * call this straight after `AudioRecord.read`. Returns without waiting for
+     * decoding or writing.
+     */
+    fun accept(samples: ShortArray, count: Int, capturedAtNs: Long = SystemClock.elapsedRealtimeNanos()) =
+        segmenter.accept(samples, count, capturedAtNs)
+
+    /**
+     * Skip all remaining recognition: every queued Turn is written at once,
+     * without a transcript. For a teardown that cannot wait for decoding.
+     */
+    fun hurry() = transcriber.abandon()
 
     /**
      * Ends the Session: an utterance still being captured becomes a Turn, and
-     * this waits until every Turn is transcribed and written and the recognizer
-     * is released. Safe to call twice.
+     * this waits until every Turn is written and the recognizer is released.
+     * Decoding gets [TRANSCRIBE_DRAIN_MS]; after that the rest of the queue is
+     * written without transcripts. The queue is never dropped: if a native call
+     * is stuck past [WRITE_DRAIN_MS] more, this returns and the STT thread
+     * still writes those Turns, and then releases the recognizer, when the call
+     * returns. Safe to call twice.
      */
     fun finish() {
-        segmenter.finish()
-        if (finished) return
-        finished = true
+        try {
+            segmenter.finish()
+        } finally {
+            if (!finished) {
+                finished = true
+                drain()
+            }
+        }
+    }
+
+    private fun drain() {
         transcriber.close()
         executor.shutdown()
         val t0 = SystemClock.elapsedRealtime()
-        if (!executor.awaitTermination(DRAIN_TIMEOUT_S, TimeUnit.SECONDS)) {
-            Log.e(TAG, "Session $sessionId: STT still busy after $DRAIN_TIMEOUT_S s; abandoning its queue")
-            executor.shutdownNow()
+        if (!executor.awaitTermination(TRANSCRIBE_DRAIN_MS, TimeUnit.MILLISECONDS)) {
+            Log.e(TAG, "Session $sessionId: STT still decoding after $TRANSCRIBE_DRAIN_MS ms; writing the rest without transcripts")
+            transcriber.abandon()
+            if (!executor.awaitTermination(WRITE_DRAIN_MS, TimeUnit.MILLISECONDS)) {
+                Log.e(TAG, "Session $sessionId: a native call is stuck; queued Turns will be written when it returns")
+                return
+            }
         }
         Log.i(TAG, "Session $sessionId: STT drained ${SystemClock.elapsedRealtime() - t0} ms after the last sample")
     }
 
     companion object {
         private const val TAG = "stsloop.TurnCapture"
-        private const val DRAIN_TIMEOUT_S = 60L
+
+        /** Decoding may fall this far behind capture before a Turn stops being fed. */
+        const val MAX_QUEUED_MS = 10_000L
+
+        /**
+         * A normal Stop waits this long for decoding. The service stays in the
+         * foreground until the capture thread ends, so a long wait is safe there;
+         * a teardown calls [hurry] first and waits only for the writes.
+         */
+        const val TRANSCRIBE_DRAIN_MS = 30_000L
+        const val WRITE_DRAIN_MS = 3_000L
 
         /** Silero VAD as a [SpeechProbability]: the raw per-window probability, no sherpa-side segmenting. */
         fun silero(vad: Vad) = SpeechProbability { window -> vad.compute(window) }

@@ -77,10 +77,11 @@ class TurnJsonTest {
     }
 
     private val transcript = Transcript(
-        text = "errands order roofing screws",
+        text = "ERRANDS ORDER ROOFING SCREWS",
         engine = "sherpa-onnx",
         model = "zipformer/int8+modified_beam_search",
         finishedAtMs = 1_791_296_532_141,
+        latencyMs = 239,
     )
 
     @Test
@@ -92,10 +93,11 @@ class TurnJsonTest {
             json.contains(
                 "  \"vad\": { \"speech_ms\": 3180, \"trailing_silence_ms\": 1500 },\n" +
                     "  \"transcript\": {\n" +
-                    "    \"text\": \"errands order roofing screws\",\n" +
+                    "    \"text\": \"ERRANDS ORDER ROOFING SCREWS\",\n" +
                     "    \"engine\": \"sherpa-onnx\",\n" +
                     "    \"model\": \"zipformer/int8+modified_beam_search\",\n" +
-                    "    \"finished_at\": \"2026-10-06T14:22:12.141Z\"\n" +
+                    "    \"finished_at\": \"2026-10-06T14:22:12.141Z\",\n" +
+                    "    \"latency_ms\": 239\n" +
                     "  },\n" +
                     "  \"kind\": \"unclassified\",\n" +
                     "  \"app_version\"",
@@ -110,6 +112,12 @@ class TurnJsonTest {
         val json = TurnJson.encode(turn.copy(kind = TurnKind.UNCLASSIFIED))
         assertTrue(json.contains("\"duration_ms\": 4471 },\n  \"kind\": \"unclassified\",\n  \"app_version\""), json)
         assertFalse(json.contains("\"transcript\""))
+    }
+
+    @Test
+    fun `transcript text is stored exactly as the engine produced it`() {
+        val json = TurnJson.encode(turn.copy(transcript = transcript.copy(text = " Hello,  World ")))
+        assertTrue(json.contains("\"text\": \" Hello,  World \",\n"), json)
     }
 
     @Test

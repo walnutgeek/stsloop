@@ -44,16 +44,23 @@ class TurnCaptureDeviceTest {
         const val CHUNK = RATE / 10
         const val SESSION_START_MS = 1_791_296_527_000L
 
-        /** What the shipped model hears in the upstream wavs (`test_wavs/trans.txt`, lower-cased). */
+        /** What the shipped model hears in the upstream wavs (`test_wavs/trans.txt`), as it emits it. */
         const val TEXT_0 =
-            "after early nightfall the yellow lamps would light up here and there the squalid quarter of the brothels"
+            "AFTER EARLY NIGHTFALL THE YELLOW LAMPS WOULD LIGHT UP HERE AND THERE THE SQUALID QUARTER OF THE BROTHELS"
         const val TEXT_1 =
-            "god as a direct consequence of the sin which man thus punished had given her a lovely child " +
-                "whose place was on that same dishonoured bosom to connect her parent for ever with the race " +
-                "and descent of mortals and to be finally a blessed soul in heaven"
+            "GOD AS A DIRECT CONSEQUENCE OF THE SIN WHICH MAN THUS PUNISHED HAD GIVEN HER A LOVELY CHILD " +
+                "WHOSE PLACE WAS ON THAT SAME DISHONOURED BOSOM TO CONNECT HER PARENT FOR EVER WITH THE RACE " +
+                "AND DESCENT OF MORTALS AND TO BE FINALLY A BLESSED SOUL IN HEAVEN"
     }
 
-    private class Run(val turns: List<Triple<Turn, Utterance, SttTiming?>>, val maxAcceptMs: Double)
+    private class Run(
+        val turns: List<Triple<Turn, Utterance, SttTiming?>>,
+        val maxAcceptMs: Double,
+        val untranscribed: Int,
+    )
+
+    /** The engine's raw text, trimmed: sherpa-onnx results may carry edge spaces. */
+    private val Turn.text: String? get() = transcript?.text?.trim()
 
     private val context = InstrumentationRegistry.getInstrumentation().context
     private val target = InstrumentationRegistry.getInstrumentation().targetContext
@@ -109,6 +116,8 @@ class TurnCaptureDeviceTest {
         stopEarlyAt: Int = stream.size,
         realTime: Boolean = false,
         recognizer: () -> StreamingRecognizer = { SttRecognizer.load(context.assets) },
+        maxQueuedMs: Long = TurnCapture.MAX_QUEUED_MS,
+        hurryBeforeFinish: Boolean = false,
     ): Run {
         val writer = FileCorpusWriter(File(root, "corpus"), File(root, "staging"))
         val out = java.util.Collections.synchronizedList(mutableListOf<Triple<Turn, Utterance, SttTiming?>>())
@@ -116,9 +125,9 @@ class TurnCaptureDeviceTest {
         val capture = TurnCapture(
             writer, "5e5510", startMs, "test", Timings(),
             TurnCapture.silero(vad), SpeechModels.vadConfig().sileroVadModelConfig.windowSize,
-            recognizer,
+            recognizer, maxQueuedMs,
         ) { t, u, timing ->
-            Log.i(TAG, "Turn ${t.directoryName} ${u.closedBy}: ${SttTiming.summary(t, timing)}: ${t.transcript?.text}")
+            Log.i(TAG, "Turn ${t.directoryName} ${u.closedBy}: ${SttTiming.summary(t, timing)}: '${t.transcript?.text}'")
             out += Triple(t, u, timing)
         }
         val buf = ShortArray(CHUNK)
@@ -134,11 +143,12 @@ class TurnCaptureDeviceTest {
             }
             stream.copyInto(buf, 0, i, i + n)
             val a = System.nanoTime()
-            capture.accept(buf, n)
+            capture.accept(buf, n, android.os.SystemClock.elapsedRealtimeNanos())
             maxAcceptNs = maxOf(maxAcceptNs, System.nanoTime() - a)
             i += n
         }
         val f = System.nanoTime()
+        if (hurryBeforeFinish) capture.hurry()
         capture.finish()
         Log.i(
             TAG,
@@ -146,7 +156,7 @@ class TurnCaptureDeviceTest {
                 "(realTime=$realTime), finish ${(System.nanoTime() - f) / 1_000_000} ms, " +
                 "slowest accept ${"%.2f".format(maxAcceptNs / 1e6)} ms",
         )
-        return Run(out.sortedBy { it.second.startSample }, maxAcceptNs / 1e6)
+        return Run(out.sortedBy { it.second.startSample }, maxAcceptNs / 1e6, capture.untranscribedTurns)
     }
 
     private fun turnJson(turn: Turn) = File(root, "corpus/${turn.directoryName}/$TURN_FILE").readText()
@@ -205,8 +215,9 @@ class TurnCaptureDeviceTest {
             noise(2000, rnd), wav("0.wav"), noise(3000, rnd), wav("1.wav"),
             noise(3000, rnd), wav("0.wav"), noise(3000, rnd),
         ) { it % 2 == 1 }
-        val turns = run(stream).turns
-        assertEquals(listOf(TEXT_0, TEXT_1, TEXT_0), turns.map { it.first.transcript?.text })
+        // Fed ~200x faster than a mic, so decoding is minutes behind; lift the bound.
+        val turns = run(stream, maxQueuedMs = 600_000).turns
+        assertEquals(listOf(TEXT_0, TEXT_1, TEXT_0), turns.map { it.first.text })
         for ((turn, _, timing) in turns) {
             val t = turn.transcript!!
             assertEquals("sherpa-onnx", t.engine)
@@ -220,6 +231,7 @@ class TurnCaptureDeviceTest {
             assertTrue(json, json.contains("\"transcript\": {\n    \"text\": \"${t.text}\",\n    \"engine\": \"sherpa-onnx\",\n"))
             assertTrue(json, json.contains("\"model\": \"${t.model}\",\n"))
             assertTrue(json, json.contains("\"finished_at\": \""))
+            assertTrue(json, json.contains("\"latency_ms\": ${t.latencyMs}\n"))
             assertTrue(json, json.contains("\"kind\": \"unclassified\",\n"))
         }
     }
@@ -231,15 +243,44 @@ class TurnCaptureDeviceTest {
             noise(1500, rnd), wav("0.wav"), noise(2500, rnd), wav("1.wav"), noise(2500, rnd),
         ) { it % 2 == 1 }
         val r = run(stream, realTime = true)
-        assertEquals(listOf(TEXT_0, TEXT_1), r.turns.map { it.first.transcript?.text })
+        assertEquals(listOf(TEXT_0, TEXT_1), r.turns.map { it.first.text })
         for ((turn, _, timing) in r.turns) {
-            val latency = turn.transcriptLatencyMs!!
+            val latency = turn.transcript!!.latencyMs
             Log.i(TAG, "real-time Turn ${turn.directoryName}: latency $latency ms, ${SttTiming.summary(turn, timing)}")
-            // Close is seen within a chunk of ended_at; the transcript follows the final flush.
+            // From the Turn's last sample being read to the final text, on one monotonic clock.
             assertTrue("latency $latency ms", latency in 0..2_000)
         }
         // Capture keeps up with the mic: no accept() comes near a 100 ms chunk.
         assertTrue("slowest accept ${r.maxAcceptMs} ms", r.maxAcceptMs < 50.0)
+    }
+
+    @Test
+    fun aHurriedFinishWritesEveryTurnsAudioWithoutWaitingForDecoding() {
+        val rnd = Random(12)
+        val (stream, _) = splice(
+            noise(2000, rnd), wav("0.wav"), noise(3000, rnd), wav("1.wav"),
+            noise(3000, rnd), wav("0.wav"), noise(3000, rnd),
+        ) { it % 2 == 1 }
+        val r = run(stream, hurryBeforeFinish = true) // the model is still loading when we hurry
+        assertEquals(3, r.turns.size)
+        assertEquals(3, r.untranscribed)
+        for ((turn, u, _) in r.turns) assertArrayEquals(le(stream, u.startSample, u.endSample), publishedPcm(turn))
+    }
+
+    @Test
+    fun decodingTooFarBehindKeepsEveryTurnsAudio() {
+        val rnd = Random(13)
+        val (stream, _) = splice(
+            noise(2000, rnd), wav("0.wav"), noise(3000, rnd), wav("1.wav"), noise(3000, rnd),
+        ) { it % 2 == 1 }
+        // Fed ~200x real time while the model loads: decoding is far behind at once.
+        val r = run(stream, maxQueuedMs = 1_000)
+        assertEquals(2, r.turns.size)
+        assertEquals(2, r.untranscribed)
+        for ((turn, u, _) in r.turns) {
+            assertNull(turn.transcript)
+            assertArrayEquals(le(stream, u.startSample, u.endSample), publishedPcm(turn))
+        }
     }
 
     @Test
@@ -264,10 +305,10 @@ class TurnCaptureDeviceTest {
         assertEquals(stopAt.toLong(), u.endSample) // up to the last captured sample, unjudged partial window included
         assertArrayEquals(le(stream, u.startSample, u.endSample), publishedPcm(turn))
         // The cut-off Turn is still transcribed, up to where it was cut.
-        val text = turn.transcript!!.text
+        val text = turn.text!!
         Log.i(TAG, "cut-off transcript: $text")
-        assertTrue(text, text.startsWith("after early nightfall"))
-        assertTrue(text, !text.contains("brothels"))
+        assertTrue(text, text.startsWith("AFTER EARLY NIGHTFALL"))
+        assertTrue(text, !text.contains("BROTHELS"))
     }
 
     @Test

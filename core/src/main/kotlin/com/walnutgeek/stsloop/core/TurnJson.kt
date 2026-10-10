@@ -27,7 +27,8 @@ object TurnJson {
             append("    \"text\": ").str(t.text).append(",\n")
             append("    \"engine\": ").str(t.engine).append(",\n")
             append("    \"model\": ").str(t.model).append(",\n")
-            append("    \"finished_at\": ").str(UtcTimestamp.format(t.finishedAtMs)).append("\n")
+            append("    \"finished_at\": ").str(UtcTimestamp.format(t.finishedAtMs)).append(",\n")
+            append("    \"latency_ms\": ").append(t.latencyMs).append("\n")
             append("  },\n")
         }
         turn.kind?.let { append("  \"kind\": ").str(it.json).append(",\n") }
