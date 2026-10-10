@@ -214,6 +214,7 @@ class SessionService : Service() {
         val writer = FileCorpusWriter(corpusDir(this), File(filesDir, "corpus-staging"))
         var record: AudioRecord? = null
         var vad: Vad? = null
+        var capture: TurnCapture? = null
         try {
             val timings = TurnCapture.loadTimings(filesDir)
             Log.i(TAG, "Session $sessionId timings: ${timings.toJson().replace(Regex("\\s+"), " ")}")
@@ -229,14 +230,13 @@ class SessionService : Service() {
             check(record.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord failed to initialise" }
             record.startRecording()
             val startedAt = System.currentTimeMillis()
-            var turns = 0
-            val capture = TurnCapture(
+            val turns = TurnCapture(
                 writer, sessionId, startedAt, appVersion(), timings,
                 TurnCapture.silero(vad), SpeechModels.vadConfig().sileroVadModelConfig.windowSize,
             ) { turn, u ->
-                turns++
                 Log.i(TAG, "Session $sessionId wrote Turn ${turn.directoryName} (${turn.audio.durationMs} ms, ${u.closedBy}, samples ${u.startSample}..${u.endSample})")
             }
+            capture = turns
 
             val buf = ShortArray(CHUNK_SAMPLES)
             var peak = 0
@@ -246,14 +246,20 @@ class SessionService : Service() {
                 if (n < 0) error("AudioRecord.read returned $n")
                 for (i in 0 until n) peak = maxOf(peak, kotlin.math.abs(buf[i].toInt()))
                 samples += n
-                capture.accept(buf, n)
+                turns.accept(buf, n)
             }
             record.stop()
-            capture.finish()
+            turns.finish()
             if (peak == 0) Log.w(TAG, "Session $sessionId captured only zeros: the mic was silenced")
-            Log.i(TAG, "Session $sessionId ended: ${Wav.durationMs(samples, SAMPLE_RATE_HZ)} ms captured, $turns Turns, peak $peak")
+            Log.i(
+                TAG,
+                "Session $sessionId ended: ${Wav.durationMs(samples, SAMPLE_RATE_HZ)} ms captured, " +
+                    "${turns.publishedTurns} Turns, ${turns.failedTurns} failed to write, peak $peak",
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Session $sessionId failed", e)
+            // Best effort: publish the utterance that was open when capture broke.
+            capture?.let { c -> runCatching { c.finish() }.onFailure { Log.e(TAG, "Session $sessionId lost its open Turn", it) } }
         } catch (e: LinkageError) {
             Log.e(TAG, "Session $sessionId has no speech natives; run scripts/build-sherpa-onnx.sh", e)
         } finally {

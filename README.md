@@ -97,10 +97,13 @@ plugged in, `adb shell svc power stayon usb` keeps the screen awake (undo with
 The loop's timings (`docs/mvp.md`, "Timings") are read at the start of every
 Session from `files/timings.json` in the app's private storage, so they can be
 changed without a rebuild. The file is optional, and so is every key in it: a
-missing key keeps its default. An unknown key, a duplicate, or an out-of-range
-value makes the app log an error under `stsloop.TurnCapture` and use the
-defaults for that Session. The effective values are logged under
-`stsloop.Session` when a Session starts.
+missing key keeps its default. Fallback is per key: an unknown key, a
+duplicate, a non-number or an out-of-range value is logged as an error under
+`stsloop.TurnCapture` and keeps its default, while the other keys still apply.
+Keys that only make sense together (`release_threshold` ≤ `speech_threshold`,
+`pre_roll_ms` + `min_utterance_ms` < `max_utterance_ms`) are checked together;
+on a conflict the last-listed offending key is dropped. The effective values
+are logged under `stsloop.Session` when a Session starts.
 
 ```json
 {

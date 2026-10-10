@@ -154,8 +154,7 @@ class TurnCaptureDeviceTest {
         val stopAt = (pieces[1].start + pieces[1].end) / 2
         val (turn, u) = runSession(stream, stopEarlyAt = stopAt).single()
         assertEquals(CloseReason.SESSION_END, u.closedBy)
-        val window = SpeechModels.vadConfig().sileroVadModelConfig.windowSize
-        assertEquals(stopAt.toLong() / window * window, u.endSample) // the partial last window is not judged
+        assertEquals(stopAt.toLong(), u.endSample) // up to the last captured sample, unjudged partial window included
         assertArrayEquals(le(stream, u.startSample, u.endSample), publishedPcm(turn))
     }
 
