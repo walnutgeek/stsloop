@@ -44,7 +44,7 @@ def test_block(label, source, overlap_ms=0, devices=("builtin_mic",)):
         "label": label, "mic_source": source, "mic_input": "builtin", "audio_mode": "normal",
         "input_devices": list(devices), "tts_interval_ms": 5000, "tts_usage": "assistant",
         "tts_overlap": overlap_ms > 0, "tts_overlap_ms": overlap_ms,
-        "tts_utterances": ["tts-1"] if overlap_ms else [],
+        "tts_phrases": ["tts-1"] if overlap_ms else [],
     }
 
 
@@ -85,11 +85,11 @@ class ReportTest(unittest.TestCase):
             {"at": "x", "event": "session_start", "session_id": "s1", "summary": "parked: voice_recognition/builtin",
              "config": {"tts_phrase": "This is the machine speaking, test number {n}."}},
             {"at": "x", "event": "input_routed", "device": {"type": "builtin_mic"}},
-            {"at": "x", "event": "tts_start", "utterance": "tts-1", "output_devices": [{"type": "bluetooth_a2dp"}]},
-            {"at": "x", "event": "tts_done", "utterance": "tts-1", "mic_rise_db": 9.0},
-            {"at": "x", "event": "tts_done", "utterance": "tts-2", "mic_rise_db": 11.0},
+            {"at": "x", "event": "tts_start", "phrase": "tts-1", "output_devices": [{"type": "bluetooth_a2dp"}]},
+            {"at": "x", "event": "tts_done", "phrase": "tts-1", "mic_rise_db": 9.0},
+            {"at": "x", "event": "tts_done", "phrase": "tts-2", "mic_rise_db": 11.0},
             {"at": "x", "event": "recording", "ours": {"silenced": True}},
-            {"at": "x", "event": "tts_unobserved", "utterance": "tts-2"},
+            {"at": "x", "event": "tts_unobserved", "phrase": "tts-2"},
         ]
         (logs / "2026-10-10T18:00:00.000Z-s1.jsonl").write_text(
             "".join(json.dumps(e) + "\n" for e in s1) + '{"at": "x", "event": "session_e')
@@ -157,6 +157,15 @@ class ReportTest(unittest.TestCase):
         self.assertIn("bluetooth_unavailable x1", out)
         self.assertIn("2026-10-10T17:00:10.000Z-ddddd1: turn.json", out)
         self.assertNotIn("(no test block)", out)
+
+    def test_pipes_in_transcripts_do_not_break_the_table(self):
+        write_turn(self.corpus, "2026-10-10T18:02:00.000Z-eeeee1", "s2", "A | B", test_block("parked", "mic", overlap_ms=100), [50] * 20)
+        self.assertIn("| A \\| B |", tdr.report(self.corpus))
+
+    def test_audio_is_read_only_for_reported_turns(self):
+        rows = tdr.read_corpus(self.corpus, keep=lambda r: r.test is not None)
+        self.assertNotIn("2026-10-10T17:00:00.000Z-ccccc1", [r.dir for r in rows])
+        self.assertTrue(all(r.noise is not None for r in rows if not r.problem))
 
     def test_untested_turns_and_session_filter(self):
         self.assertIn("| (no test block) | 1 |", tdr.report(self.corpus, include_untested=True))

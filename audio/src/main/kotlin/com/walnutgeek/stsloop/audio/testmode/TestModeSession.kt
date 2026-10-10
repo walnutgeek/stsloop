@@ -20,6 +20,8 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import com.walnutgeek.stsloop.core.Turn
+import com.walnutgeek.stsloop.core.corpus.Json
+import com.walnutgeek.stsloop.core.testmode.Announcement
 import com.walnutgeek.stsloop.core.testmode.AudioMode
 import com.walnutgeek.stsloop.core.testmode.MicInput
 import com.walnutgeek.stsloop.core.testmode.MicSource
@@ -55,7 +57,7 @@ class TestModeSession(
     val config: TestConfig,
     private val sessionId: String,
     corpusDir: File,
-    sampleRate: Int,
+    private val sampleRate: Int,
 ) {
     private val am = context.getSystemService(AudioManager::class.java)
     private val tracker = TestModeTracker(config, sampleRate)
@@ -70,6 +72,10 @@ class TestModeSession(
     private var record: AudioRecord? = null
     private var previousMode: Int? = null
     private var communicationSet = false
+    private var bluetoothUnavailable = false
+
+    /** Test seam: called once the audio mode and communication device are set, to force a failure. */
+    internal var faultAfterRouteSet: (() -> Unit)? = null
     private var preferredInput: AudioDeviceInfo? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -93,8 +99,25 @@ class TestModeSession(
         MicSource.VOICE_COMMUNICATION -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
     }
 
-    /** Before the AudioRecord is created: log the starting state, set the audio mode and the communication device. */
+    /**
+     * Before the AudioRecord is created: log the starting state, set the audio
+     * mode and the communication device. If anything here throws, whatever was
+     * already changed is put back before the exception leaves, so a failed
+     * start never leaves the phone in call mode or on SCO. [close] must still
+     * be called (it is idempotent about the route).
+     */
     fun prepare() {
+        try {
+            setUp()
+        } catch (t: Throwable) {
+            Log.e(TAG, "Session $sessionId: test mode setup failed; restoring the audio route", t)
+            log("prepare_failed", mapOf("error" to t.toString()))
+            restoreAudio()
+            throw t
+        }
+    }
+
+    private fun setUp() {
         log("session_start", linkedMapOf(
             "session_id" to sessionId,
             "config" to configMap(),
@@ -119,6 +142,7 @@ class TestModeSession(
             MicInput.BLUETOOTH -> {
                 val comm = am.availableCommunicationDevices.firstOrNull { it.type in BLUETOOTH_COMM_TYPES }
                 if (comm == null) {
+                    bluetoothUnavailable = true
                     log("bluetooth_unavailable", mapOf("communication_devices" to am.availableCommunicationDevices.map(::describe)))
                 } else {
                     val ok = am.setCommunicationDevice(comm)
@@ -131,6 +155,7 @@ class TestModeSession(
                 .firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
             MicInput.DEFAULT -> Unit
         }
+        faultAfterRouteSet?.invoke()
         am.addOnCommunicationDeviceChangedListener({ r -> handler.post(r) }, communicationListener)
         am.registerAudioDeviceCallback(deviceCallback, handler)
         am.registerAudioRecordingCallback(recordingCallback, handler)
@@ -177,14 +202,65 @@ class TestModeSession(
             "transcript" to turn.transcript?.text,
             "input_devices" to t?.inputDevices,
             "tts_overlap_ms" to t?.ttsOverlapMs,
-            "tts_utterances" to t?.ttsUtterances,
+            "tts_phrases" to t?.ttsPhrases,
         ))
     }
 
-    /** Ends test mode: stops the phrases, unregisters, restores the route and mode, and closes the log. */
+    /**
+     * Ends test mode: stops the phrases, unregisters, restores the route and
+     * mode, and closes the log. Each step runs on its own, so one that throws
+     * never keeps the audio route from being restored.
+     */
     fun close() {
+        try {
+            step("stop TTS") { stopTts() }
+            step("unregister communication listener") { am.removeOnCommunicationDeviceChangedListener(communicationListener) }
+            step("unregister device callback") { am.unregisterAudioDeviceCallback(deviceCallback) }
+            step("unregister recording callback") { am.unregisterAudioRecordingCallback(recordingCallback) }
+            step("unregister playback callback") { am.unregisterAudioPlaybackCallback(playbackCallback) }
+            step("unregister routing listener") { record?.removeOnRoutingChangedListener(routingListener) }
+            val cleared = communicationSet
+            restoreAudio()
+            step("log the end") {
+                log("session_end", linkedMapOf(
+                    "phrases" to counts,
+                    "communication_cleared" to cleared,
+                    "mode" to modeName(am.mode),
+                    "communication_device" to am.communicationDevice?.let(::describe),
+                ))
+            }
+        } finally {
+            thread.quitSafely()
+            events.close()
+        }
+    }
+
+    /**
+     * Puts back what [prepare] changed: the communication device, then the
+     * audio mode, each attempted even if the other throws. Idempotent.
+     */
+    private fun restoreAudio() {
+        if (communicationSet) {
+            step("clear the communication device") { am.clearCommunicationDevice() }
+            communicationSet = false
+        }
+        previousMode?.let { mode ->
+            step("restore the audio mode") { am.mode = mode }
+            previousMode = null
+        }
+    }
+
+    private inline fun step(what: String, block: () -> Unit) {
+        try {
+            block()
+        } catch (t: Throwable) {
+            Log.e(TAG, "Session $sessionId: could not $what", t)
+        }
+    }
+
+    private fun stopTts() {
         val done = CountDownLatch(1)
-        handler.post {
+        val posted = handler.post {
             handler.removeCallbacks(tick)
             // A phrase cut off by the end of the Session: close its interval here, since the
             // engine's onStop arrives after this thread has quit.
@@ -198,21 +274,7 @@ class TestModeSession(
             tts = null
             done.countDown()
         }
-        done.await(2, TimeUnit.SECONDS)
-        runCatching { am.removeOnCommunicationDeviceChangedListener(communicationListener) }
-        runCatching { am.unregisterAudioDeviceCallback(deviceCallback) }
-        runCatching { am.unregisterAudioRecordingCallback(recordingCallback) }
-        runCatching { am.unregisterAudioPlaybackCallback(playbackCallback) }
-        runCatching { record?.removeOnRoutingChangedListener(routingListener) }
-        if (communicationSet) am.clearCommunicationDevice()
-        previousMode?.let { am.mode = it }
-        log("session_end", linkedMapOf(
-            "phrases" to counts,
-            "communication_cleared" to communicationSet,
-            "mode" to modeName(am.mode),
-        ))
-        thread.quitSafely()
-        events.close()
+        if (posted) done.await(2, TimeUnit.SECONDS)
     }
 
     // --- TTS ---
@@ -241,14 +303,8 @@ class TestModeSession(
             "usage" to config.ttsUsage.json,
             "volume_stream" to ttsAttributes.volumeControlStream,
         ))
-        speak("announce", announcement())
+        speak("announce", Announcement.text(config, tracker.currentInput, bluetoothUnavailable))
         handler.postDelayed(tick, config.ttsIntervalMs.toLong())
-    }
-
-    private fun announcement() = buildString {
-        append("Test mode. ")
-        if (config.label.isNotEmpty()) append(config.label.replace('-', ' ')).append(". ")
-        append(config.micSource.json.replace('_', ' ')).append(", ").append(config.micInput.json).append(" input.")
     }
 
     private fun speak(id: String, text: String) {
@@ -257,11 +313,11 @@ class TestModeSession(
         // A phrase with no end callback after LOST_MS never played, or its callbacks were lost: say so, move on.
         val nowMs = SystemClock.elapsedRealtime()
         for (old in inFlight.filter { nowMs - (requestedAtMs[it] ?: nowMs) > LOST_MS }) {
-            log("tts_lost", mapOf("utterance" to old, "started" to (old in startSample)))
+            log("tts_lost", mapOf("phrase" to old, "started" to (old in startSample)))
             phraseEnded(old, SystemClock.elapsedRealtimeNanos(), "tts_lost", null)
         }
         if (inFlight.isNotEmpty()) {
-            log("tts_skipped", mapOf("utterance" to id, "why" to "still speaking $inFlight"))
+            log("tts_skipped", mapOf("phrase" to id, "why" to "still speaking $inFlight"))
             return
         }
         counts["requested"] = counts.getValue("requested") + 1
@@ -272,14 +328,14 @@ class TestModeSession(
             requestedAtMs[id] = nowMs
         }
         log("tts_request", linkedMapOf(
-            "utterance" to id,
+            "phrase" to id,
             "text" to text,
             "result" to if (result == TextToSpeech.SUCCESS) "success" else "error",
             "volume" to am.getStreamVolume(stream),
             "volume_max" to am.getStreamMaxVolume(stream),
             "output_devices" to ttsOutputs(),
         ))
-        if (am.getStreamVolume(stream) == 0) log("tts_inaudible", mapOf("utterance" to id, "why" to "stream volume is 0"))
+        if (am.getStreamVolume(stream) == 0) log("tts_inaudible", mapOf("phrase" to id, "why" to "stream volume is 0"))
     }
 
     private val progress = object : UtteranceProgressListener() {
@@ -316,7 +372,7 @@ class TestModeSession(
         sample?.let { startSample[id] = it }
         playerSeen[id] = am.activePlaybackConfigurations.any(::isOurUsage)
         log("tts_start", linkedMapOf(
-            "utterance" to id,
+            "phrase" to id,
             "sample" to sample,
             "output_devices" to ttsOutputs(),
             "players" to am.activePlaybackConfigurations.map(::describePlayer),
@@ -339,10 +395,10 @@ class TestModeSession(
             else -> "errors"
         }
         counts[counter] = counts.getValue(counter) + 1
-        val fields = linkedMapOf<String, Any?>("utterance" to id, "sample" to end)
+        val fields = linkedMapOf<String, Any?>("phrase" to id, "sample" to end)
         errorCode?.let { fields["error_code"] = it }
         if (start != null && end != null) {
-            val sr = SAMPLE_RATE
+            val sr = sampleRate
             val during = tracker.micDbfs(start, end)
             val before = tracker.micDbfs(maxOf(0L, start - sr), start)
             fields["duration_ms"] = (end - start) * 1000 / sr
@@ -356,7 +412,7 @@ class TestModeSession(
         if (event == "tts_done" && !seen) {
             // The engine said it finished, yet no player with our usage was ever active: likely silent.
             counts["unobserved"] = counts.getValue("unobserved") + 1
-            log("tts_unobserved", mapOf("utterance" to id))
+            log("tts_unobserved", mapOf("phrase" to id))
         }
     }
 
@@ -421,15 +477,7 @@ class TestModeSession(
             mapOf("type" to typeName(a.type))
         } else null
 
-    private fun configMap() = linkedMapOf(
-        "label" to config.label,
-        "mic_source" to config.micSource.json,
-        "mic_input" to config.micInput.json,
-        "audio_mode" to config.audioMode.json,
-        "tts_interval_ms" to config.ttsIntervalMs,
-        "tts_usage" to config.ttsUsage.json,
-        "tts_phrase" to config.ttsPhrase,
-    )
+    private fun configMap() = Json.parseObject(config.toJson()) // the file's own keys, once
 
     private fun granted(permission: String) = context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
 
@@ -469,7 +517,6 @@ class TestModeSession(
 
     companion object {
         private const val TAG = "stsloop.TestMode"
-        private const val SAMPLE_RATE = 16_000
         private const val LOST_MS = 30_000L
 
         private val BLUETOOTH_COMM_TYPES = setOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET)

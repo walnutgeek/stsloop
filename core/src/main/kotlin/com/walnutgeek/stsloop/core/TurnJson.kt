@@ -59,7 +59,7 @@ object TurnJson {
             append("    \"tts_usage\": ").str(c.ttsUsage.json).append(",\n")
             append("    \"tts_overlap\": ").append(t.ttsOverlap).append(",\n")
             append("    \"tts_overlap_ms\": ").append(t.ttsOverlapMs).append(",\n")
-            append("    \"tts_utterances\": ").strList(t.ttsUtterances).append("\n")
+            append("    \"tts_phrases\": ").strList(t.ttsPhrases).append("\n")
             append("  },\n")
         }
         append("  \"app_version\": ").str(turn.appVersion).append(",\n")

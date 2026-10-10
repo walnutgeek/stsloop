@@ -180,7 +180,9 @@ path, and logs every routing fact. Each Turn gets a `test` block in
 `corpus/sessions/<started_at>-<session_id>.jsonl` (one JSON object per line,
 append-only; the transcript list skips that directory).
 
-The buttons write `files/testmode.json`, read at every Session start. Every key
+A release (non-debuggable) build ignores the file, and its manifest has none
+of test mode's extra permissions (they are in `audio/src/debug/`). The buttons
+write `files/testmode.json`, read at every Session start. Every key
 is optional and falls back per key like `timings.json`; a missing file means
 test mode is off:
 

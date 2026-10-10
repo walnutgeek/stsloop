@@ -223,7 +223,7 @@ class TurnJsonTest {
         config = TestConfig(enabled = true, label = "desk", micSource = MicSource.MIC, micInput = MicInput.BUILTIN),
         inputDevices = listOf("builtin_mic"),
         ttsOverlapMs = 820,
-        ttsUtterances = listOf("tts-3"),
+        ttsPhrases = listOf("tts-3"),
     )
 
     @Test
@@ -242,7 +242,7 @@ class TurnJsonTest {
                     "    \"tts_usage\": \"assistant\",\n" +
                     "    \"tts_overlap\": true,\n" +
                     "    \"tts_overlap_ms\": 820,\n" +
-                    "    \"tts_utterances\": [\"tts-3\"]\n" +
+                    "    \"tts_phrases\": [\"tts-3\"]\n" +
                     "  },\n" +
                     "  \"app_version\"",
             ),
@@ -253,12 +253,12 @@ class TurnJsonTest {
     }
 
     @Test
-    fun `a Turn with no TTS playing has tts_overlap false and no utterances`() {
-        val json = TurnJson.encode(turn.copy(test = test.copy(ttsOverlapMs = 0, ttsUtterances = emptyList(), inputDevices = emptyList())))
+    fun `a Turn with no TTS playing has tts_overlap false and no phrases`() {
+        val json = TurnJson.encode(turn.copy(test = test.copy(ttsOverlapMs = 0, ttsPhrases = emptyList(), inputDevices = emptyList())))
         val t = Json.parseObject(json)["test"] as Map<*, *>
         assertEquals(false, t["tts_overlap"])
         assertEquals(0L, t["tts_overlap_ms"])
-        assertEquals(emptyList<String>(), t["tts_utterances"])
+        assertEquals(emptyList<String>(), t["tts_phrases"])
         assertEquals(emptyList<String>(), t["input_devices"])
     }
 

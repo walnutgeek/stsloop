@@ -87,6 +87,14 @@ class SessionService : Service() {
 
         fun corpusDir(context: Context) = File(context.filesDir, "corpus")
 
+        /**
+         * Bluetooth test mode changes the phone's audio mode and route and
+         * speaks over the user, so it only ever runs in a debuggable build;
+         * a release build ignores `testmode.json`.
+         */
+        fun testModeAllowed(context: Context): Boolean =
+            context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+
         /** The Bluetooth test mode config the next Session will use (`files/testmode.json`). */
         fun testConfig(context: Context): TestConfig = TurnCapture.loadTestConfig(context.filesDir)
 
@@ -250,9 +258,14 @@ class SessionService : Service() {
             Log.i(TAG, "Session $sessionId buckets: ${buckets.toJson().replace(Regex("\\s+"), " ")}")
             vad = SpeechModels.newVad(assets)
             val testConfig = TurnCapture.loadTestConfig(filesDir)
-            if (testConfig.enabled) {
+            if (testConfig.enabled && !testModeAllowed(this)) {
+                Log.w(TAG, "Session $sessionId: ignoring ${TestConfig.FILE}; test mode is for debug builds only")
+            } else if (testConfig.enabled) {
                 Log.i(TAG, "Session $sessionId is a test Session: ${testConfig.summary()}")
-                test = TestModeSession(this, testConfig, sessionId, corpusDir(this), SAMPLE_RATE_HZ).also { it.prepare() }
+                // Assigned before prepare(), so the finally below always closes it and puts the route back.
+                val t = TestModeSession(this, testConfig, sessionId, corpusDir(this), SAMPLE_RATE_HZ)
+                test = t
+                t.prepare()
             }
             val minBytes = AudioRecord.getMinBufferSize(
                 SAMPLE_RATE_HZ, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,

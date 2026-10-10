@@ -101,6 +101,7 @@ class TurnRow:
     noise: float | None = None  # p10 of 100 ms RMS
     speech: float | None = None  # p90 of 100 ms RMS
     problem: str | None = None
+    wav: Path | None = None
 
     @property
     def config_key(self) -> tuple:
@@ -119,24 +120,34 @@ def read_turn(d: Path) -> TurnRow:
     tr = t.get("transcript")
     text = tr.get("text") if isinstance(tr, dict) and isinstance(tr.get("text"), str) else None
     test = t.get("test") if isinstance(t.get("test"), dict) else None
-    row = TurnRow(d.name, t.get("session_id"), text, test)
     audio = t.get("audio") if isinstance(t.get("audio"), dict) else {}
-    wav = d / (audio.get("file") or "audio.wav")
+    row = TurnRow(d.name, t.get("session_id"), text, test)
+    row.wav = d / (audio.get("file") or "audio.wav")
+    return row
+
+
+def measure(row: TurnRow) -> None:
+    """Reads the Turn's audio for its noise floor and speech level (the slow part, so only for Turns reported)."""
     try:
-        frames = frame_rms(wav)
+        frames = frame_rms(row.wav)
         if frames:
             row.noise = percentile(frames, 10)
             row.speech = percentile(frames, 90)
     except (OSError, ValueError, EOFError, wave.Error) as e:
         row.problem = f"audio: {e}"
-    return row
 
 
-def read_corpus(corpus: Path) -> list[TurnRow]:
+def read_corpus(corpus: Path, keep=lambda row: True) -> list[TurnRow]:
+    """Every Turn's turn.json; audio levels are read only for the Turns [keep] selects (and unreadable ones)."""
     rows = []
     for d in sorted(corpus.iterdir()):
         if d.is_dir() and d.name != SESSIONS_DIR and not d.name.startswith("."):
-            rows.append(read_turn(d))
+            row = read_turn(d)
+            if row.problem:
+                rows.append(row)
+            elif keep(row):
+                measure(row)
+                rows.append(row)
     return rows
 
 
@@ -249,18 +260,22 @@ def fmt(v, spec="") -> str:
     return format(v, spec)
 
 
+def cell(v) -> str:
+    """A Markdown table cell: pipes and newlines would break the row."""
+    return str(v).replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
+
+
 def level(rms: float | None) -> str:
     return "-" if rms is None else f"{rms:.0f} ({dbfs(rms):.1f} dBFS)"
 
 
 def report(corpus: Path, sessions: set[str] | None = None, include_untested: bool = False) -> str:
-    rows = read_corpus(corpus)
-    if sessions:
-        rows = [r for r in rows if r.session_id in sessions]
+    def keep(r: TurnRow) -> bool:
+        return (not sessions or r.session_id in sessions) and (include_untested or r.test is not None)
+
+    rows = read_corpus(corpus, keep)
     problems = [r for r in rows if r.problem]
     rows = [r for r in rows if not (r.problem or "").startswith("turn.json")]  # nothing to group by
-    if not include_untested:
-        rows = [r for r in rows if r.test is not None]
     out = [f"# Test drive report: {corpus}", ""]
     out.append(f"{len(rows)} Turn(s) in {len({r.session_id for r in rows})} Session(s).")
     out.append("")
@@ -273,7 +288,7 @@ def report(corpus: Path, sessions: set[str] | None = None, include_untested: boo
         s = g.summary()
         empty = "-" if s["empty_share"] is None else f"{s['empty_share']:.0%}"
         out.append(
-            f"| {g.name()} | {s['turns']} | {empty} | {s['no_transcript']} | {level(s['noise_rms'])} | "
+            f"| {cell(g.name())} | {s['turns']} | {empty} | {s['no_transcript']} | {level(s['noise_rms'])} | "
             f"{level(s['speech_rms'])} | {fmt(s['snr_db'], '.1f')} dB | {', '.join(s['input_devices']) or '-'} | "
             f"{s['tts_overlap']} |"
         )
@@ -298,7 +313,7 @@ def report(corpus: Path, sessions: set[str] | None = None, include_untested: boo
             phrase = phrases.get(r.session_id, DEFAULT_PHRASE)
             like = "yes" if phrase_like(r.transcript, phrase) else "no"
             text = "(none)" if r.transcript is None else (r.transcript or "(empty)")
-            out.append(f"| {g.name()} | {r.dir} | {r.test.get('tts_overlap_ms')} ms | {like} | {text} |")
+            out.append(f"| {cell(g.name())} | {cell(r.dir)} | {r.test.get('tts_overlap_ms')} ms | {like} | {cell(text)} |")
     out.append("")
     out.append("## Sessions (route-event logs)")
     out.append("")

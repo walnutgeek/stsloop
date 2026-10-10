@@ -3,7 +3,6 @@ package com.walnutgeek.stsloop.app
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
-import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -50,7 +49,7 @@ class MainActivity : Activity() {
         }
         corpusCount = TextView(this).apply { textSize = 16f; setPadding(0, 32, 0, 8) }
         // Bluetooth test mode (#27) is a debug-build experiment, never part of the product UI.
-        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) testMode = TestModePane()
+        if (SessionService.testModeAllowed(this)) testMode = TestModePane()
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(toggle)
@@ -152,16 +151,19 @@ class MainActivity : Activity() {
     /**
      * Debug-only controls for Bluetooth test mode: each tap cycles one setting
      * and rewrites `files/testmode.json`, which the next Session reads, so
-     * switching configuration while parked is Stop, tap, Start.
+     * switching configuration while parked is Stop, tap, Start. The file is
+     * read and written on a background thread; taps before the first read
+     * are ignored.
      */
     private inner class TestModePane {
-        var config: TestConfig = SessionService.testConfig(this@MainActivity)
+        /** The config shown; null until the first read finishes. */
+        var config: TestConfig? = null
             private set
-        private val enabled = small { update(config.copy(enabled = !config.enabled)) }
-        private val label = small { update(config.copy(label = TestConfig.LABELS.cycle(config.label))) }
-        private val mic = small { update(config.withPreset(TestConfig.MIC_PRESETS.next(config.preset))) }
-        private val interval = small { update(config.copy(ttsIntervalMs = TestConfig.TTS_INTERVALS_MS.cycle(config.ttsIntervalMs))) }
-        private val usage = small { update(config.copy(ttsUsage = TtsUsage.entries.toList().cycle(config.ttsUsage))) }
+        private val enabled = small { c -> c.copy(enabled = !c.enabled) }
+        private val label = small { c -> c.copy(label = TestConfig.LABELS.next(c.label)) }
+        private val mic = small { c -> c.withPreset(TestConfig.MIC_PRESETS.next(c.preset)) }
+        private val interval = small { c -> c.copy(ttsIntervalMs = TestConfig.TTS_INTERVALS_MS.next(c.ttsIntervalMs)) }
+        private val usage = small { c -> c.copy(ttsUsage = TtsUsage.entries.next(c.ttsUsage)) }
         private val note = TextView(this@MainActivity).apply { textSize = 13f; alpha = 0.7f }
         val view = LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.VERTICAL
@@ -169,37 +171,44 @@ class MainActivity : Activity() {
             for (v in listOf(enabled, label, mic, interval, usage, note)) addView(v)
         }
 
-        private fun small(onClick: () -> Unit) = Button(this@MainActivity).apply {
+        private fun small(change: (TestConfig) -> TestConfig) = Button(this@MainActivity).apply {
             textSize = 14f
             isAllCaps = false
-            setOnClickListener { onClick() }
+            setOnClickListener { config?.let { save(change(it)) } }
         }
 
-        private fun <T> List<T>.cycle(current: T): T = this[(indexOf(current) + 1) % size]
-
-        private fun update(next: TestConfig) {
-            try {
-                SessionService.saveTestConfig(this@MainActivity, next)
-                config = next
-            } catch (e: Exception) {
-                Log.e(TAG, "cannot write the test mode config", e)
-                note.text = "Could not save: ${e.message}"
-                return
+        private fun save(next: TestConfig) {
+            config = next
+            show(next)
+            io.execute {
+                val error = runCatching { SessionService.saveTestConfig(this@MainActivity, next) }.exceptionOrNull()
+                if (error != null) {
+                    Log.e(TAG, "cannot write the test mode config", error)
+                    runOnUiThread { note.text = "Could not save: ${error.message}" }
+                }
             }
-            refresh()
         }
 
+        /** Re-reads the file (it may have been pushed over adb). */
         fun refresh() {
-            config = SessionService.testConfig(this@MainActivity) // the file may have been pushed over adb
-            enabled.text = if (config.enabled) "Test mode: ON" else "Test mode: off"
-            val on = config.enabled
-            for (b in listOf(label, mic, interval, usage)) b.visibility = if (on) Button.VISIBLE else Button.GONE
-            label.text = "Condition: ${config.label.ifEmpty { "(none)" }}"
-            mic.text = "Mic: ${config.preset}"
-            interval.text = if (config.ttsOn) "TTS every ${config.ttsIntervalMs / 1000} s" else "TTS off"
-            usage.text = "TTS usage: ${config.ttsUsage.json}"
+            io.execute {
+                val read = SessionService.testConfig(this@MainActivity)
+                runOnUiThread {
+                    config = read
+                    show(read)
+                }
+            }
+        }
+
+        private fun show(c: TestConfig) {
+            enabled.text = if (c.enabled) "Test mode: ON" else "Test mode: off"
+            for (b in listOf(label, mic, interval, usage)) b.visibility = if (c.enabled) Button.VISIBLE else Button.GONE
+            label.text = "Condition: ${c.label.ifEmpty { "(none)" }}"
+            mic.text = "Mic: ${c.preset}"
+            interval.text = if (c.ttsOn) "TTS every ${c.ttsIntervalMs / 1000} s" else "TTS off"
+            usage.text = "TTS usage: ${c.ttsUsage.json}"
             note.text = when {
-                !on -> ""
+                !c.enabled -> ""
                 SessionService.isActive -> "Changes apply at the next Session start."
                 else -> "Applies at the next Session start."
             }
@@ -208,6 +217,9 @@ class MainActivity : Activity() {
 
     private companion object {
         const val REQUEST_PERMISSIONS = 1
+        // Test-mode config reads and writes, off the main thread; one for the process.
+        val io: java.util.concurrent.ExecutorService =
+            java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "stsloop-testmode").apply { isDaemon = true } }
         const val TAG = "stsloop.Main"
     }
 }

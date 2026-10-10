@@ -4,17 +4,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Bluetooth test mode (#27): the car's hands-free mic via setCommunicationDevice,
-         and the audio mode for the in_communication preset. -->
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-
-    <!-- Test mode speaks through the system TextToSpeech engine (package visibility, API 30+). -->
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.TTS_SERVICE" />
-        </intent>
-    </queries>
+    <!-- Bluetooth test mode's permissions live in src/debug/AndroidManifest.xml only. -->
 
     <application>
         <!-- A Session. Typed `microphone` (a while-in-use type), never shortService.

@@ -49,8 +49,8 @@ data class MicPreset(val source: MicSource, val input: MicInput, val mode: Audio
     override fun toString() = "${source.json}/${input.json}" + if (mode == AudioMode.NORMAL) "" else " (${mode.json})"
 }
 
-/** The preset after [current], wrapping around; a combination that is no preset goes to the first. */
-fun List<MicPreset>.next(current: MicPreset): MicPreset = this[(indexOf(current) + 1) % size]
+/** The element after [current], wrapping around; a value not in the list goes to the first. For the debug UI's cycling buttons. */
+fun <T> List<T>.next(current: T): T = this[(indexOf(current) + 1) % size]
 
 /**
  * Bluetooth test mode (#27): a debug configuration that turns a Session into
@@ -100,7 +100,10 @@ data class TestConfig(
     }
 
     /** The file format [parse] reads, every key present. */
-    fun toJson(): String = listOf(
+    fun toJson(): String = jsonFields().joinToString(",\n", prefix = "{\n", postfix = "\n}\n") { (k, v) -> "  \"$k\": $v" }
+
+    /** Each key of the file with its value as JSON text; the one list of keys. */
+    private fun jsonFields(): List<Pair<String, String>> = listOf(
         "enabled" to enabled.toString(),
         "label" to jsonString(label),
         "mic_source" to jsonString(micSource.json),
@@ -109,7 +112,7 @@ data class TestConfig(
         "tts_interval_ms" to ttsIntervalMs.toString(),
         "tts_usage" to jsonString(ttsUsage.json),
         "tts_phrase" to jsonString(ttsPhrase),
-    ).joinToString(",\n", prefix = "{\n", postfix = "\n}\n") { (k, v) -> "  \"$k\": $v" }
+    )
 
     /** The result of [parse]: the config to use, and each rejected key as `"key: why"`. */
     data class Parsed(val config: TestConfig, val rejected: List<String>)
@@ -171,7 +174,7 @@ data class TestConfig(
 
         private fun show(v: Any?): String = if (v is String) jsonString(v) else v.toString()
 
-        val KEYS = listOf("enabled", "label", "mic_source", "mic_input", "audio_mode", "tts_interval_ms", "tts_usage", "tts_phrase")
+        val KEYS: List<String> by lazy { TestConfig().jsonFields().map { it.first } }
 
         /**
          * Parses the file, falling back **per key** like `timings.json`: an

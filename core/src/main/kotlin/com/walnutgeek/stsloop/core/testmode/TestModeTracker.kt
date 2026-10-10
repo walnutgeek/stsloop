@@ -6,15 +6,17 @@ import com.walnutgeek.stsloop.core.turn.Utterance
  * A Turn's `test` block in `turn.json`: the Session's test [config], the input
  * devices routed while its audio was captured, and how much TTS played
  * during it. [ttsOverlap] (any phrase intersecting the Turn's audio span)
- * marks a self-capture candidate.
+ * marks a self-capture candidate. [ttsPhrases] are the test phrases' ids
+ * (`tts-N`, `announce`); "utterance" is kept for the audio of a human Turn.
+ * The `turn.json` keys are permanent once a Corpus holds them.
  */
 data class TurnTest(
     val config: TestConfig,
     val inputDevices: List<String>,
     val ttsOverlapMs: Long,
-    val ttsUtterances: List<String>,
+    val ttsPhrases: List<String>,
 ) {
-    val ttsOverlap: Boolean get() = ttsUtterances.isNotEmpty()
+    val ttsOverlap: Boolean get() = ttsPhrases.isNotEmpty()
 }
 
 /**
@@ -66,7 +68,7 @@ class TestModeTracker(val config: TestConfig, private val sampleRate: Int) {
             config = config,
             inputDevices = inputs.during(utterance.startSample, utterance.endSample),
             ttsOverlapMs = o.samples * 1000 / sampleRate,
-            ttsUtterances = o.utterances,
+            ttsPhrases = o.phrases,
         )
     }
 

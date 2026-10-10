@@ -52,17 +52,17 @@ class TimelineTest {
     @Test
     fun `no TTS, no overlap`() {
         val o = TtsTimeline().overlap(0, 1000, now = 1000)
-        assertFalse(o.any)
+        assertFalse(o.phrases.isNotEmpty())
         assertEquals(0, o.samples)
-        assertEquals(emptyList<String>(), o.utterances)
+        assertEquals(emptyList<String>(), o.phrases)
     }
 
     @Test
     fun `an interval inside the Turn overlaps by its length`() {
         val o = timeline(Triple("tts-1", 200, 500)).overlap(100, 1000, now = 2000)
-        assertTrue(o.any)
+        assertTrue(o.phrases.isNotEmpty())
         assertEquals(300, o.samples)
-        assertEquals(listOf("tts-1"), o.utterances)
+        assertEquals(listOf("tts-1"), o.phrases)
     }
 
     @Test
@@ -70,18 +70,18 @@ class TimelineTest {
         val t = timeline(Triple("a", 0, 150), Triple("b", 900, 1200))
         val o = t.overlap(100, 1000, now = 2000)
         assertEquals(50 + 100, o.samples)
-        assertEquals(listOf("a", "b"), o.utterances)
+        assertEquals(listOf("a", "b"), o.phrases)
     }
 
     @Test
     fun `touching end points do not overlap`() {
         val t = timeline(Triple("before", 0, 100), Triple("after", 1000, 1100))
-        assertFalse(t.overlap(100, 1000, now = 2000).any)
+        assertFalse(t.overlap(100, 1000, now = 2000).phrases.isNotEmpty())
     }
 
     @Test
     fun `an interval wholly outside the Turn does not overlap`() {
-        assertFalse(timeline(Triple("x", 2000, 2500)).overlap(0, 1000, now = 3000).any)
+        assertFalse(timeline(Triple("x", 2000, 2500)).overlap(0, 1000, now = 3000).phrases.isNotEmpty())
     }
 
     @Test
@@ -89,14 +89,14 @@ class TimelineTest {
         val t = timeline(Triple("open", 800, null))
         val o = t.overlap(500, 1000, now = 900)
         assertEquals(100, o.samples)
-        assertEquals(listOf("open"), o.utterances)
+        assertEquals(listOf("open"), o.phrases)
         // ...and is clipped by the Turn's end once now has passed it.
         assertEquals(200, t.overlap(500, 1000, now = 5000).samples)
     }
 
     @Test
     fun `a phrase that started after now cannot overlap yet`() {
-        assertFalse(timeline(Triple("later", 950, null)).overlap(0, 1000, now = 900).any)
+        assertFalse(timeline(Triple("later", 950, null)).overlap(0, 1000, now = 900).phrases.isNotEmpty())
     }
 
     @Test
@@ -113,7 +113,7 @@ class TimelineTest {
     fun `old intervals can be dropped once no open Turn can reach them`() {
         val t = timeline(Triple("old", 0, 100), Triple("new", 5000, 5100), Triple("open", 6000, null))
         t.forgetBefore(1000)
-        assertEquals(listOf("new", "open"), t.overlap(0, 10_000, now = 10_000).utterances)
+        assertEquals(listOf("new", "open"), t.overlap(0, 10_000, now = 10_000).phrases)
     }
 
     // --- StepTimeline: which input device was routed during a Turn ---
@@ -146,7 +146,6 @@ class TimelineTest {
         t.set(50, "a")
         t.set(100, "b")
         assertEquals(listOf("a", "b"), t.during(0, 200))
-        assertEquals(2, t.size)
     }
 
     @Test

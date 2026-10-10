@@ -43,7 +43,7 @@ class TestModeTrackerTest {
         val test = t.turnTest(u(1200, 2000), nowNs = 3000 * ms)
         assertEquals(config, test.config)
         assertEquals(400, test.ttsOverlapMs)
-        assertEquals(listOf("tts-1"), test.ttsUtterances)
+        assertEquals(listOf("tts-1"), test.ttsPhrases)
         assertTrue(test.ttsOverlap)
         assertFalse(t.turnTest(u(1700, 2500), nowNs = 3000 * ms).ttsOverlap)
     }

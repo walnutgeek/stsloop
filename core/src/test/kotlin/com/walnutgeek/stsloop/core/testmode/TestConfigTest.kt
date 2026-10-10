@@ -165,6 +165,40 @@ class TestConfigTest {
     }
 
     @Test
+    fun `next cycles any list`() {
+        assertEquals(10_000, TestConfig.TTS_INTERVALS_MS.next(5_000))
+        assertEquals(5_000, TestConfig.TTS_INTERVALS_MS.next(0))
+        assertEquals("desk", TestConfig.LABELS.next("hand-typed"))
+    }
+
+    @Test
+    fun `the announcement names the mic actually routed, not the one asked for`() {
+        val c = TestConfig(enabled = true, label = "parked-ac-off", micSource = MicSource.VOICE_RECOGNITION, micInput = MicInput.BUILTIN)
+        assertEquals(
+            "Test mode. parked ac off. voice recognition, built in mic.",
+            Announcement.text(c, routedInput = "builtin_mic", bluetoothUnavailable = false),
+        )
+        assertEquals(
+            "Test mode. voice recognition, bluetooth s c o mic.",
+            Announcement.text(TestConfig(micInput = MicInput.BLUETOOTH), routedInput = "bluetooth_sco", bluetoothUnavailable = false),
+        )
+    }
+
+    @Test
+    fun `a Bluetooth fallback is said aloud`() {
+        val c = TestConfig(micSource = MicSource.VOICE_COMMUNICATION, micInput = MicInput.BLUETOOTH, audioMode = AudioMode.IN_COMMUNICATION)
+        assertEquals(
+            "Test mode. voice communication, bluetooth unavailable, built in mic. Call mode.",
+            Announcement.text(c, routedInput = "builtin_mic", bluetoothUnavailable = true),
+        )
+    }
+
+    @Test
+    fun `an unknown route is said as unknown`() {
+        assertEquals("Test mode. mic, unknown mic.", Announcement.text(TestConfig(micSource = MicSource.MIC), null, false))
+    }
+
+    @Test
     fun `summary names the configuration in one line`() {
         assertEquals(
             "desk: mic/builtin, normal mode, TTS every 5 s (assistant)",

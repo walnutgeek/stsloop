@@ -28,10 +28,8 @@ class SampleClock(private val sampleRate: Int) {
     }
 }
 
-/** How much TTS playback a span of the stream overlapped: [samples] in total, and which phrases. */
-data class TtsOverlap(val samples: Long, val utterances: List<String>) {
-    val any: Boolean get() = utterances.isNotEmpty()
-}
+/** How much TTS playback a span of the stream overlapped: [samples] in total, and which [phrases]. */
+data class TtsOverlap(val samples: Long, val phrases: List<String>)
 
 /**
  * The TTS playback intervals of a Session, on the sample clock: from the
@@ -82,8 +80,6 @@ class TtsTimeline {
 /** A value that changes at points on the sample clock, e.g. the routed input device. Thread-safe. */
 class StepTimeline<T> {
     private val steps = mutableListOf<Pair<Long, T>>()
-
-    val size: Int @Synchronized get() = steps.size
 
     val latest: T? @Synchronized get() = steps.lastOrNull()?.second
 

@@ -10,12 +10,24 @@ Expect the phone to transcribe its own voice in some configurations. That is
 what is being measured. Test Turns are tagged in `turn.json` (`test` block), so
 they never mix with real Notes.
 
+## Safety first
+
+- **While the car is moving, the driver reads nothing, taps nothing and ticks
+  nothing.** Do the driving runs either with a **passenger** who reads the
+  phrases aloud (from the passenger seat, toward the phone) and keeps the
+  checklist, or with the driver saying only the **three short memorised
+  phrases** below, eyes on the road. Note afterwards which way it was done.
+- Change configuration **only when parked or stopped safely**. A driving run
+  is started before pulling out and stopped after pulling over.
+- Fill in the checklist only when parked.
+
 ## Before you leave
 
 - [ ] The debug build with speech is installed (the app lists transcripts, not "(no transcript)").
 - [ ] Phone paired and connected to the car over Bluetooth; media volume up to normal.
 - [ ] Open stsloop. Tap **Test mode: off** to turn it **ON**. The test controls appear.
 - [ ] Keep the phone where it usually rides (mount or cup holder). Note it here: ________
+- [ ] Memorise the three driving phrases (below).
 
 ## Switching configuration (parked, ~10 s)
 
@@ -28,8 +40,10 @@ Stop Session → tap the buttons → Start Session. Settings apply at the next S
 | **TTS** | every 5 s → 10 s → 20 s → off |
 | **TTS usage** | `assistant` → `media` → `navigation` → `voice_communication` |
 
-At each Start the phone announces the configuration aloud ("Test mode. parked ac
-off. voice recognition, builtin input."), so you can confirm it by ear.
+At each Start the phone announces the configuration aloud, naming the mic it
+**actually** got, e.g. "Test mode. parked ac off. voice recognition, built in
+mic." If it says **"bluetooth unavailable, built in mic"**, the Bluetooth preset
+fell back to the phone mic (see below). Presets in call mode end with "Call mode."
 
 Mic presets:
 
@@ -38,18 +52,21 @@ Mic presets:
 | 1 | `voice_recognition/default` | What the first drive used: no preference, the system picks |
 | 2 | `voice_recognition/builtin` | Phone mic, ASR-tuned source |
 | 3 | `mic/builtin` | Phone mic, plain source (louder at the desk: about +10 dB) |
-| 4 | `unprocessed/builtin` | Phone mic, no processing. Very quiet at the desk (−59 dBFS speech, empty transcripts); optional |
+| 4 | `unprocessed/builtin` | Phone mic, no processing. Very quiet at the desk (−59 dBFS speech, empty transcripts). Not in the run table |
 | 5 | `voice_recognition/bluetooth` | Car mic via the hands-free (SCO) communication device |
 | 6 | `voice_communication/bluetooth (in_communication)` | Car mic as a call would use it: call mode + echo cancellation |
 
-## The runs (~2 min each)
+## The runs: exactly 15, ~2 min each
 
-In each run, read the phrase list below once, slowly, at your normal voice,
-**between** the machine's phrases. Then stay silent for the rest of the 2 min
-(that silence measures noise-only Turns).
+One run per box: 5 mic presets × 3 conditions = **15 runs**, about 40 minutes
+with switching. Do all 10 parked runs first, then the 5 driving runs. Set
+**Condition** to match each run.
 
-Tick each box. Write anything odd (an audible route switch, music ducking, the
-car screen showing a call, the phrase not heard) in the margin.
+In each run, wait for the announcement, then say the phrases **between** the
+machine's phrases, slowly, in your normal voice: the full list of six when
+parked, the three driving phrases when moving (or the full list read by a
+passenger). Then stay silent for the rest of the 2 min; that silence measures
+noise-only Turns.
 
 | Condition → / Mic ↓ | parked, AC off | parked, AC on | driving |
 | --- | --- | --- | --- |
@@ -59,11 +76,10 @@ car screen showing a call, the phrase not heard) in the margin.
 | 5 `voice_recognition/bluetooth` | [ ] | [ ] | [ ] |
 | 6 `voice_communication/bluetooth` | [ ] | [ ] | [ ] |
 
-12–15 runs, about 35 minutes with switching. Set **Condition** to match each
-run. Do the parked runs first; while driving, only switch configurations when
-stopped. If time allows, repeat preset 1 parked with **TTS usage**
-`voice_communication`, which sends the phrase over the hands-free route instead
-of A2DP.
+When parked, note anything odd next to the box: an audible route switch, music
+ducking, the car screen showing a call, the phrase not heard. Optional extra
+(parked, if time allows): preset 1 with **TTS usage** `voice_communication`,
+which sends the phrase over the hands-free route instead of A2DP.
 
 What to listen for:
 
@@ -71,7 +87,25 @@ What to listen for:
 - Does anything switch audibly when a Session starts or the phrase plays (music
   pausing, a call-like screen, quality dropping)?
 
-## Phrase list (read in this order)
+### If you hear "bluetooth unavailable"
+
+The phone found no hands-free device to use, so presets 5 and 6 recorded from
+the phone mic instead (logged as `bluetooth_unavailable`). Parked: check the
+phone shows the car as connected *for calls* (Bluetooth settings → the car →
+"Phone calls" on), then Stop and Start again. If it persists, still run the box
+(the fallback is data too) and mark it "BT unavailable".
+
+### After preset 6 (call mode): confirm the phone is back to normal
+
+Call mode should be released when the Session stops. Parked, after stopping a
+preset 6 run: play any music. It should come out of the car speakers in media
+quality, and the car screen should show no call. If it does not, start and stop
+a normal (preset 1) Session; if still stuck, toggle the phone's Bluetooth off
+and on. Afterwards, `adb shell dumpsys audio | grep -iE "mode|communication device"`
+should show mode `NORMAL` and no preferred communication device, and the
+Session's log ends with `session_end` showing `"mode":"normal"`.
+
+## Phrase list (parked: all six, in this order)
 
 1. "Errands, order roofing screws."
 2. "House project, check the joist spacing."
@@ -79,6 +113,8 @@ What to listen for:
 4. "Work, finish the quarterly report draft."
 5. "The quick brown fox jumps over the lazy dog."
 6. "Ideas, a podcast about long road trips."
+
+**Driving phrases** (memorised, the driver says only these): 1, 3 and 5.
 
 Phrases 1, 2, 4 and 6 start with a default Bucket name (`docs/mvp.md`), so they
 also test Declarations under each configuration.
