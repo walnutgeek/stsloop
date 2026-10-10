@@ -91,3 +91,38 @@ It runs Android 17, so the background-audio hardening in
 every on-device measurement is taken on this phone. For screenshots while
 plugged in, `adb shell svc power stayon usb` keeps the screen awake (undo with
 `svc power stayon false`).
+
+### Tuning the timings
+
+The loop's timings (`docs/mvp.md`, "Timings") are read at the start of every
+Session from `files/timings.json` in the app's private storage, so they can be
+changed without a rebuild. The file is optional, and so is every key in it: a
+missing key keeps its default. An unknown key, a duplicate, or an out-of-range
+value makes the app log an error under `stsloop.TurnCapture` and use the
+defaults for that Session. The effective values are logged under
+`stsloop.Session` when a Session starts.
+
+```json
+{
+  "trailing_silence_ms": 1500,
+  "guard_ms": 300,
+  "max_utterance_ms": 60000,
+  "min_utterance_ms": 300,
+  "pre_roll_ms": 300,
+  "speech_threshold": 0.5,
+  "release_threshold": 0.35
+}
+```
+
+`speech_threshold` is the Silero probability that starts an utterance;
+once one is being captured, `release_threshold` is enough to keep it going.
+`pre_roll_ms` of audio before the first speech window is kept in the Turn.
+`guard_ms` is parsed but unused until the machine speaks.
+
+```sh
+# write (the app must be a debug build; takes effect at the next Session)
+mise exec -- adb exec-in run-as com.walnutgeek.stsloop sh -c 'cat > files/timings.json' < timings.json
+# read back, or delete to return to defaults
+mise exec -- adb exec-out run-as com.walnutgeek.stsloop cat files/timings.json
+mise exec -- adb shell run-as com.walnutgeek.stsloop rm files/timings.json
+```

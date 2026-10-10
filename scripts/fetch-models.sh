@@ -9,7 +9,7 @@
 #       {encoder,decoder,joiner}-epoch-99-avg-1-chunk-16-left-128.int8.onnx
 #       tokens.txt  bpe.vocab
 #   audio/src/main/assets/silero_vad.onnx
-#   audio/src/androidTest/assets/test_wavs/0.wav   (upstream test wav)
+#   audio/src/androidTest/assets/test_wavs/{0,1}.wav   (upstream test wavs)
 #
 # Only the int8 chunk-16-left-128 subset (~70 MB) is fetched, file by file
 # from a pinned Hugging Face revision, not the 296 MB tarball. Needs curl,
@@ -84,5 +84,9 @@ fetch https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_
 # HERE AND THERE THE SQUALID QUARTER OF THE BROTHELS".
 fetch "$(hf test_wavs/0.wav)" "$TEST_ASSETS/test_wavs/0.wav" \
   6bc58a4efdf20daac252b6b1502632601a71efe0308f6757dc1eda34891a7e4f
+# A second, longer utterance (16.7 s) for the segmentation test, which splices
+# 0.wav and 1.wav between stretches of silence. Checksum recorded on first download.
+fetch "$(hf test_wavs/1.wav)" "$TEST_ASSETS/test_wavs/1.wav" \
+  5143a6ba93c4b274e2c4ac22deb75c2c48936c853f0519add1de828b6c79cc5a
 
 du -sh "$dir" "$MAIN_ASSETS/silero_vad.onnx"

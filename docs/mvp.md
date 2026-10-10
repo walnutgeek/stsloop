@@ -72,7 +72,9 @@ self-transcription structurally impossible rather than merely unlikely.
 ### Timings — all tunable, none final
 
 These are starting points to be tuned in the car, and they are the most
-important numbers in the product. They should be adjustable without a rebuild.
+important numbers in the product. They should be adjustable without a
+rebuild: they are read from `files/timings.json` at Session start (see the
+README, "Tuning the timings").
 
 | Parameter | Start at | Governs |
 | --- | --- | --- |
