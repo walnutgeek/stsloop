@@ -132,13 +132,47 @@ class SegmenterTest {
     }
 
     @Test
+    fun `finish includes the retained samples the vad never judged`() {
+        val pcm = stream(quiet(100), speech(300), quiet(47)) // the last 7 samples are a partial window
+        val sink = run(pcm, 160)
+        val (u, audio) = sink.closed.single()
+        assertEquals(447L, u.endSample)
+        assertEquals(47L, u.trailingSilenceSamples)
+        assertArrayEquals(pcm.copyOfRange(80, 447), audio)
+    }
+
+    @Test
+    fun `finish twice is harmless`() {
+        val sink = Sink()
+        val seg = Segmenter(timings, 1000, 10, loudVad, sink)
+        val pcm = stream(speech(300))
+        seg.accept(pcm, pcm.size)
+        seg.finish()
+        seg.finish()
+        assertEquals(1, sink.closed.size)
+    }
+
+    @Test
+    fun `release-level speech runs across max cuts into contiguous utterances`() {
+        val halfLoud = SpeechProbability { w -> if (w.any { abs(it) >= 0.25f }) 1f else if (w.any { abs(it) >= 0.05f }) 0.4f else 0f }
+        // 100 ms quiet, 100 ms loud, then 1500 ms of mid-level (|x| 2000..4000: release-level only)
+        val rnd = Random(3)
+        val mid = ShortArray(1500) { (rnd.nextInt(2000, 4000) * if (it % 2 == 0) 1 else -1).toShort() }
+        val pcm = stream(quiet(100), speech(100)) + mid + stream(quiet(200), seed = 2)
+        val sink = run(pcm, 160, halfLoud)
+        assertEquals(listOf(80L to 1080L, 1080L to 1800L), sink.closed.map { it.first.startSample to it.first.endSample })
+        val joined = sink.closed.flatMap { it.second.toList() }.toShortArray()
+        assertArrayEquals(pcm.copyOfRange(80, 1800), joined)
+    }
+
+    @Test
     fun `without finish an open utterance is not emitted`() {
         val sink = run(stream(quiet(100), speech(300)), 160, finish = false)
         assertEquals(0, sink.closed.size)
     }
 
     @Test
-    fun `finish while idle emits nothing`() {
+    fun `finish while listening emits nothing`() {
         val sink = run(stream(quiet(100), speech(300), quiet(300)), 160)
         assertEquals(1, sink.closed.size)
     }
@@ -153,7 +187,7 @@ class SegmenterTest {
     }
 
     @Test
-    fun `a long idle stretch keeps only pre-roll plus a partial window in memory`() {
+    fun `a long listening stretch keeps only pre-roll plus a partial window in memory`() {
         val seg = Segmenter(timings, 1000, 10, loudVad, Sink())
         val chunk = stream(quiet(1600))
         repeat(1000) { seg.accept(chunk, chunk.size) }

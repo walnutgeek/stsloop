@@ -50,9 +50,13 @@ class Segmenter(
         buffer.dropBefore(machine.retainFrom)
     }
 
-    /** The Session is ending: an utterance still being captured closes here. */
+    /**
+     * The Session is ending: an utterance still being captured closes at the
+     * end of the stream, including the last partial window the VAD never judged.
+     * Calling it again does nothing.
+     */
     fun finish() {
-        emit(machine.end())
+        emit(machine.end(at = buffer.end))
         buffer.dropBefore(machine.retainFrom)
     }
 

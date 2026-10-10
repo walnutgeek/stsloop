@@ -3,7 +3,7 @@ package com.walnutgeek.stsloop.core.turn
 /**
  * The retained tail of a Session's PCM16 stream, addressed by absolute sample
  * index. Samples are appended as captured and dropped from the front once no
- * Turn can need them, so memory is bounded by pre-roll while idle and by the
+ * Turn can need them, so memory is bounded by pre-roll while listening and by the
  * max utterance length while capturing.
  */
 class SampleBuffer {

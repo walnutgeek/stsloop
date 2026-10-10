@@ -41,7 +41,8 @@ data class TurnAudio(
 
 /**
  * How the VAD cut a human Turn: speech from the first to the last speech
- * window (pauses inside included), then the trailing Silence that closed it.
+ * window (gaps shorter than the trailing Silence included), then the trailing
+ * Silence that closed it.
  * Pre-roll before the onset makes up the rest of `duration_ms`.
  */
 data class TurnVad(

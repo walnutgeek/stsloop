@@ -5,7 +5,7 @@ import com.walnutgeek.stsloop.core.turn.CloseReason.MAX_DURATION
 import com.walnutgeek.stsloop.core.turn.CloseReason.SESSION_END
 import com.walnutgeek.stsloop.core.turn.CloseReason.SILENCE
 import com.walnutgeek.stsloop.core.turn.TurnState.CAPTURING
-import com.walnutgeek.stsloop.core.turn.TurnState.IDLE
+import com.walnutgeek.stsloop.core.turn.TurnState.LISTENING
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
@@ -37,18 +37,18 @@ class TurnStateMachineTest {
     private fun closed() = events.filterIsInstance<TurnEvent.Closed>().map { it.utterance }
     private fun discarded() = events.filterIsInstance<TurnEvent.Discarded>()
 
-    // --- IDLE ---
+    // --- LISTENING ---
 
     @Test
-    fun `starts idle at position zero`() {
-        assertEquals(IDLE, sm.state)
+    fun `starts listening at position zero`() {
+        assertEquals(LISTENING, sm.state)
         assertEquals(0, sm.position)
     }
 
     @Test
-    fun `silence keeps it idle and emits nothing`() {
+    fun `silence keeps it listening and emits nothing`() {
         silence(5000)
-        assertEquals(IDLE, sm.state)
+        assertEquals(LISTENING, sm.state)
         assertEquals(emptyList<TurnEvent>(), events)
         assertEquals(5000, sm.position)
     }
@@ -63,7 +63,7 @@ class TurnStateMachineTest {
     @Test
     fun `a window below the speech threshold does not start capturing`() {
         feed(10, 0.49f)
-        assertEquals(IDLE, sm.state)
+        assertEquals(LISTENING, sm.state)
     }
 
     @Test
@@ -75,7 +75,7 @@ class TurnStateMachineTest {
     @Test
     fun `the release threshold alone does not start capturing`() {
         feed(500, 0.4f)
-        assertEquals(IDLE, sm.state)
+        assertEquals(LISTENING, sm.state)
     }
 
     // --- closing by Silence ---
@@ -85,7 +85,7 @@ class TurnStateMachineTest {
         silence(100)
         speech(200)
         silence(100)
-        assertEquals(IDLE, sm.state)
+        assertEquals(LISTENING, sm.state)
         assertEquals(1, closed().size)
         assertEquals(SILENCE, closed()[0].closedBy)
     }
@@ -104,7 +104,7 @@ class TurnStateMachineTest {
         silence(90)
         val e = sm.window(10, 0f)
         assertEquals(SILENCE, (e as TurnEvent.Closed).utterance.closedBy)
-        assertEquals(IDLE, sm.state)
+        assertEquals(LISTENING, sm.state)
     }
 
     @Test
@@ -129,7 +129,7 @@ class TurnStateMachineTest {
         val u = closed().single()
         assertEquals(80, u.startSample)
         assertEquals(390 + 100, u.endSample)
-        assertEquals(290, u.speechSamples) // the in-utterance pause counts as speech time
+        assertEquals(290, u.speechSamples) // a gap shorter than the trailing Silence counts as speech time
     }
 
     @Test
@@ -156,7 +156,7 @@ class TurnStateMachineTest {
     fun `once capturing, below the release threshold is silence`() {
         speech(50)
         feed(100, 0.29f)
-        assertEquals(IDLE, sm.state)
+        assertEquals(LISTENING, sm.state)
         assertEquals(50, closed().single().speechSamples)
     }
 
@@ -167,7 +167,7 @@ class TurnStateMachineTest {
         silence(100)
         speech(20)
         silence(100)
-        assertEquals(IDLE, sm.state)
+        assertEquals(LISTENING, sm.state)
         assertEquals(emptyList<Utterance>(), closed())
         val d = discarded().single()
         assertEquals(20, d.speechSamples)
@@ -242,6 +242,72 @@ class TurnStateMachineTest {
     }
 
     @Test
+    fun `speech at the release level continues across a max cut with no lost samples`() {
+        speech(100)
+        feed(1500, 0.4f) // below speech_threshold, above release_threshold
+        silence(100)
+        assertEquals(listOf(0L to 1000L, 1000L to 1700L), closed().map { it.startSample to it.endSample })
+        assertEquals(listOf(MAX_DURATION, SILENCE), closed().map { it.closedBy })
+        assertEquals(600, closed()[1].speechSamples)
+    }
+
+    @Test
+    fun `after a max cut in speech it stays capturing`() {
+        speech(1000)
+        assertEquals(MAX_DURATION, closed().single().closedBy)
+        assertEquals(CAPTURING, sm.state)
+        assertEquals(1000, sm.retainFrom)
+    }
+
+    @Test
+    fun `a continuation tail shorter than the minimum is kept, not discarded`() {
+        speech(1010)
+        silence(100)
+        assertEquals(emptyList<TurnEvent.Discarded>(), discarded())
+        val tail = closed()[1]
+        assertEquals(1000L to 1110L, tail.startSample to tail.endSample)
+        assertEquals(10, tail.speechSamples)
+        assertEquals(100, tail.trailingSilenceSamples)
+    }
+
+    @Test
+    fun `a continuation tail ended by the Session is kept too`() {
+        speech(1010)
+        val tail = (sm.end() as TurnEvent.Closed).utterance
+        assertEquals(1000L to 1010L, tail.startSample to tail.endSample)
+    }
+
+    @Test
+    fun `a fresh utterance after a continuation is judged by the minimum again`() {
+        speech(1010)
+        silence(100) // tail closes at 1110
+        speech(10)
+        silence(100)
+        assertEquals(1, discarded().size)
+    }
+
+    @Test
+    fun `a max cut during trailing silence does not continue`() {
+        speech(950)
+        silence(60) // the cut at 1000 falls in silence
+        assertEquals(MAX_DURATION, closed().single().closedBy)
+        assertEquals(LISTENING, sm.state)
+    }
+
+    @Test
+    fun `a max cut inside a speech window continues from the exact cut`() {
+        val sm = TurnStateMachine(timings.copy(preRollMs = 15), 1000)
+        repeat(10) { sm.window(10, 0f) }
+        val cuts = (1..230).mapNotNull { sm.window(10, 0.9f) }.map { (it as TurnEvent.Closed).utterance }
+        assertEquals(listOf(85L to 1085L, 1085L to 2085L), cuts.map { it.startSample to it.endSample })
+    }
+
+    @Test
+    fun `a window as long as max is refused`() {
+        assertThrows<IllegalArgumentException> { sm.window(1000, 0.9f) }
+    }
+
+    @Test
     fun `max may cut inside a window`() {
         val sm = TurnStateMachine(timings.copy(preRollMs = 15), 1000)
         repeat(10) { sm.window(10, 0f) }
@@ -312,7 +378,22 @@ class TurnStateMachineTest {
         assertEquals(340, u.endSample)
         assertEquals(200, u.speechSamples)
         assertEquals(40, u.trailingSilenceSamples)
-        assertEquals(IDLE, sm.state)
+        assertEquals(LISTENING, sm.state)
+    }
+
+    @Test
+    fun `ending the Session counts unjudged samples up to the end of the stream as trailing silence`() {
+        speech(200)
+        val u = (sm.end(at = 207) as TurnEvent.Closed).utterance
+        assertEquals(207, u.endSample)
+        assertEquals(200, u.speechSamples)
+        assertEquals(7, u.trailingSilenceSamples)
+    }
+
+    @Test
+    fun `ending the Session before the judged position is refused`() {
+        speech(200)
+        assertThrows<IllegalArgumentException> { sm.end(at = 199) }
     }
 
     @Test
@@ -322,7 +403,7 @@ class TurnStateMachineTest {
     }
 
     @Test
-    fun `ending the Session while idle emits nothing`() {
+    fun `ending the Session while listening emits nothing`() {
         speech(100)
         silence(200)
         events.clear()
@@ -332,13 +413,13 @@ class TurnStateMachineTest {
     // --- retention ---
 
     @Test
-    fun `while idle only the pre-roll must be retained`() {
+    fun `while listening only the pre-roll must be retained`() {
         silence(500)
         assertEquals(480, sm.retainFrom)
     }
 
     @Test
-    fun `while idle near the start the whole stream is retained`() {
+    fun `while listening near the start the whole stream is retained`() {
         silence(10)
         assertEquals(0, sm.retainFrom)
     }
@@ -421,6 +502,6 @@ class TurnStateMachineTest {
     @Test
     fun `a NaN probability is treated as silence`() {
         feed(100, Float.NaN)
-        assertEquals(IDLE, sm.state)
+        assertEquals(LISTENING, sm.state)
     }
 }
