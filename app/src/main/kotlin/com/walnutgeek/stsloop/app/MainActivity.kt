@@ -20,6 +20,8 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var toggle: Button
     private lateinit var settings: Button
+    private lateinit var transcripts: TranscriptListPane
+    private lateinit var corpusCount: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,11 +39,17 @@ class MainActivity : Activity() {
                 )
             }
         }
+        transcripts = TranscriptListPane(this, SessionService.corpusDir(this)).apply {
+            onLoaded = { n -> corpusCount.text = "Corpus: $n Turn(s), newest first" }
+        }
+        corpusCount = TextView(this).apply { textSize = 16f; setPadding(0, 32, 0, 8) }
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(toggle)
             addView(settings)
             addView(status)
+            addView(corpusCount)
+            addView(transcripts.view, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
             // targetSdk 35+ is edge-to-edge: keep content clear of the system bars.
             setOnApplyWindowInsetsListener { v, insets ->
                 val bars = insets.getInsets(WindowInsets.Type.systemBars())
@@ -54,6 +62,12 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         refresh()
+        transcripts.start()
+    }
+
+    override fun onPause() {
+        transcripts.stop()
+        super.onPause()
     }
 
     /** The visible action that starts a Session. RECORD_AUDIO is while-in-use, so it must be this. */
@@ -118,12 +132,7 @@ class MainActivity : Activity() {
     private fun refresh() {
         toggle.text = if (SessionService.isActive) "Stop Session" else "Start Session"
         settings.visibility = if (SessionService.controlsVisible(this)) Button.GONE else Button.VISIBLE
-        val turns = SessionService.corpusDir(this).list()?.sorted().orEmpty()
-        status.text = buildString {
-            append(if (SessionService.isActive) "Session active.\n\n" else "No Session.\n\n")
-            append("Corpus: ${turns.size} Turn(s)")
-            turns.lastOrNull()?.let { append("\nLatest: $it") }
-        }
+        status.text = if (SessionService.isActive) "Session active." else "No Session."
     }
 
     private companion object {
