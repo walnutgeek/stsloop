@@ -5,6 +5,8 @@ import android.util.Log
 import com.k2fsa.sherpa.onnx.Vad
 import com.walnutgeek.stsloop.core.CorpusWriter
 import com.walnutgeek.stsloop.core.Turn
+import com.walnutgeek.stsloop.core.grammar.BucketConfig
+import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
 import com.walnutgeek.stsloop.core.speech.StreamingRecognizer
 import com.walnutgeek.stsloop.core.turn.CorpusSink
 import com.walnutgeek.stsloop.core.turn.Segmenter
@@ -23,7 +25,8 @@ import java.util.concurrent.TimeUnit
  * One Session's capture pipeline: the mic's int16 chunks go in, and each
  * utterance the VAD finds comes out as its own transcribed Turn in the Corpus
  * ([Segmenter] cuts, [Transcriber] streams it into the recognizer while it is
- * captured, [CorpusSink] writes). Sample 0 of the stream is wall time
+ * captured, [CorpusSink] classifies it with the [PhraseGrammar] over
+ * [buckets] and writes it). Sample 0 of the stream is wall time
  * [sessionStartedAtMs]. A Turn that fails to write is logged and counted in
  * [failedTurns]; the Session carries on.
  *
@@ -47,12 +50,14 @@ class TurnCapture(
     /** Loads the Session's one recognizer; called once, on the STT thread. */
     recognizer: () -> StreamingRecognizer,
     maxQueuedMs: Long = MAX_QUEUED_MS,
+    /** The Buckets a Turn may be Declared into. */
+    buckets: BucketConfig = BucketConfig.DEFAULT,
     /** Called on the STT thread after each Turn is published, with the stream range it holds. */
     private val onTurn: (Turn, Utterance, SttTiming?) -> Unit = { _, _, _ -> },
 ) {
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "stt-$sessionId") }
     private val sink = CorpusSink(
-        writer, sessionId, sessionStartedAtMs, SAMPLE_RATE_HZ, appVersion,
+        writer, sessionId, sessionStartedAtMs, SAMPLE_RATE_HZ, appVersion, PhraseGrammar(buckets),
         listener = object : CorpusSink.Listener {
             override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) = onTurn(turn, utterance, timing)
 
@@ -175,18 +180,30 @@ class TurnCapture(
          * be tuned without a rebuild. A missing file means defaults; each
          * rejected key is logged and keeps its default, the rest still apply.
          */
-        fun loadTimings(dir: File): Timings {
-            val file = File(dir, Timings.FILE)
-            if (!file.exists()) return Timings()
+        fun loadTimings(dir: File): Timings =
+            loadConfig(File(dir, Timings.FILE), Timings()) { Timings.parse(it).run { timings to rejected } }
+
+        /**
+         * The [BucketConfig] in `<dir>/buckets.json`, read at Session start so
+         * Buckets and their aliases can be edited without a rebuild. A missing
+         * or unreadable file means the mvp.md defaults; otherwise each rejected
+         * Bucket or alias is logged and the rest still apply.
+         */
+        fun loadBuckets(dir: File): BucketConfig =
+            loadConfig(File(dir, BucketConfig.FILE), BucketConfig.DEFAULT) { BucketConfig.parse(it).run { config to rejected } }
+
+        /** Reads a runtime-editable config [file]: [default] when missing or unreadable, each rejection logged. */
+        private fun <T> loadConfig(file: File, default: T, parse: (String) -> Pair<T, List<String>>): T {
+            if (!file.exists()) return default
             val text = try {
                 file.readText()
             } catch (e: Exception) {
-                Log.e(TAG, "cannot read $file, using default timings", e)
-                return Timings()
+                Log.e(TAG, "cannot read $file, using the defaults", e)
+                return default
             }
-            val parsed = Timings.parse(text)
-            for (r in parsed.rejected) Log.e(TAG, "$file: ignoring $r")
-            return parsed.timings
+            val (value, rejected) = parse(text)
+            for (r in rejected) Log.e(TAG, "$file: ignoring $r")
+            return value
         }
     }
 }

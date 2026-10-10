@@ -106,8 +106,13 @@ class TimingsTest {
     }
 
     @Test
-    fun `a duplicate key is rejected and keeps its default`() {
-        assertEquals(Timings(preRollMs = 10), rejecting("""{"guard_ms": 1, "pre_roll_ms": 10, "guard_ms": 2}""", "guard_ms"))
+    fun `a duplicate key makes the whole file malformed, as in every JSON file core reads`() {
+        assertEquals(Timings(), rejecting("""{"guard_ms": 1, "pre_roll_ms": 10, "guard_ms": 2}""", "file"))
+    }
+
+    @Test
+    fun `an object or array value is rejected and keeps its default`() {
+        assertEquals(Timings(preRollMs = 10), rejecting("""{"guard_ms": [1], "pre_roll_ms": 10, "max_utterance_ms": {}}""", "guard_ms", "max_utterance_ms"))
     }
 
     @Test

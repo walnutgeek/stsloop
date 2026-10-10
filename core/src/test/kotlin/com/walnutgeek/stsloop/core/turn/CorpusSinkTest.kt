@@ -1,12 +1,19 @@
 package com.walnutgeek.stsloop.core.turn
 
+import com.walnutgeek.stsloop.core.BucketSource
+import com.walnutgeek.stsloop.core.Classification
 import com.walnutgeek.stsloop.core.CorpusWriter
+import com.walnutgeek.stsloop.core.Declaration
+import com.walnutgeek.stsloop.core.DeclarationPosition
 import com.walnutgeek.stsloop.core.Transcript
 import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.TurnAudio
 import com.walnutgeek.stsloop.core.TurnInProgress
 import com.walnutgeek.stsloop.core.TurnKind
 import com.walnutgeek.stsloop.core.TurnVad
+import com.walnutgeek.stsloop.core.grammar.Bucket
+import com.walnutgeek.stsloop.core.grammar.BucketConfig
+import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
@@ -31,12 +38,12 @@ class CorpusSinkTest {
                     pcm += samples.copyOf(count)
                 }
 
-                override fun finish(appVersion: String, vad: TurnVad?, transcript: Transcript?, kind: TurnKind?): Turn {
+                override fun finish(appVersion: String, vad: TurnVad?, transcript: Transcript?, classification: Classification?): Turn {
                     if (failFinishOn == n) throw IOException("fsync failed")
                     written += pcm
                     return Turn(
                         id, sessionId, startedAtMs, TurnAudio("audio.wav", "x", sampleRate, pcm.size * 1000L / sampleRate),
-                        appVersion, vad, transcript, kind,
+                        appVersion, vad, transcript, classification,
                     )
                 }
 
@@ -55,6 +62,7 @@ class CorpusSinkTest {
     private var ids = 0
     private val sink = CorpusSink(
         writer, sessionId = "5e5510", sessionStartedAtMs = 1_000_000, sampleRate = 1000, appVersion = "t",
+        grammar = PhraseGrammar(BucketConfig.DEFAULT),
         newId = { "id${++ids}" },
         listener = object : CorpusSink.Listener {
             override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) {
@@ -80,14 +88,54 @@ class CorpusSinkTest {
     }
 
     @Test
-    fun `the transcript goes into the same publish, and every Turn is unclassified`() {
+    fun `the transcript goes into the same publish, and an undeclared transcript is unclassified`() {
         val transcript = Transcript("HELLO THERE", "sherpa-onnx", "m", 1_003_900, latencyMs = 200)
         val timing = SttTiming(computeMs = 120, queuedMs = 10, finalizeMs = 40)
         sink.closed(u(2500, 3700), pcm(1200), Transcription(transcript, timing))
         val (turn, _) = published.single()
         assertEquals(transcript, turn.transcript)
-        assertEquals(TurnKind.UNCLASSIFIED, turn.kind)
+        assertEquals(Classification.UNCLASSIFIED, turn.classification)
         assertEquals(timing, timings.single())
+    }
+
+    private fun transcribed(text: String) =
+        Transcription(Transcript(text, "sherpa-onnx", "m", 1_003_900, latencyMs = 200), SttTiming(1, 1, 1))
+
+    @Test
+    fun `a declared transcript is a Note in its Bucket, with the raw transcript untouched`() {
+        sink.closed(u(0, 500), pcm(500), transcribed("ERRANDS ORDER ROOFING SCREWS"))
+        val turn = published.single().first
+        assertEquals("ERRANDS ORDER ROOFING SCREWS", turn.transcript!!.text)
+        assertEquals(TurnKind.NOTE, turn.kind)
+        val c = turn.classification!!
+        assertEquals(Declaration("errands", DeclarationPosition.LEADING, "errands"), c.declaration)
+        assertEquals("errands", c.bucket)
+        assertEquals(BucketSource.DECLARATION, c.bucketSource)
+        assertEquals("order roofing screws", c.content)
+    }
+
+    @Test
+    fun `I need to work on the roof is published unclassified`() {
+        sink.closed(u(0, 500), pcm(500), transcribed("I NEED TO WORK ON THE ROOF"))
+        assertEquals(Classification.UNCLASSIFIED, published.single().first.classification)
+    }
+
+    @Test
+    fun `an empty transcript is unclassified`() {
+        sink.closed(u(0, 500), pcm(500), transcribed(""))
+        assertEquals(Classification.UNCLASSIFIED, published.single().first.classification)
+    }
+
+    @Test
+    fun `the sink classifies with the Buckets it was given`() {
+        val s = CorpusSink(
+            writer, "s", 0, 1000, "t", PhraseGrammar(BucketConfig(listOf(Bucket("garden", listOf("yard"))))),
+            listener = object : CorpusSink.Listener {
+                override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) { published += turn to utterance }
+            },
+        )
+        s.closed(u(0, 500), pcm(500), transcribed("YARD WATER THE BEDS"))
+        assertEquals("garden", published.single().first.classification!!.bucket)
     }
 
     @Test
@@ -136,7 +184,7 @@ class CorpusSinkTest {
                 override fun begin(id: String, sessionId: String, startedAtMs: Long, sampleRate: Int): TurnInProgress =
                     throw IOException("no staging dir")
             },
-            "s", 0, 1000, "t", listener = object : CorpusSink.Listener {},
+            "s", 0, 1000, "t", PhraseGrammar(BucketConfig.DEFAULT), listener = object : CorpusSink.Listener {},
         )
         broken.closed(u(0, 500), pcm(500))
         assertEquals(1, broken.failed)
@@ -145,7 +193,7 @@ class CorpusSinkTest {
     @Test
     fun `discards are passed to the listener`() {
         val seen = mutableListOf<TurnEvent.Discarded>()
-        val s = CorpusSink(writer, "s", 0, 1000, "t", listener = object : CorpusSink.Listener {
+        val s = CorpusSink(writer, "s", 0, 1000, "t", PhraseGrammar(BucketConfig.DEFAULT), listener = object : CorpusSink.Listener {
             override fun discarded(event: TurnEvent.Discarded) { seen += event }
         })
         s.discarded(TurnEvent.Discarded(0, 200, 20))

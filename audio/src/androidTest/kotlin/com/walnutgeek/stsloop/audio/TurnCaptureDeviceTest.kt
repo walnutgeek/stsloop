@@ -8,10 +8,14 @@ import com.k2fsa.sherpa.onnx.WaveReader
 import com.walnutgeek.stsloop.audio.speech.SpeechModels
 import com.walnutgeek.stsloop.audio.speech.SttRecognizer
 import com.walnutgeek.stsloop.core.AUDIO_FILE
+import com.walnutgeek.stsloop.core.BucketSource
+import com.walnutgeek.stsloop.core.Declaration
+import com.walnutgeek.stsloop.core.DeclarationPosition
 import com.walnutgeek.stsloop.core.TURN_FILE
 import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.TurnKind
 import com.walnutgeek.stsloop.core.Wav
+import com.walnutgeek.stsloop.core.grammar.BucketConfig
 import com.walnutgeek.stsloop.core.speech.StreamingRecognizer
 import com.walnutgeek.stsloop.core.turn.CloseReason
 import com.walnutgeek.stsloop.core.turn.SttTiming
@@ -118,6 +122,7 @@ class TurnCaptureDeviceTest {
         recognizer: () -> StreamingRecognizer = { SttRecognizer.load(context.assets) },
         maxQueuedMs: Long = TurnCapture.MAX_QUEUED_MS,
         hurryBeforeFinish: Boolean = false,
+        buckets: BucketConfig = BucketConfig.DEFAULT,
     ): Run {
         val writer = FileCorpusWriter(File(root, "corpus"), File(root, "staging"))
         val out = java.util.Collections.synchronizedList(mutableListOf<Triple<Turn, Utterance, SttTiming?>>())
@@ -125,7 +130,7 @@ class TurnCaptureDeviceTest {
         val capture = TurnCapture(
             writer, "5e5510", startMs, "test", Timings(),
             TurnCapture.silero(vad), SpeechModels.vadConfig().sileroVadModelConfig.windowSize,
-            recognizer, maxQueuedMs,
+            recognizer, maxQueuedMs, buckets,
         ) { t, u, timing ->
             Log.i(TAG, "Turn ${t.directoryName} ${u.closedBy}: ${SttTiming.summary(t, timing)}: '${t.transcript?.text}'")
             out += Triple(t, u, timing)
@@ -225,15 +230,82 @@ class TurnCaptureDeviceTest {
                 "sherpa-onnx-streaming-zipformer-en-2023-06-26/epoch-99-avg-1-chunk-16-left-128.int8 modified_beam_search",
                 t.model,
             )
+            // No default Bucket alias at either end of these wavs: not Declared, so unclassified.
             assertEquals(TurnKind.UNCLASSIFIED, turn.kind)
+            assertNull(turn.classification!!.bucket)
+            assertNull(turn.classification!!.content)
             assertTrue("timing for ${turn.directoryName}", timing != null)
             val json = turnJson(turn)
             assertTrue(json, json.contains("\"transcript\": {\n    \"text\": \"${t.text}\",\n    \"engine\": \"sherpa-onnx\",\n"))
             assertTrue(json, json.contains("\"model\": \"${t.model}\",\n"))
             assertTrue(json, json.contains("\"finished_at\": \""))
             assertTrue(json, json.contains("\"latency_ms\": ${t.latencyMs}\n"))
-            assertTrue(json, json.contains("\"kind\": \"unclassified\",\n"))
+            assertTrue(
+                json,
+                json.contains(
+                    "\"kind\": \"unclassified\",\n  \"declaration\": null,\n  \"bucket\": null,\n  \"bucket_source\": null,\n" +
+                        "  \"content\": null,\n",
+                ),
+            )
         }
+    }
+
+    /**
+     * Buckets read from a `buckets.json` on the device, with aliases at the
+     * ends of the upstream wavs: 1.wav starts with "GOD" (and ends with "IN
+     * HEAVEN", another Bucket: the leading one wins), 0.wav ends with "THE
+     * BROTHELS".
+     */
+    @Test
+    fun declaredTurnsAreWrittenWithTheirBucketFromTheConfigFile() {
+        val dir = File(root, "files").apply { mkdirs() }
+        File(dir, BucketConfig.FILE).writeText(
+            """
+            {
+              "buckets": [
+                { "name": "theology", "aliases": ["god"] },
+                { "name": "afterlife", "aliases": ["in heaven"] },
+                { "name": "night-walks", "aliases": ["the brothels", "nightfall"] },
+                { "name": "typo", "aliases": [7] }
+              ]
+            }
+            """.trimIndent(),
+        )
+        val buckets = TurnCapture.loadBuckets(dir)
+        assertEquals(listOf("theology", "afterlife", "night-walks", "typo"), buckets.buckets.map { it.name })
+        assertEquals(BucketConfig.DEFAULT, TurnCapture.loadBuckets(File(root, "nowhere")))
+
+        val rnd = Random(14)
+        val (stream, _) = splice(noise(2000, rnd), wav("0.wav"), noise(3000, rnd), wav("1.wav"), noise(3000, rnd)) { it % 2 == 1 }
+        val turns = run(stream, maxQueuedMs = 600_000, buckets = buckets).turns.map { it.first }
+        assertEquals(listOf(TEXT_0, TEXT_1), turns.map { it.text })
+
+        val night = turns[0].classification!!
+        assertEquals(TurnKind.NOTE, night.kind)
+        assertEquals(Declaration("night-walks", DeclarationPosition.TRAILING, "the brothels"), night.declaration)
+        assertEquals("night-walks", night.bucket)
+        assertEquals(BucketSource.DECLARATION, night.bucketSource)
+        val nightContent = TEXT_0.removeSuffix(" THE BROTHELS").lowercase()
+        assertEquals(nightContent, night.content)
+
+        val god = turns[1].classification!!
+        assertEquals(Declaration("theology", DeclarationPosition.LEADING, "god"), god.declaration)
+        assertEquals(TEXT_1.removePrefix("GOD ").lowercase(), god.content)
+
+        // The raw transcript is untouched, and turn.json carries the full Declaration.
+        assertEquals(TEXT_0, turns[0].text)
+        val json = turnJson(turns[0])
+        assertTrue(
+            json,
+            json.contains(
+                "  \"kind\": \"note\",\n" +
+                    "  \"declaration\": { \"bucket\": \"night-walks\", \"position\": \"trailing\", \"matched\": \"the brothels\" },\n" +
+                    "  \"bucket\": \"night-walks\",\n" +
+                    "  \"bucket_source\": \"declaration\",\n" +
+                    "  \"content\": \"$nightContent\",\n",
+            ),
+        )
+        assertTrue(json, json.contains("\"text\": \"${turns[0].transcript!!.text}\""))
     }
 
     @Test

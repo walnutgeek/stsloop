@@ -5,7 +5,10 @@ import com.walnutgeek.stsloop.core.Transcript
 import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.TurnAudio
 import com.walnutgeek.stsloop.core.TurnInProgress
+import com.walnutgeek.stsloop.core.Classification
 import com.walnutgeek.stsloop.core.TurnKind
+import com.walnutgeek.stsloop.core.grammar.BucketConfig
+import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
 import com.walnutgeek.stsloop.core.TurnVad
 import com.walnutgeek.stsloop.core.speech.RecognitionStream
 import com.walnutgeek.stsloop.core.speech.StreamingRecognizer
@@ -79,8 +82,8 @@ class TranscriberTest {
         override fun begin(id: String, sessionId: String, startedAtMs: Long, sampleRate: Int) = object : TurnInProgress {
             var samples = 0
             override fun append(samples: ShortArray, count: Int) { this.samples += count }
-            override fun finish(appVersion: String, vad: TurnVad?, transcript: Transcript?, kind: TurnKind?) =
-                Turn(id, sessionId, startedAtMs, TurnAudio("audio.wav", "x", sampleRate, samples * 1000L / sampleRate), appVersion, vad, transcript, kind)
+            override fun finish(appVersion: String, vad: TurnVad?, transcript: Transcript?, classification: Classification?) =
+                Turn(id, sessionId, startedAtMs, TurnAudio("audio.wav", "x", sampleRate, samples * 1000L / sampleRate), appVersion, vad, transcript, classification)
             override fun abandon() = throw IOException("unexpected")
         }
     }
@@ -99,6 +102,7 @@ class TranscriberTest {
     private val transcriber by lazy {
         val sink = CorpusSink(
             FakeWriter(), "5e5510", sessionStartedAtMs = 1_000_000, sampleRate = 1000, appVersion = "t",
+            grammar = PhraseGrammar(BucketConfig.DEFAULT),
             listener = object : CorpusSink.Listener {
                 override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) {
                     published += Triple(turn, utterance, timing)

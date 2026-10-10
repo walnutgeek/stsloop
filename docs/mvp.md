@@ -319,6 +319,39 @@ Matching is case-insensitive, punctuation-insensitive, and anchored — a Bucket
 alias occurring mid-utterance is **not** a Declaration. "I need to work on the
 roof" must not land in `work`.
 
+The rules in full (`:core` `PhraseGrammar`, `BucketConfig`):
+
+- The transcript is read as words: runs of letters, digits and apostrophes,
+  lower-cased, apostrophes dropped. Everything else — spaces, commas, dashes,
+  colons, full stops — only separates words. So "House-Project:" reads as
+  `house project`.
+- A Bucket's canonical name is always one of its aliases. An alias of several
+  words also matches run together, so `house project` covers "house project",
+  "house-project" and "houseproject".
+- Grammar: `[fillers] ALIAS [fillers] content` (leading) or
+  `content [fillers] ALIAS [fillers]` (trailing). The fillers are
+  `um umm uh uhm er erm ah hmm mm so okay ok`. Fillers inside the content stay.
+- When several aliases fit at one end, the one with the most words wins
+  ("house project" over "house"), then the longer spelling.
+- Corpus labels are permanent training data, so anything short of a clear
+  Declaration stays unlabelled. Aliases of **different** Buckets at the two
+  ends are not a Declaration. The **same** Bucket at both ends is one leading
+  Declaration, with both aliases taken out of the content. An utterance that is
+  **only** aliases and fillers, such as "errands", is not a Declaration either.
+- Before matching, the transcript and every alias are put in Unicode NFC, and
+  every apostrophe (’, ʼ) becomes `'`.
+- `content` is the transcript with the Declaration and its fillers taken out.
+  It runs from its first word to its last, so punctuation around it is dropped.
+  It is cut from the NFC text, so a cased or punctuated engine keeps its casing
+  and inner punctuation. An all-caps engine (the current one) is lower-cased.
+  `transcript.text` is never changed.
+- Config errors fall back per Bucket, not for the whole file. A broken Bucket
+  or alias is dropped and logged. An alias claimed by two Buckets is dropped
+  from **both**, because either could be meant, and an unlabelled Turn is
+  better than a wrong one. An alias equal to another Bucket's name loses to
+  the name. Only a file that is not strict JSON (a duplicate key counts as
+  malformed) or has no `buckets` array falls back to the defaults above.
+
 ### Commands
 
 Four, chosen because the loop is unusable in a car without them:
@@ -385,7 +418,9 @@ Design notes worth keeping:
 - `model` and `app_version` are recorded on every Turn, so the Corpus remains
   interpretable after the engine changes underneath it.
 - `kind` is one of `note`, `command`, `unclassified`. Until the phrase
-  grammar exists, every Turn is `unclassified`.
+  grammar exists, every Turn is `unclassified`. With it, only a Declared Turn is
+  a `note`; an undeclared one stays `unclassified` (unlabelled test data), with
+  `declaration`, `bucket`, `bucket_source` and `content` written as `null`.
 - `transcript.text` is exactly what the engine produced. The current model
   emits upper case with no punctuation. A
   future cased or punctuated model must not be flattened, so normalisation is

@@ -31,7 +31,22 @@ object TurnJson {
             append("    \"latency_ms\": ").append(t.latencyMs).append("\n")
             append("  },\n")
         }
-        turn.kind?.let { append("  \"kind\": ").str(it.json).append(",\n") }
+        turn.classification?.let { c ->
+            append("  \"kind\": ").str(c.kind.json).append(",\n")
+            append("  \"declaration\": ")
+            val d = c.declaration
+            if (d == null) {
+                append("null")
+            } else {
+                append("{ \"bucket\": ").str(d.bucket)
+                append(", \"position\": ").str(d.position.json)
+                append(", \"matched\": ").str(d.matched).append(" }")
+            }
+            append(",\n")
+            append("  \"bucket\": ").strOrNull(c.bucket).append(",\n")
+            append("  \"bucket_source\": ").strOrNull(c.bucketSource?.json).append(",\n")
+            append("  \"content\": ").strOrNull(c.content).append(",\n")
+        }
         append("  \"app_version\": ").str(turn.appVersion).append(",\n")
         append("  \"tombstoned_by\": ").strOrNull(turn.tombstonedBy).append("\n")
         append("}\n")
@@ -39,19 +54,22 @@ object TurnJson {
 
     private fun StringBuilder.strOrNull(s: String?): StringBuilder = if (s == null) append("null") else str(s)
 
-    private fun StringBuilder.str(s: String): StringBuilder {
-        append('"')
-        for (c in s) {
-            when {
-                c == '"' -> append("\\\"")
-                c == '\\' -> append("\\\\")
-                c == '\n' -> append("\\n")
-                c == '\r' -> append("\\r")
-                c == '\t' -> append("\\t")
-                c < ' ' -> append("\\u").append(c.code.toString(16).padStart(4, '0'))
-                else -> append(c)
-            }
+    private fun StringBuilder.str(s: String): StringBuilder = append(jsonString(s))
+}
+
+/** [s] as a JSON string literal, quotes included. Shared by every JSON file :core writes. */
+internal fun jsonString(s: String): String = buildString {
+    append('"')
+    for (c in s) {
+        when {
+            c == '"' -> append("\\\"")
+            c == '\\' -> append("\\\\")
+            c == '\n' -> append("\\n")
+            c == '\r' -> append("\\r")
+            c == '\t' -> append("\\t")
+            c < ' ' -> append("\\u").append(c.code.toString(16).padStart(4, '0'))
+            else -> append(c)
         }
-        return append('"')
     }
+    append('"')
 }
