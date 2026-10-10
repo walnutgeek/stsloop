@@ -8,6 +8,8 @@ import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.grammar.BucketConfig
 import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
 import com.walnutgeek.stsloop.core.speech.StreamingRecognizer
+import com.walnutgeek.stsloop.core.testmode.TestConfig
+import com.walnutgeek.stsloop.core.testmode.TurnTest
 import com.walnutgeek.stsloop.core.turn.CorpusSink
 import com.walnutgeek.stsloop.core.turn.Segmenter
 import com.walnutgeek.stsloop.core.turn.SpeechProbability
@@ -52,12 +54,15 @@ class TurnCapture(
     maxQueuedMs: Long = MAX_QUEUED_MS,
     /** The Buckets a Turn may be Declared into. */
     buckets: BucketConfig = BucketConfig.DEFAULT,
+    /** Test mode (#27): each Turn's `test` block, computed on the STT thread; null outside test mode. */
+    testOf: ((Utterance) -> TurnTest?)? = null,
     /** Called on the STT thread after each Turn is published, with the stream range it holds. */
     private val onTurn: (Turn, Utterance, SttTiming?) -> Unit = { _, _, _ -> },
 ) {
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "stt-$sessionId") }
     private val sink = CorpusSink(
         writer, sessionId, sessionStartedAtMs, SAMPLE_RATE_HZ, appVersion, PhraseGrammar(buckets),
+        testOf = testOf,
         listener = object : CorpusSink.Listener {
             override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) = onTurn(turn, utterance, timing)
 
@@ -191,6 +196,14 @@ class TurnCapture(
          */
         fun loadBuckets(dir: File): BucketConfig =
             loadConfig(File(dir, BucketConfig.FILE), BucketConfig.DEFAULT) { BucketConfig.parse(it).run { config to rejected } }
+
+        /**
+         * The Bluetooth test mode [TestConfig] in `<dir>/testmode.json`, read at
+         * Session start. A missing or unreadable file means test mode is off;
+         * each rejected key is logged and keeps its default.
+         */
+        fun loadTestConfig(dir: File): TestConfig =
+            loadConfig(File(dir, TestConfig.FILE), TestConfig()) { TestConfig.parse(it).run { config to rejected } }
 
         /** Reads a runtime-editable config [file]: [default] when missing or unreadable, each rejection logged. */
         private fun <T> loadConfig(file: File, default: T, parse: (String) -> Pair<T, List<String>>): T {

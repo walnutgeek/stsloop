@@ -253,4 +253,13 @@ class TranscriptListTest {
         val t = TranscriptList.read(declaredDir, """{ "kind": "note", "kind": "command" }""")
         assertTrue(t.problem!!.contains("duplicate key"), t.problem)
     }
+
+    @Test
+    fun `the Session logs directory and hidden entries are not Turns`() {
+        assertFalse(TranscriptList.isTurnEntry(com.walnutgeek.stsloop.core.testmode.SESSIONS_DIR))
+        assertFalse(TranscriptList.isTurnEntry(".sync"))
+        assertTrue(TranscriptList.isTurnEntry(declaredDir))
+        // Anything else odd is still listed, so it shows up as a problem rather than vanishing.
+        assertTrue(TranscriptList.isTurnEntry("stray"))
+    }
 }

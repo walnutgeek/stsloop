@@ -4,6 +4,7 @@ import com.walnutgeek.stsloop.core.CorpusWriter
 import com.walnutgeek.stsloop.core.Ids
 import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
+import com.walnutgeek.stsloop.core.testmode.TurnTest
 
 /**
  * Writes each closed utterance as its own Turn, transcript included, in one
@@ -23,6 +24,11 @@ class CorpusSink(
     private val appVersion: String,
     private val grammar: PhraseGrammar,
     private val newId: () -> String = Ids::next,
+    /**
+     * Test mode (#27): the `test` block for a closed utterance, or null outside
+     * test mode. Called on the writing thread; a failure only drops the block.
+     */
+    private val testOf: ((Utterance) -> TurnTest?)? = null,
     private val listener: Listener,
 ) {
     interface Listener {
@@ -47,7 +53,8 @@ class CorpusSink(
             try {
                 inProgress.append(pcm, pcm.size)
                 val transcript = transcription?.transcript
-                inProgress.finish(appVersion, utterance.vad(sampleRate), transcript, grammar.classify(transcript?.text))
+                val test = testOf?.let { f -> runCatching { f(utterance) }.getOrNull() }
+                inProgress.finish(appVersion, utterance.vad(sampleRate), transcript, grammar.classify(transcript?.text), test)
             } catch (e: Exception) {
                 runCatching { inProgress.abandon() }
                 throw e

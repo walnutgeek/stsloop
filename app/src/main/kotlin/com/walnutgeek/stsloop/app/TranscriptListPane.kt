@@ -155,9 +155,12 @@ class TranscriptListPane(context: Context, private val corpusDir: File) {
                 utc
             }
 
-        /** Reads every Turn directory in the Corpus. Never writes; tolerates anything it finds. */
+        /**
+         * Reads every Turn directory in the Corpus, skipping the test-mode Session logs.
+         * Never writes; tolerates anything it finds.
+         */
         fun readCorpus(corpusDir: File): List<ListedTurn> {
-            val dirs = corpusDir.listFiles { f -> f.isDirectory && !f.name.startsWith(".") }.orEmpty()
+            val dirs = corpusDir.listFiles { f -> f.isDirectory && TranscriptList.isTurnEntry(f.name) }.orEmpty()
             // No tombstone mapping yet: #13 defines the tombstone record and supplies it here.
             return TranscriptList.of(dirs.map(::readTurn))
         }

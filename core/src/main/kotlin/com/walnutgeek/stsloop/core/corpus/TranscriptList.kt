@@ -1,5 +1,7 @@
 package com.walnutgeek.stsloop.core.corpus
 
+import com.walnutgeek.stsloop.core.testmode.SESSIONS_DIR
+
 /**
  * One Turn as the transcript list shows it, read leniently from its `turn.json`.
  *
@@ -29,6 +31,13 @@ data class ListedTurn(
 
 /** Builds the transcript list from a read-only view of the Corpus. */
 object TranscriptList {
+    /**
+     * Whether a Corpus entry named [name] is listed as a Turn. Hidden entries
+     * and the test-mode Session logs ([SESSIONS_DIR]) are not; anything else
+     * is, so a stray directory shows up as a problem instead of vanishing.
+     */
+    fun isTurnEntry(name: String): Boolean = !name.startsWith(".") && name != SESSIONS_DIR
+
     /** Reads one Turn directory's `turn.json` text, or null when the file is missing. */
     fun read(directoryName: String, turnJson: String?): ListedTurn {
         if (turnJson == null) return ListedTurn(directoryName, problem = "no turn.json")

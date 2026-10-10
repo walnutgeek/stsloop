@@ -14,6 +14,8 @@ import com.walnutgeek.stsloop.core.TurnVad
 import com.walnutgeek.stsloop.core.grammar.Bucket
 import com.walnutgeek.stsloop.core.grammar.BucketConfig
 import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
+import com.walnutgeek.stsloop.core.testmode.TestConfig
+import com.walnutgeek.stsloop.core.testmode.TurnTest
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
@@ -38,12 +40,18 @@ class CorpusSinkTest {
                     pcm += samples.copyOf(count)
                 }
 
-                override fun finish(appVersion: String, vad: TurnVad?, transcript: Transcript?, classification: Classification?): Turn {
+                override fun finish(
+                    appVersion: String,
+                    vad: TurnVad?,
+                    transcript: Transcript?,
+                    classification: Classification?,
+                    test: TurnTest?,
+                ): Turn {
                     if (failFinishOn == n) throw IOException("fsync failed")
                     written += pcm
                     return Turn(
                         id, sessionId, startedAtMs, TurnAudio("audio.wav", "x", sampleRate, pcm.size * 1000L / sampleRate),
-                        appVersion, vad, transcript, classification,
+                        appVersion, vad, transcript, classification, test = test,
                     )
                 }
 
@@ -198,5 +206,41 @@ class CorpusSinkTest {
         })
         s.discarded(TurnEvent.Discarded(0, 200, 20))
         assertEquals(20L, seen.single().speechSamples)
+    }
+
+    @Test
+    fun `outside test mode a Turn has no test block`() {
+        sink.closed(u(0, 500), pcm(500))
+        assertEquals(null, published.single().first.test)
+    }
+
+    @Test
+    fun `in test mode each Turn gets the test block computed for its own utterance`() {
+        val asked = mutableListOf<Utterance>()
+        val s = CorpusSink(
+            writer, "s", 0, 1000, "t", PhraseGrammar(BucketConfig.DEFAULT),
+            testOf = { utt -> asked += utt; TurnTest(TestConfig(enabled = true), listOf("builtin_mic"), utt.startSample, listOf("x")) },
+            listener = object : CorpusSink.Listener {
+                override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) { published += turn to utterance }
+            },
+        )
+        s.closed(u(0, 500), pcm(500))
+        s.closed(u(700, 1500), pcm(800))
+        assertEquals(listOf(0L, 700L), asked.map { it.startSample })
+        assertEquals(listOf(0L, 700L), published.map { it.first.test!!.ttsOverlapMs })
+    }
+
+    @Test
+    fun `a failing test block never loses the Turn's audio`() {
+        val s = CorpusSink(
+            writer, "s", 0, 1000, "t", PhraseGrammar(BucketConfig.DEFAULT),
+            testOf = { error("route query failed") },
+            listener = object : CorpusSink.Listener {
+                override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) { published += turn to utterance }
+            },
+        )
+        s.closed(u(0, 500), pcm(500))
+        assertEquals(null, published.single().first.test)
+        assertEquals(1, s.published)
     }
 }

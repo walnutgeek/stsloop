@@ -1,5 +1,7 @@
 package com.walnutgeek.stsloop.core
 
+import com.walnutgeek.stsloop.core.testmode.TurnTest
+
 /** Version of the `turn.json` format written to the Corpus. */
 const val CORPUS_SCHEMA = 1
 
@@ -15,7 +17,8 @@ const val TURN_FILE = "turn.json"
  * Recording maps to wall time exactly. `vad` is absent from the JSON when no
  * VAD cut the Turn, and `transcript` when the recognizer produced none. A
  * classified Turn always writes `kind`, `declaration`, `bucket`,
- * `bucket_source` and `content`, as `null` where unset.
+ * `bucket_source` and `content`, as `null` where unset. `test` is present
+ * only for Turns recorded in Bluetooth test mode (#27).
  */
 data class Turn(
     val id: String,
@@ -27,6 +30,7 @@ data class Turn(
     val transcript: Transcript? = null,
     val classification: Classification? = null,
     val tombstonedBy: String? = null,
+    val test: TurnTest? = null,
 ) {
     val kind: TurnKind? get() = classification?.kind
 
@@ -153,14 +157,16 @@ interface TurnInProgress {
     fun append(samples: ShortArray, count: Int)
 
     /**
-     * Seals the Recording, writes `turn.json` (with [transcript] and
-     * [classification] when given), and publishes the Turn directory in one step.
+     * Seals the Recording, writes `turn.json` (with [transcript],
+     * [classification] and the test-mode [test] block when given), and
+     * publishes the Turn directory in one step.
      */
     fun finish(
         appVersion: String,
         vad: TurnVad? = null,
         transcript: Transcript? = null,
         classification: Classification? = null,
+        test: TurnTest? = null,
     ): Turn
 
     /** Discards everything written so far; nothing appears in the Corpus. */

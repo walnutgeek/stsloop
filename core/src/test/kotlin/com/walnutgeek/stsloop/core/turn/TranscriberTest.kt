@@ -10,6 +10,7 @@ import com.walnutgeek.stsloop.core.TurnKind
 import com.walnutgeek.stsloop.core.grammar.BucketConfig
 import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
 import com.walnutgeek.stsloop.core.TurnVad
+import com.walnutgeek.stsloop.core.testmode.TurnTest
 import com.walnutgeek.stsloop.core.speech.RecognitionStream
 import com.walnutgeek.stsloop.core.speech.StreamingRecognizer
 import org.junit.jupiter.api.Assertions.assertArrayEquals
@@ -82,7 +83,7 @@ class TranscriberTest {
         override fun begin(id: String, sessionId: String, startedAtMs: Long, sampleRate: Int) = object : TurnInProgress {
             var samples = 0
             override fun append(samples: ShortArray, count: Int) { this.samples += count }
-            override fun finish(appVersion: String, vad: TurnVad?, transcript: Transcript?, classification: Classification?) =
+            override fun finish(appVersion: String, vad: TurnVad?, transcript: Transcript?, classification: Classification?, test: TurnTest?) =
                 Turn(id, sessionId, startedAtMs, TurnAudio("audio.wav", "x", sampleRate, samples * 1000L / sampleRate), appVersion, vad, transcript, classification)
             override fun abandon() = throw IOException("unexpected")
         }

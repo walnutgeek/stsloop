@@ -3,6 +3,7 @@ package com.walnutgeek.stsloop.app
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -15,6 +16,10 @@ import android.widget.TextView
 import com.walnutgeek.stsloop.audio.SessionService
 import com.walnutgeek.stsloop.core.StartGate
 import com.walnutgeek.stsloop.core.StartRefusal
+import com.walnutgeek.stsloop.core.testmode.MicInput
+import com.walnutgeek.stsloop.core.testmode.TestConfig
+import com.walnutgeek.stsloop.core.testmode.TtsUsage
+import com.walnutgeek.stsloop.core.testmode.next
 
 class MainActivity : Activity() {
     private lateinit var status: TextView
@@ -22,6 +27,7 @@ class MainActivity : Activity() {
     private lateinit var settings: Button
     private lateinit var transcripts: TranscriptListPane
     private lateinit var corpusCount: TextView
+    private var testMode: TestModePane? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,11 +49,14 @@ class MainActivity : Activity() {
             onLoaded = { n -> corpusCount.text = "Corpus: $n Turn(s), newest first" }
         }
         corpusCount = TextView(this).apply { textSize = 16f; setPadding(0, 32, 0, 8) }
+        // Bluetooth test mode (#27) is a debug-build experiment, never part of the product UI.
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) testMode = TestModePane()
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(toggle)
             addView(settings)
             addView(status)
+            testMode?.let { addView(it.view) }
             addView(corpusCount)
             addView(transcripts.view, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
             // targetSdk 35+ is edge-to-edge: keep content clear of the system bars.
@@ -75,6 +84,10 @@ class MainActivity : Activity() {
         val wanted = buildList {
             add(Manifest.permission.RECORD_AUDIO)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
+            // Optional: test mode works without it, but logs Bluetooth devices with less detail.
+            if (testMode?.config?.let { it.enabled && it.micInput == MicInput.BLUETOOTH } == true) {
+                add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
         }
         val missing = wanted
             .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
@@ -133,6 +146,64 @@ class MainActivity : Activity() {
         toggle.text = if (SessionService.isActive) "Stop Session" else "Start Session"
         settings.visibility = if (SessionService.controlsVisible(this)) Button.GONE else Button.VISIBLE
         status.text = if (SessionService.isActive) "Session active." else "No Session."
+        testMode?.refresh()
+    }
+
+    /**
+     * Debug-only controls for Bluetooth test mode: each tap cycles one setting
+     * and rewrites `files/testmode.json`, which the next Session reads, so
+     * switching configuration while parked is Stop, tap, Start.
+     */
+    private inner class TestModePane {
+        var config: TestConfig = SessionService.testConfig(this@MainActivity)
+            private set
+        private val enabled = small { update(config.copy(enabled = !config.enabled)) }
+        private val label = small { update(config.copy(label = TestConfig.LABELS.cycle(config.label))) }
+        private val mic = small { update(config.withPreset(TestConfig.MIC_PRESETS.next(config.preset))) }
+        private val interval = small { update(config.copy(ttsIntervalMs = TestConfig.TTS_INTERVALS_MS.cycle(config.ttsIntervalMs))) }
+        private val usage = small { update(config.copy(ttsUsage = TtsUsage.entries.toList().cycle(config.ttsUsage))) }
+        private val note = TextView(this@MainActivity).apply { textSize = 13f; alpha = 0.7f }
+        val view = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 24, 0, 0)
+            for (v in listOf(enabled, label, mic, interval, usage, note)) addView(v)
+        }
+
+        private fun small(onClick: () -> Unit) = Button(this@MainActivity).apply {
+            textSize = 14f
+            isAllCaps = false
+            setOnClickListener { onClick() }
+        }
+
+        private fun <T> List<T>.cycle(current: T): T = this[(indexOf(current) + 1) % size]
+
+        private fun update(next: TestConfig) {
+            try {
+                SessionService.saveTestConfig(this@MainActivity, next)
+                config = next
+            } catch (e: Exception) {
+                Log.e(TAG, "cannot write the test mode config", e)
+                note.text = "Could not save: ${e.message}"
+                return
+            }
+            refresh()
+        }
+
+        fun refresh() {
+            config = SessionService.testConfig(this@MainActivity) // the file may have been pushed over adb
+            enabled.text = if (config.enabled) "Test mode: ON" else "Test mode: off"
+            val on = config.enabled
+            for (b in listOf(label, mic, interval, usage)) b.visibility = if (on) Button.VISIBLE else Button.GONE
+            label.text = "Condition: ${config.label.ifEmpty { "(none)" }}"
+            mic.text = "Mic: ${config.preset}"
+            interval.text = if (config.ttsOn) "TTS every ${config.ttsIntervalMs / 1000} s" else "TTS off"
+            usage.text = "TTS usage: ${config.ttsUsage.json}"
+            note.text = when {
+                !on -> ""
+                SessionService.isActive -> "Changes apply at the next Session start."
+                else -> "Applies at the next Session start."
+            }
+        }
     }
 
     private companion object {

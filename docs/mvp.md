@@ -434,6 +434,14 @@ Design notes worth keeping:
   `pre_roll_ms` (300 above) + `vad.speech_ms` + `vad.trailing_silence_ms`, less
   any pre-roll clipped by the previous Turn. `speech_ms` spans first to last
   speech window, gaps shorter than the trailing Silence included.
+- A Turn recorded in Bluetooth test mode (#27, `docs/test-drive.md`) also has
+  a `test` block: the test configuration (`label`, `mic_source`, `mic_input`,
+  `audio_mode`, `tts_interval_ms`, `tts_usage`), the `input_devices` routed
+  while it was captured, and `tts_overlap` / `tts_overlap_ms` /
+  `tts_utterances`: whether, how long and which test phrases were playing
+  during its audio span. Each test Session also writes
+  `corpus/sessions/<started_at>-<session_id>.jsonl`, an append-only log of
+  route events. `sessions/` is the one Corpus entry that is not a Turn.
 - A tombstoned Turn keeps its audio. "Scratch that" usually means *I misspoke*,
   and the misspeaking is training data.
 
