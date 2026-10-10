@@ -1,5 +1,6 @@
 package com.walnutgeek.stsloop.core
 
+import com.walnutgeek.stsloop.core.corpus.TranscriptList
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -183,6 +184,17 @@ class TurnJsonTest {
         assertThrows<IllegalArgumentException> { Classification(TurnKind.UNCLASSIFIED, content = "x") }
         // A Note always has a Bucket: an unlabelled transcript is unclassified, not a Note.
         assertThrows<IllegalArgumentException> { Classification(TurnKind.NOTE, content = "x") }
+    }
+
+    @Test
+    fun `the transcript list reads back the kind and Bucket written`() {
+        val note = Classification.declared(Declaration("errands", DeclarationPosition.LEADING, "errands"), "order roofing screws")
+        val declared = TranscriptList.read(turn.directoryName, TurnJson.encode(turn.copy(transcript = transcript, classification = note)))
+        assertEquals("note" to "errands", declared.kind to declared.bucket)
+        assertEquals(null, declared.problem)
+        val plain = TranscriptList.read(turn.directoryName, TurnJson.encode(turn.copy(transcript = transcript, classification = Classification.UNCLASSIFIED)))
+        assertEquals("unclassified" to null, plain.kind to plain.bucket)
+        assertEquals(transcript.text, plain.transcript)
     }
 
     @Test

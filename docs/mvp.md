@@ -349,8 +349,8 @@ The rules in full (`:core` `PhraseGrammar`, `BucketConfig`):
   or alias is dropped and logged. An alias claimed by two Buckets is dropped
   from **both**, because either could be meant, and an unlabelled Turn is
   better than a wrong one. An alias equal to another Bucket's name loses to
-  the name. Only a file that is not a JSON object with a `buckets` array falls
-  back to the defaults above.
+  the name. Only a file that is not strict JSON (a duplicate key counts as
+  malformed) or has no `buckets` array falls back to the defaults above.
 
 ### Commands
 

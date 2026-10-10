@@ -133,8 +133,14 @@ class BucketConfigTest {
         assertEquals(listOf(Bucket("work", emptyList())), rejecting("""{"buckets":[{"name":"work","alias":["job"]}]}""", "buckets[0] (work): alias: unknown key").buckets)
 
     @Test
-    fun `a duplicate key in a Bucket drops the Bucket`() =
-        assertEquals(emptyList<Bucket>(), rejecting("""{"buckets":[{"name":"work","name":"job"}]}""", "buckets[0]:").buckets)
+    fun `a duplicate key anywhere is a whole-file error, as in every Corpus JSON file`() {
+        assertEquals(BucketConfig.DEFAULT, rejecting("""{"buckets":[{"name":"work","name":"job"}]}""", "file:"))
+        assertEquals(BucketConfig.DEFAULT, rejecting("""{"buckets":[],"buckets":[]}""", "file:"))
+    }
+
+    @Test
+    fun `a fractional number as an alias is reported as written`() =
+        assertEquals(listOf(Bucket("work", emptyList())), rejecting("""{"buckets":[{"name":"work","aliases":[1.5]}]}""", "buckets[0] (work): alias 1.5").buckets)
 
     @Test
     fun `a second Bucket with the same name is dropped`() =

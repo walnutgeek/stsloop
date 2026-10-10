@@ -1,5 +1,7 @@
 package com.walnutgeek.stsloop.core.grammar
 
+import com.walnutgeek.stsloop.core.corpus.Json
+import com.walnutgeek.stsloop.core.corpus.JsonException
 import com.walnutgeek.stsloop.core.jsonString
 
 /**
@@ -79,9 +81,11 @@ data class BucketConfig(val buckets: List<Bucket>) {
         /**
          * Parses the file, falling back **per Bucket**, so one typo never
          * disables every Declaration:
-         * - a file that is not a JSON object with a `buckets` array gives [DEFAULT];
-         * - a Bucket that is not an object, has a duplicate key, has no usable
-         *   name, or repeats an earlier Bucket's name is dropped;
+         * - a file that is not strict JSON (a duplicate key included, as in every
+         *   JSON file :core reads) or not an object with a `buckets` array
+         *   gives [DEFAULT];
+         * - a Bucket that is not an object, has no usable name, or repeats an
+         *   earlier Bucket's name is dropped;
          * - an alias that is not a string or has no words is dropped, and so is
          *   an unknown key (the Bucket stays);
          * - an alias that is another Bucket's name is dropped (names win);
@@ -91,32 +95,22 @@ data class BucketConfig(val buckets: List<Bucket>) {
         fun parse(json: String): Parsed {
             val rejected = mutableListOf<String>()
             val root = try {
-                JsonReader.read(json)
-            } catch (e: IllegalArgumentException) {
+                Json.parseObject(json)
+            } catch (e: JsonException) {
                 return Parsed(DEFAULT, listOf("file: ${e.message}"))
             }
-            if (root !is JsonObject) return Parsed(DEFAULT, listOf("file: must be a JSON object"))
-            val list = root.entries.filter { it.first == BUCKETS }
-            if (list.size != 1 || list[0].second !is List<*>) {
-                return Parsed(DEFAULT, listOf("file: must have one \"$BUCKETS\" array"))
-            }
-            for (key in root.keys.distinct()) if (key != BUCKETS) rejected += "$key: unknown key; known keys: [$BUCKETS]"
+            val list = root[BUCKETS] as? List<*> ?: return Parsed(DEFAULT, listOf("file: must have a \"$BUCKETS\" array"))
+            for (key in root.keys) if (key != BUCKETS) rejected += "$key: unknown key; known keys: [$BUCKETS]"
 
             class Draft(val label: String, val name: String, val aliases: MutableList<String>)
 
             val drafts = mutableListOf<Draft>()
-            for ((index, element) in (list[0].second as List<*>).withIndex()) {
+            for ((index, values) in list.withIndex()) {
                 val at = "$BUCKETS[$index]"
-                if (element !is JsonObject) {
+                if (values !is Map<*, *>) {
                     rejected += "$at: must be an object; Bucket dropped"
                     continue
                 }
-                val dup = element.keys.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
-                if (dup.isNotEmpty()) {
-                    rejected += "$at: duplicate key ${dup.joinToString { quote(it) }}; Bucket dropped"
-                    continue
-                }
-                val values = element.entries.toMap()
                 val name = (values[NAME] as? String)?.trim()
                 if (name == null || Words.normalise(name).isEmpty()) {
                     rejected += "$at: \"$NAME\" must be a string with at least one word; Bucket dropped"
@@ -128,7 +122,7 @@ data class BucketConfig(val buckets: List<Bucket>) {
                     rejected += "$label: same name as ${sameName.label}; Bucket dropped"
                     continue
                 }
-                for (key in element.keys) if (key != NAME && key != ALIASES) rejected += "$label: $key: unknown key; known keys: [$NAME, $ALIASES]"
+                for (key in values.keys) if (key != NAME && key != ALIASES) rejected += "$label: $key: unknown key; known keys: [$NAME, $ALIASES]"
                 val aliases = mutableListOf<String>()
                 when (val raw = values[ALIASES]) {
                     null -> if (ALIASES in values) rejected += "$label: $ALIASES must be an array of strings"
@@ -171,8 +165,7 @@ data class BucketConfig(val buckets: List<Bucket>) {
 
         private fun show(v: Any?): String = when (v) {
             is String -> quote(v)
-            is Double -> if (v == Math.floor(v) && Math.abs(v) < 1e15) v.toLong().toString() else v.toString()
-            is JsonObject -> "an object"
+            is Map<*, *> -> "an object"
             is List<*> -> "an array"
             else -> v.toString()
         }

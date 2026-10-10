@@ -1,10 +1,10 @@
 package com.walnutgeek.stsloop.core.corpus
 
+import com.walnutgeek.stsloop.core.Classification
 import com.walnutgeek.stsloop.core.Transcript
 import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.TurnAudio
 import com.walnutgeek.stsloop.core.TurnJson
-import com.walnutgeek.stsloop.core.TurnKind
 import com.walnutgeek.stsloop.core.TurnVad
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -110,7 +110,7 @@ class TranscriptListTest {
             appVersion = "0.1.0",
             vad = TurnVad(3000, 1500),
             transcript = Transcript("SAY \"HI\"\n", "sherpa-onnx", "m", 1_791_296_532_000, 300),
-            kind = TurnKind.UNCLASSIFIED,
+            classification = Classification.UNCLASSIFIED,
         )
         val t = TranscriptList.read(turn.directoryName, TurnJson.encode(turn))
         assertEquals("SAY \"HI\"\n", t.transcript)

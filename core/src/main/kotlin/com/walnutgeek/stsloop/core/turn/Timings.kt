@@ -1,5 +1,7 @@
 package com.walnutgeek.stsloop.core.turn
 
+import com.walnutgeek.stsloop.core.corpus.Json
+import com.walnutgeek.stsloop.core.corpus.JsonException
 import kotlin.math.floor
 
 /**
@@ -96,33 +98,31 @@ data class Timings(
         private fun tryOf(values: Map<String, Double>): Timings? = runCatching { of(values) }.getOrNull()
 
         /**
-         * Parses a flat JSON object, falling back **per key**: an unknown or
-         * duplicate key, a non-number, or an out-of-range value is rejected and
+         * Parses a flat JSON object, falling back **per key**: an unknown key,
+         * a non-number, or an out-of-range value is rejected and
          * that key keeps its default, while the other keys still apply. Keys that
          * are only valid together are accepted together; on a cross-field
          * conflict, the last-listed key whose removal resolves it is rejected.
-         * A file that is not a JSON object yields all defaults.
+         * A file that is not a strict JSON object (a duplicate key included)
+         * yields all defaults.
          */
         fun parse(json: String): Parsed {
             val entries = try {
-                FlatJson(json).parseObject()
-            } catch (e: IllegalArgumentException) {
+                Json.parseObject(json)
+            } catch (e: JsonException) {
                 return Parsed(Timings(), listOf("file: ${e.message}"))
             }
             val rejected = mutableListOf<String>()
-            val counts = entries.groupingBy { it.first }.eachCount()
             val accepted = LinkedHashMap<String, Double>()
-            val seen = mutableSetOf<String>()
-            for ((key, value) in entries) {
-                if (!seen.add(key)) continue // a duplicate is reported once, at its first occurrence
+            for ((key, raw) in entries) {
                 val field = FIELDS.firstOrNull { it.key == key }
+                val value = (raw as? Number)?.toDouble()
                 val problem = when {
                     field == null -> "unknown key; known keys: $KEYS"
-                    counts.getValue(key) > 1 -> "duplicate key"
-                    value !is Double -> "must be a number, was $value"
+                    value == null -> "must be a number, was $raw"
                     else -> field.check(value)
                 }
-                if (problem == null) accepted[key] = value as Double else rejected += "$key: $problem"
+                if (problem == null) accepted[key] = value!! else rejected += "$key: $problem"
             }
             while (true) {
                 tryOf(accepted)?.let { return Parsed(it, rejected) }
@@ -133,82 +133,4 @@ data class Timings(
             }
         }
     }
-}
-
-/**
- * The subset of JSON [Timings] needs: one flat object. Values are numbers
- * (as [Double]), strings, `true`/`false` or `null`; entries keep file order,
- * duplicates included, so the caller can judge each key.
- */
-private class FlatJson(private val s: String) {
-    private var i = 0
-
-    fun parseObject(): List<Pair<String, Any?>> {
-        val out = mutableListOf<Pair<String, Any?>>()
-        ws()
-        expect('{')
-        ws()
-        if (peek() == '}') {
-            i++
-        } else {
-            while (true) {
-                ws()
-                val key = string()
-                ws()
-                expect(':')
-                ws()
-                out += key to value(key)
-                ws()
-                when (next()) {
-                    ',' -> continue
-                    '}' -> break
-                    else -> fail("expected ',' or '}'")
-                }
-            }
-        }
-        ws()
-        if (i != s.length) fail("unexpected trailing content")
-        return out
-    }
-
-    private fun value(key: String): Any? = when {
-        peek() == '"' -> string()
-        s.startsWith("true", i) -> true.also { i += 4 }
-        s.startsWith("false", i) -> false.also { i += 5 }
-        s.startsWith("null", i) -> null.also { i += 4 }
-        else -> number(key)
-    }
-
-    private fun string(): String {
-        expect('"')
-        val start = i
-        while (i < s.length && s[i] != '"') {
-            if (s[i] == '\\') fail("escapes are not supported")
-            i++
-        }
-        if (i >= s.length) fail("unterminated string")
-        return s.substring(start, i++)
-    }
-
-    private fun number(key: String): Double {
-        val start = i
-        while (i < s.length && (s[i].isDigit() || s[i] in "+-.eE")) i++
-        val text = s.substring(start, i)
-        return text.toDoubleOrNull()?.takeIf { it.isFinite() }
-            ?: fail("value of \"$key\" is not a JSON value: '${if (text.isEmpty()) peek() ?: "end" else text}'")
-    }
-
-    private fun ws() {
-        while (i < s.length && s[i] in " \t\r\n") i++
-    }
-
-    private fun peek(): Char? = s.getOrNull(i)
-
-    private fun next(): Char? = s.getOrNull(i++)
-
-    private fun expect(c: Char) {
-        if (next() != c) fail("expected '$c'")
-    }
-
-    private fun fail(why: String): Nothing = throw IllegalArgumentException("$why at offset ${i.coerceAtMost(s.length)}")
 }

@@ -116,7 +116,8 @@ Bucket. A Bucket with no usable name, or with the same name as an earlier one,
 is dropped. So is an alias that is not a string. An alias shared by two Buckets
 is dropped from both. Each problem is logged as an error under
 `stsloop.TurnCapture`, and the rest of the file still applies. Only a file that
-is not a JSON object with a `buckets` array means the defaults. The effective
+is not strict JSON (a duplicate key counts as malformed) or has no `buckets`
+array means the defaults. The effective
 Buckets are logged under `stsloop.Session` when a Session starts. An empty list,
 `{"buckets": []}`, turns Declarations off.
 
@@ -134,11 +135,12 @@ The loop's timings (`docs/mvp.md`, "Timings") are read at the start of every
 Session from `files/timings.json` in the app's private storage, so they can be
 changed without a rebuild. The file is optional, and so is every key in it: a
 missing key keeps its default. Fallback is per key: an unknown key, a
-duplicate, a non-number or an out-of-range value is logged as an error under
+non-number or an out-of-range value is logged as an error under
 `stsloop.TurnCapture` and keeps its default, while the other keys still apply.
 Keys that only make sense together (`release_threshold` ≤ `speech_threshold`,
 `pre_roll_ms` + `min_utterance_ms` < `max_utterance_ms`) are checked together;
-on a conflict the last-listed offending key is dropped. The effective values
+on a conflict the last-listed offending key is dropped. A file that is not
+strict JSON, a duplicate key included, means all defaults. The effective values
 are logged under `stsloop.Session` when a Session starts.
 
 ```json
