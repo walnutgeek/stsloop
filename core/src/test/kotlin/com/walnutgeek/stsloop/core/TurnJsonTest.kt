@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 
 class TurnJsonTest {
     private val turn = Turn(
@@ -87,7 +88,7 @@ class TurnJsonTest {
     @Test
     fun `a transcribed Turn carries the transcript block and kind after vad, before app_version`() {
         val json = TurnJson.encode(
-            turn.copy(vad = TurnVad(3180, 1500), transcript = transcript, kind = TurnKind.UNCLASSIFIED),
+            turn.copy(vad = TurnVad(3180, 1500), transcript = transcript, classification = Classification.UNCLASSIFIED),
         )
         assertTrue(
             json.contains(
@@ -109,7 +110,7 @@ class TurnJsonTest {
     @Test
     fun `kind is written without a transcript, and each kind has its spec name`() {
         assertEquals(listOf("note", "command", "unclassified"), TurnKind.entries.map { it.json })
-        val json = TurnJson.encode(turn.copy(kind = TurnKind.UNCLASSIFIED))
+        val json = TurnJson.encode(turn.copy(classification = Classification.UNCLASSIFIED))
         assertTrue(json.contains("\"duration_ms\": 4471 },\n  \"kind\": \"unclassified\",\n  \"app_version\""), json)
         assertFalse(json.contains("\"transcript\""))
     }
@@ -127,11 +128,66 @@ class TurnJsonTest {
     }
 
     @Test
-    fun `fields owned by later tickets are absent, not null`() {
-        val json = TurnJson.encode(turn.copy(transcript = transcript, kind = TurnKind.UNCLASSIFIED))
+    fun `an unclassified Turn has no Note fields, not even null ones`() {
+        val json = TurnJson.encode(turn.copy(transcript = transcript, classification = Classification.UNCLASSIFIED))
         for (key in listOf("declaration", "bucket", "bucket_source", "content")) {
             assertFalse(json.contains("\"$key\""), "unexpected $key in $json")
         }
+    }
+
+    @Test
+    fun `a declared Note is written as in the mvp Corpus example`() {
+        val note = Classification.declared(Declaration("errands", DeclarationPosition.LEADING, "errands"), "order roofing screws")
+        val json = TurnJson.encode(turn.copy(transcript = transcript, classification = note))
+        assertTrue(
+            json.contains(
+                "  },\n" +
+                    "  \"kind\": \"note\",\n" +
+                    "  \"declaration\": { \"bucket\": \"errands\", \"position\": \"leading\", \"matched\": \"errands\" },\n" +
+                    "  \"bucket\": \"errands\",\n" +
+                    "  \"bucket_source\": \"declaration\",\n" +
+                    "  \"content\": \"order roofing screws\",\n" +
+                    "  \"app_version\": \"0.1.0\",\n",
+            ),
+            json,
+        )
+    }
+
+    @Test
+    fun `a trailing Declaration says so`() {
+        val note = Classification.declared(Declaration("house-project", DeclarationPosition.TRAILING, "houseproject"), "x")
+        val json = TurnJson.encode(turn.copy(transcript = transcript, classification = note))
+        assertTrue(json.contains("{ \"bucket\": \"house-project\", \"position\": \"trailing\", \"matched\": \"houseproject\" }"), json)
+    }
+
+    @Test
+    fun `an undeclared Note writes the Bucket fields as null and keeps its content`() {
+        val json = TurnJson.encode(turn.copy(transcript = transcript, classification = Classification.undeclared("order \"roofing\" screws")))
+        assertTrue(
+            json.contains(
+                "  \"kind\": \"note\",\n" +
+                    "  \"declaration\": null,\n" +
+                    "  \"bucket\": null,\n" +
+                    "  \"bucket_source\": null,\n" +
+                    "  \"content\": \"order \\\"roofing\\\" screws\",\n" +
+                    "  \"app_version\"",
+            ),
+            json,
+        )
+    }
+
+    @Test
+    fun `a Classification refuses inconsistent fields`() {
+        val d = Declaration("errands", DeclarationPosition.LEADING, "errands")
+        assertThrows<IllegalArgumentException> { Classification(TurnKind.NOTE, d, "work", BucketSource.DECLARATION, "x") }
+        assertThrows<IllegalArgumentException> { Classification(TurnKind.NOTE, null, "work", null, "x") }
+        assertThrows<IllegalArgumentException> { Classification(TurnKind.UNCLASSIFIED, content = "x") }
+    }
+
+    @Test
+    fun `position and bucket_source have their spec names`() {
+        assertEquals(listOf("leading", "trailing"), DeclarationPosition.entries.map { it.json })
+        assertEquals(listOf("declaration"), BucketSource.entries.map { it.json })
     }
 
     @Test

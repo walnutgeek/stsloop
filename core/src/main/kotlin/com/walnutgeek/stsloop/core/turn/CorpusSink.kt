@@ -3,7 +3,7 @@ package com.walnutgeek.stsloop.core.turn
 import com.walnutgeek.stsloop.core.CorpusWriter
 import com.walnutgeek.stsloop.core.Ids
 import com.walnutgeek.stsloop.core.Turn
-import com.walnutgeek.stsloop.core.TurnKind
+import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
 
 /**
  * Writes each closed utterance as its own Turn, transcript included, in one
@@ -12,7 +12,8 @@ import com.walnutgeek.stsloop.core.TurnKind
  * write is abandoned and reported to the [Listener]; it never takes the rest
  * of the Session down with it.
  *
- * Without a phrase grammar every Turn is [TurnKind.UNCLASSIFIED].
+ * Each Turn is classified by [grammar] from its transcript: a Note (with its
+ * Bucket when Declared), or unclassified when nothing was heard.
  */
 class CorpusSink(
     private val writer: CorpusWriter,
@@ -20,6 +21,7 @@ class CorpusSink(
     private val sessionStartedAtMs: Long,
     private val sampleRate: Int,
     private val appVersion: String,
+    private val grammar: PhraseGrammar,
     private val newId: () -> String = Ids::next,
     private val listener: Listener,
 ) {
@@ -44,7 +46,8 @@ class CorpusSink(
             val inProgress = writer.begin(newId(), sessionId, utterance.startedAtMs(sessionStartedAtMs, sampleRate), sampleRate)
             try {
                 inProgress.append(pcm, pcm.size)
-                inProgress.finish(appVersion, utterance.vad(sampleRate), transcription?.transcript, TurnKind.UNCLASSIFIED)
+                val transcript = transcription?.transcript
+                inProgress.finish(appVersion, utterance.vad(sampleRate), transcript, grammar.classify(transcript?.text))
             } catch (e: Exception) {
                 runCatching { inProgress.abandon() }
                 throw e

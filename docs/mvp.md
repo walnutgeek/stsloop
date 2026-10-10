@@ -319,6 +319,36 @@ Matching is case-insensitive, punctuation-insensitive, and anchored — a Bucket
 alias occurring mid-utterance is **not** a Declaration. "I need to work on the
 roof" must not land in `work`.
 
+The rules in full (`:core` `PhraseGrammar`, `BucketConfig`):
+
+- The transcript is read as words: runs of letters, digits and apostrophes,
+  lower-cased, apostrophes dropped. Everything else — spaces, commas, dashes,
+  colons, full stops — only separates words. So "House-Project:" reads as
+  `house project`.
+- A Bucket's canonical name is always one of its aliases. An alias of several
+  words also matches run together, so `house project` covers "house project",
+  "house-project" and "houseproject".
+- Grammar: `[fillers] ALIAS [fillers] content` (leading) or
+  `content [fillers] ALIAS [fillers]` (trailing). The fillers are
+  `um umm uh uhm er erm ah hmm mm so okay ok`. Fillers inside the content stay.
+- When several aliases fit at one end, the one with the most words wins
+  ("house project" over "house"), then the longer spelling.
+- An alias at **both** ends declares the leading one. The trailing one stays in
+  the content.
+- An utterance that is **only** an alias (and fillers), such as "errands", is
+  not a Declaration. It is stored as an undeclared Note: an empty Note is not
+  worth a Bucket, and it is more likely a false start.
+- `content` is the transcript with the Declaration and its fillers taken out.
+  It is cut from the original text, so a cased or punctuated engine keeps its
+  casing and inner punctuation. An all-caps engine (the current one) is
+  lower-cased. `transcript.text` is never changed.
+- Config errors fall back per Bucket, not for the whole file. A broken Bucket
+  or alias is dropped and logged. An alias claimed by two Buckets is dropped
+  from **both**, because either could be meant, and an unlabelled Note is
+  better than a wrong one. An alias equal to another Bucket's name loses to
+  the name. Only a file that is not a JSON object with a `buckets` array falls
+  back to the defaults above.
+
 ### Commands
 
 Four, chosen because the loop is unusable in a car without them:
@@ -384,8 +414,11 @@ Design notes worth keeping:
   ground truth never get confused in the same field.
 - `model` and `app_version` are recorded on every Turn, so the Corpus remains
   interpretable after the engine changes underneath it.
-- `kind` is one of `note`, `command`, `unclassified`. Until the phrase
-  grammar exists, every Turn is `unclassified`.
+- `kind` is one of `note`, `command`, `unclassified`. A Turn with a transcript
+  is a `note`, Declared or not. An undeclared Note has `declaration`, `bucket`
+  and `bucket_source` set to `null`, and its whole transcript as `content`
+  (cased as above). A Turn with no transcript, or with nothing but punctuation
+  in it, is `unclassified` and has none of those four fields.
 - `transcript.text` is exactly what the engine produced. The current model
   emits upper case with no punctuation. A
   future cased or punctuated model must not be flattened, so normalisation is

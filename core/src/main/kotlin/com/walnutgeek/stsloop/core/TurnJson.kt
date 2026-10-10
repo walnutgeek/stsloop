@@ -31,7 +31,24 @@ object TurnJson {
             append("    \"latency_ms\": ").append(t.latencyMs).append("\n")
             append("  },\n")
         }
-        turn.kind?.let { append("  \"kind\": ").str(it.json).append(",\n") }
+        turn.classification?.let { c ->
+            append("  \"kind\": ").str(c.kind.json).append(",\n")
+            if (c.kind == TurnKind.NOTE) {
+                append("  \"declaration\": ")
+                val d = c.declaration
+                if (d == null) {
+                    append("null")
+                } else {
+                    append("{ \"bucket\": ").str(d.bucket)
+                    append(", \"position\": ").str(d.position.json)
+                    append(", \"matched\": ").str(d.matched).append(" }")
+                }
+                append(",\n")
+                append("  \"bucket\": ").strOrNull(c.bucket).append(",\n")
+                append("  \"bucket_source\": ").strOrNull(c.bucketSource?.json).append(",\n")
+                append("  \"content\": ").strOrNull(c.content).append(",\n")
+            }
+        }
         append("  \"app_version\": ").str(turn.appVersion).append(",\n")
         append("  \"tombstoned_by\": ").strOrNull(turn.tombstonedBy).append("\n")
         append("}\n")

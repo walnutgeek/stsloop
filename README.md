@@ -92,6 +92,42 @@ every on-device measurement is taken on this phone. For screenshots while
 plugged in, `adb shell svc power stayon usb` keeps the screen awake (undo with
 `svc power stayon false`).
 
+### Editing the Buckets
+
+The Buckets a Turn can be Declared into (`docs/mvp.md`, "Declaration") are read
+at the start of every Session from `files/buckets.json` in the app's private
+storage. Without the file, the four mvp.md Buckets apply:
+
+```json
+{
+  "buckets": [
+    { "name": "errands",       "aliases": ["errands", "errand", "shopping"] },
+    { "name": "house-project", "aliases": ["house project", "house", "the house"] },
+    { "name": "work",          "aliases": ["work", "worklog", "work log"] },
+    { "name": "ideas",         "aliases": ["idea", "ideas", "thought"] }
+  ]
+}
+```
+
+`name` is written to `turn.json` as `bucket`, and it always counts as an alias.
+`aliases` is optional. Matching ignores case and punctuation, and an alias of
+several words also matches run together ("houseproject"). Fallback is per
+Bucket. A Bucket with no usable name, or with the same name as an earlier one,
+is dropped. So is an alias that is not a string. An alias shared by two Buckets
+is dropped from both. Each problem is logged as an error under
+`stsloop.TurnCapture`, and the rest of the file still applies. Only a file that
+is not a JSON object with a `buckets` array means the defaults. The effective
+Buckets are logged under `stsloop.Session` when a Session starts. An empty list,
+`{"buckets": []}`, turns Declarations off.
+
+```sh
+# write (debug build; takes effect at the next Session)
+mise exec -- adb exec-in run-as com.walnutgeek.stsloop sh -c 'cat > files/buckets.json' < buckets.json
+# read back, or delete to return to the defaults
+mise exec -- adb exec-out run-as com.walnutgeek.stsloop cat files/buckets.json
+mise exec -- adb shell run-as com.walnutgeek.stsloop rm files/buckets.json
+```
+
 ### Tuning the timings
 
 The loop's timings (`docs/mvp.md`, "Timings") are read at the start of every

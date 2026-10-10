@@ -232,6 +232,8 @@ class SessionService : Service() {
         try {
             val timings = TurnCapture.loadTimings(filesDir)
             Log.i(TAG, "Session $sessionId timings: ${timings.toJson().replace(Regex("\\s+"), " ")}")
+            val buckets = TurnCapture.loadBuckets(filesDir)
+            Log.i(TAG, "Session $sessionId buckets: ${buckets.toJson().replace(Regex("\\s+"), " ")}")
             vad = SpeechModels.newVad(assets)
             val minBytes = AudioRecord.getMinBufferSize(
                 SAMPLE_RATE_HZ, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
@@ -248,11 +250,13 @@ class SessionService : Service() {
                 writer, sessionId, startedAt, appVersion(), timings,
                 TurnCapture.silero(vad), SpeechModels.vadConfig().sileroVadModelConfig.windowSize,
                 recognizer = { SttRecognizer.load(assets) },
+                buckets = buckets,
             ) { turn, u, timing ->
                 Log.i(
                     TAG,
                     "Session $sessionId wrote Turn ${turn.directoryName} (${turn.audio.durationMs} ms, ${u.closedBy}, " +
-                        "samples ${u.startSample}..${u.endSample}): ${SttTiming.summary(turn, timing)}",
+                        "samples ${u.startSample}..${u.endSample}): ${SttTiming.summary(turn, timing)}; " +
+                        "${turn.kind?.json} in ${turn.classification?.bucket ?: "no Bucket"}",
                 )
             }
             capture = turns

@@ -12,10 +12,10 @@ const val TURN_FILE = "turn.json"
  *
  * Timestamps are epoch milliseconds, UTC. `ended_at` is not observed
  * separately: it is `started_at + duration_ms`, so a sample offset into the
- * Recording maps to wall time exactly. Fields owned by later tickets
- * (`declaration`, `bucket`, …) are not modelled yet and are absent from the
- * JSON; so are `vad` when no VAD cut the Turn, `transcript` when the
- * recognizer produced none, and `kind` when the Turn was never classified.
+ * Recording maps to wall time exactly. `vad` is absent from the JSON when no
+ * VAD cut the Turn, `transcript` when the recognizer produced none, and
+ * `kind` (with the rest of the [classification]) when the Turn was never
+ * classified.
  */
 data class Turn(
     val id: String,
@@ -25,9 +25,11 @@ data class Turn(
     val appVersion: String,
     val vad: TurnVad? = null,
     val transcript: Transcript? = null,
-    val kind: TurnKind? = null,
+    val classification: Classification? = null,
     val tombstonedBy: String? = null,
 ) {
+    val kind: TurnKind? get() = classification?.kind
+
     val endedAtMs: Long get() = startedAtMs + audio.durationMs
 
     /** `<started_at>-<id>`, e.g. `2026-10-06T14:22:07.431Z-a3f1c9`. */
@@ -71,11 +73,67 @@ data class Transcript(
     val latencyMs: Long,
 )
 
-/** `kind` in `turn.json`. Without a phrase grammar every Turn is [UNCLASSIFIED]. */
+/**
+ * `kind` in `turn.json`. A Turn with a transcript is a [NOTE] unless it is a
+ * command; a Turn with nothing heard is [UNCLASSIFIED].
+ */
 enum class TurnKind(val json: String) {
     NOTE("note"),
     COMMAND("command"),
     UNCLASSIFIED("unclassified"),
+}
+
+/**
+ * What the phrase grammar made of a Turn: its [kind] and, for a [TurnKind.NOTE],
+ * the Bucket and the Note's [content].
+ *
+ * A Note always has [content]; its [bucket] is null when nothing assigned one.
+ * [bucketSource] says where the [bucket] came from, so a later classifier's
+ * predictions never mix with Declarations (ground truth).
+ */
+data class Classification(
+    val kind: TurnKind,
+    val declaration: Declaration? = null,
+    val bucket: String? = null,
+    val bucketSource: BucketSource? = null,
+    val content: String? = null,
+) {
+    init {
+        require((bucket == null) == (bucketSource == null)) { "bucket and bucket_source go together" }
+        require(declaration == null || (declaration.bucket == bucket && bucketSource == BucketSource.DECLARATION)) {
+            "a Declaration sets the bucket, with bucket_source declaration"
+        }
+        require(kind == TurnKind.NOTE || (bucket == null && content == null)) { "only a Note has a bucket and content" }
+    }
+
+    companion object {
+        val UNCLASSIFIED = Classification(TurnKind.UNCLASSIFIED)
+
+        /** A Note whose Bucket was named aloud. */
+        fun declared(declaration: Declaration, content: String) =
+            Classification(TurnKind.NOTE, declaration, declaration.bucket, BucketSource.DECLARATION, content)
+
+        /** A Note with no Bucket. */
+        fun undeclared(content: String) = Classification(TurnKind.NOTE, content = content)
+    }
+}
+
+/** A Bucket named aloud at one end of a Turn: which Bucket, which end, and the words heard (normalised). */
+data class Declaration(
+    val bucket: String,
+    val position: DeclarationPosition,
+    val matched: String,
+)
+
+/** `declaration.position` in `turn.json`. */
+enum class DeclarationPosition(val json: String) {
+    LEADING("leading"),
+    TRAILING("trailing"),
+}
+
+/** `bucket_source` in `turn.json`; `classifier` comes later. */
+enum class BucketSource(val json: String) {
+    DECLARATION("declaration"),
 }
 
 fun turnDirectoryName(startedAtMs: Long, id: String): String = "${UtcTimestamp.format(startedAtMs)}-$id"
@@ -95,14 +153,14 @@ interface TurnInProgress {
     fun append(samples: ShortArray, count: Int)
 
     /**
-     * Seals the Recording, writes `turn.json` (with [transcript] and [kind]
-     * when given), and publishes the Turn directory in one step.
+     * Seals the Recording, writes `turn.json` (with [transcript] and
+     * [classification] when given), and publishes the Turn directory in one step.
      */
     fun finish(
         appVersion: String,
         vad: TurnVad? = null,
         transcript: Transcript? = null,
-        kind: TurnKind? = null,
+        classification: Classification? = null,
     ): Turn
 
     /** Discards everything written so far; nothing appears in the Corpus. */
