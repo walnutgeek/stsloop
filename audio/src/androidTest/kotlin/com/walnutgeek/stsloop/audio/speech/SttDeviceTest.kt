@@ -7,7 +7,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.k2fsa.sherpa.onnx.VersionInfo
 import com.k2fsa.sherpa.onnx.WaveReader
-import com.walnutgeek.stsloop.core.speech.ModelArchitecture
 import org.junit.AfterClass
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -30,7 +29,7 @@ class SttDeviceTest {
             "AFTER EARLY NIGHTFALL THE YELLOW LAMPS WOULD LIGHT UP HERE AND THERE THE SQUALID QUARTER OF THE BROTHELS"
 
         private val assets get() = InstrumentationRegistry.getInstrumentation().context.assets
-        private lateinit var stt: Stt
+        private var stt: Stt? = null
 
         @BeforeClass
         @JvmStatic
@@ -44,19 +43,27 @@ class SttDeviceTest {
 
         @AfterClass
         @JvmStatic
-        fun release() = stt.close()
+        fun release() {
+            stt?.close()
+        }
     }
 
+    private val loaded get() = checkNotNull(stt) { "model failed to load" }
+
     private fun transcribe(hotwords: String = ""): String {
+        val stt = loaded
         val wave = WaveReader.readWave(assets, WAV)
         val t0 = SystemClock.elapsedRealtime()
         val stream = stt.createStream(hotwords)
-        stream.acceptWaveform(wave.samples, wave.sampleRate)
-        stream.acceptWaveform(FloatArray(wave.sampleRate * 3 / 10), wave.sampleRate) // tail padding
-        stream.inputFinished()
-        while (stt.isReady(stream)) stt.decode(stream)
-        val text = stt.text(stream).trim()
-        stream.release()
+        val text = try {
+            stream.acceptWaveform(wave.samples, wave.sampleRate)
+            stream.acceptWaveform(FloatArray(wave.sampleRate * 3 / 10), wave.sampleRate) // tail padding
+            stream.inputFinished()
+            while (stt.isReady(stream)) stt.decode(stream)
+            stt.text(stream).trim()
+        } finally {
+            stream.release()
+        }
         val ms = SystemClock.elapsedRealtime() - t0
         val audioMs = wave.samples.size * 1000L / wave.sampleRate
         Log.i(TAG, "decode hotwords='$hotwords': $ms ms for $audioMs ms audio, RTF ${"%.3f".format(ms.toDouble() / audioMs)}: $text")
@@ -76,10 +83,11 @@ class SttDeviceTest {
             ),
             files,
         )
-        assertEquals("modified_beam_search", stt.config.decodingMethod)
-        assertEquals("bpe", stt.config.modelConfig.modelingUnit)
-        assertEquals("${SpeechModels.STT_DIR}/bpe.vocab", stt.config.modelConfig.bpeVocab)
-        assertEquals("", stt.config.hotwordsFile)
+        val spec = loaded.spec
+        assertEquals("modified_beam_search", spec.decodingMethod)
+        assertEquals("bpe", spec.modelingUnit)
+        assertEquals("${SpeechModels.STT_DIR}/bpe.vocab", spec.bpeVocab)
+        assertEquals("", spec.hotwordsFile)
     }
 
     @Test
@@ -93,14 +101,21 @@ class SttDeviceTest {
     }
 
     @Test
-    fun chokepointRefusesHotwordsInsteadOfExiting() {
-        // Same model, declared as CTC: the gate must stop the call before JNI,
-        // or this process would die with _Exit(-1) and the test run with it.
-        Stt(assets, architecture = ModelArchitecture.CTC).use { ctc ->
-            val e = assertThrows(IllegalStateException::class.java) { ctc.createStream("HELLO") }
-            assertTrue(e.message!!, e.message!!.contains("CTC"))
-            ctc.createStream("").release() // no hotwords is always fine
+    fun chokepointRefusesHotwordsInsteadOfCrashing() {
+        // Same model under greedy_search: no BPE encoder is built, so letting
+        // hotwords through would crash natively and take the test run with it.
+        val config = SpeechModels.sttConfig().apply { decodingMethod = "greedy_search" }
+        Stt(assets, config).use { greedy ->
+            val e = assertThrows(IllegalStateException::class.java) { greedy.createStream("HELLO") }
+            assertTrue(e.message!!, e.message!!.contains("modified_beam_search"))
+            greedy.createStream("").release() // no hotwords is always fine
         }
+    }
+
+    @Test
+    fun configTimeHotwordsAreRefused() {
+        val config = SpeechModels.sttConfig().apply { hotwordsFile = "hotwords.txt" }
+        assertThrows(IllegalArgumentException::class.java) { Stt(assets, config) }
     }
 
     @Test
@@ -115,15 +130,18 @@ class SttDeviceTest {
         val vad = SpeechModels.newVad(assets)
         val window = SpeechModels.vadConfig().sileroVadModelConfig.windowSize
         var segments = 0
-        var i = 0
-        while (i + window <= wave.samples.size) {
-            vad.acceptWaveform(wave.samples.copyOfRange(i, i + window))
+        try {
+            var i = 0
+            while (i + window <= wave.samples.size) {
+                vad.acceptWaveform(wave.samples.copyOfRange(i, i + window))
+                while (!vad.empty()) { segments++; vad.pop() }
+                i += window
+            }
+            vad.flush()
             while (!vad.empty()) { segments++; vad.pop() }
-            i += window
+        } finally {
+            vad.release()
         }
-        vad.flush()
-        while (!vad.empty()) { segments++; vad.pop() }
-        vad.release()
         Log.i(TAG, "vad segments: $segments")
         assertTrue("expected at least one speech segment", segments > 0)
     }

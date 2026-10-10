@@ -10,8 +10,6 @@ import com.k2fsa.sherpa.onnx.Vad
 import com.k2fsa.sherpa.onnx.VadModelConfig
 import com.walnutgeek.stsloop.audio.SAMPLE_RATE_HZ
 import com.walnutgeek.stsloop.core.speech.HotwordsGate
-import com.walnutgeek.stsloop.core.speech.ModelArchitecture
-import com.walnutgeek.stsloop.core.speech.RecognizerSpec
 
 /**
  * The speech models stsloop ships, as asset paths. Fetched into
@@ -22,9 +20,6 @@ object SpeechModels {
     const val STT_DIR = "sherpa-onnx-streaming-zipformer-en-2023-06-26"
     private const val PREFIX = "epoch-99-avg-1-chunk-16-left-128"
     const val VAD_MODEL = "silero_vad.onnx"
-
-    /** The STT model, declared rather than inferred: sherpa-onnx picks its impl from the model files. */
-    val sttArchitecture = ModelArchitecture.ZIPFORMER_TRANSDUCER
 
     fun sttConfig(numThreads: Int = 2) = OnlineRecognizerConfig(
         featConfig = FeatureConfig(sampleRate = SAMPLE_RATE_HZ, featureDim = 80),
@@ -41,8 +36,8 @@ object SpeechModels {
             bpeVocab = "$STT_DIR/bpe.vocab",
         ),
         decodingMethod = HotwordsGate.MODIFIED_BEAM_SEARCH,
-        // Per-stream hotwords are unioned with config-time ones; keep these
-        // empty so a Bucket's Word list is the only vocabulary in play.
+        // Per-stream hotwords are unioned with config-time ones; Stt refuses
+        // a non-empty file so a Bucket's Word list is the only one in play.
         hotwordsFile = "",
     )
 
@@ -57,11 +52,4 @@ object SpeechModels {
         requireAssets(assets, listOf(config.sileroVadModelConfig.model))
         return Vad(assets, config)
     }
-
-    fun specOf(config: OnlineRecognizerConfig, architecture: ModelArchitecture) = RecognizerSpec(
-        architecture = architecture,
-        decodingMethod = config.decodingMethod,
-        modelingUnit = config.modelConfig.modelingUnit,
-        bpeVocab = config.modelConfig.bpeVocab,
-    )
 }

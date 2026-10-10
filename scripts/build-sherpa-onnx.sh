@@ -12,7 +12,7 @@
 # Needs the NDK and CMake from scripts/setup-android.sh, plus git, curl,
 # unzip and make. The sherpa-onnx checkout and build tree live in
 # $STSLOOP_CACHE (default ~/.cache/stsloop), outside the repo. Idempotent:
-# a finished build is reused unless the pin changes.
+# a finished build is reused unless the pins or build flags change.
 set -euo pipefail
 
 # --- Pins. Change these together, then re-run and commit the .kt diff. ------
@@ -75,7 +75,7 @@ if [[ ! -f "$ORT_DIR/jni/$ABI/libonnxruntime.so" ]]; then
   say "Fetching onnxruntime $ONNXRUNTIME_VERSION"
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
-  curl -fsSL -o "$tmp/ort.zip" \
+  curl -fsSL --retry 3 -o "$tmp/ort.zip" \
     "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v$ONNXRUNTIME_VERSION/onnxruntime-android-$ONNXRUNTIME_VERSION.zip"
   echo "$ONNXRUNTIME_SHA256  $tmp/ort.zip" | sha256sum -c --quiet -
   rm -rf "$ORT_DIR"
@@ -83,25 +83,30 @@ if [[ ! -f "$ORT_DIR/jni/$ABI/libonnxruntime.so" ]]; then
   unzip -q "$tmp/ort.zip" -d "$ORT_DIR"
 fi
 
-INSTALL="$SRC/build-android-$ABI/install/lib"
-if [[ ! -f "$INSTALL/libsherpa-onnx-jni.so" ]]; then
+# Upstream's own script, with only what stsloop uses switched on: no TTS,
+# no diarization, no binaries, JNI only.
+BUILD_ENV=(
+  ANDROID_NDK="$NDK"
+  BUILD_SHARED_LIBS=ON
+  SHERPA_ONNXRUNTIME_LIB_DIR="$ORT_DIR/jni/$ABI"
+  SHERPA_ONNXRUNTIME_INCLUDE_DIR="$ORT_DIR/headers"
+  SHERPA_ONNX_ENABLE_TTS=OFF
+  SHERPA_ONNX_ENABLE_SPEAKER_DIARIZATION=OFF
+  SHERPA_ONNX_ENABLE_BINARY=OFF
+  SHERPA_ONNX_ENABLE_C_API=OFF
+  SHERPA_ONNX_ENABLE_JNI=ON
+)
+# The build is reused only if it came from this exact pin and these flags;
+# otherwise the build tree (and its CMake cache) is wiped and rebuilt.
+BUILD_DIR="$SRC/build-android-$ABI"
+INSTALL="$BUILD_DIR/install/lib"
+STAMP="$BUILD_DIR/.stsloop-stamp"
+stamp="$(printf '%s\n' "$SHERPA_ONNX_COMMIT" "$ONNXRUNTIME_SHA256" "$CMAKE_VERSION" "${BUILD_ENV[@]}")"
+if [[ ! -f "$INSTALL/libsherpa-onnx-jni.so" || "$(cat "$STAMP" 2>/dev/null)" != "$stamp" ]]; then
   say "Building sherpa-onnx for $ABI with NDK $NDK_VERSION (takes a while)"
-  # Upstream's own script, with only what stsloop uses switched on: no TTS,
-  # no diarization, no binaries, JNI only.
-  (
-    cd "$SRC"
-    PATH="$CMAKE_BIN:$PATH" \
-      ANDROID_NDK="$NDK" \
-      BUILD_SHARED_LIBS=ON \
-      SHERPA_ONNXRUNTIME_LIB_DIR="$ORT_DIR/jni/$ABI" \
-      SHERPA_ONNXRUNTIME_INCLUDE_DIR="$ORT_DIR/headers" \
-      SHERPA_ONNX_ENABLE_TTS=OFF \
-      SHERPA_ONNX_ENABLE_SPEAKER_DIARIZATION=OFF \
-      SHERPA_ONNX_ENABLE_BINARY=OFF \
-      SHERPA_ONNX_ENABLE_C_API=OFF \
-      SHERPA_ONNX_ENABLE_JNI=ON \
-      ./build-android-arm64-v8a.sh
-  )
+  rm -rf "$BUILD_DIR"
+  (cd "$SRC" && env PATH="$CMAKE_BIN:$PATH" "${BUILD_ENV[@]}" ./build-android-arm64-v8a.sh)
+  printf '%s\n' "$stamp" >"$STAMP"
 fi
 
 say "Vendoring native libraries into ${JNI_OUT#"$REPO_ROOT"/}"

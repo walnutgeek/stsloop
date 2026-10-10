@@ -6,7 +6,7 @@ import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OnlineStream
 import com.walnutgeek.stsloop.core.speech.HotwordsDecision
 import com.walnutgeek.stsloop.core.speech.HotwordsGate
-import com.walnutgeek.stsloop.core.speech.ModelArchitecture
+import com.walnutgeek.stsloop.core.speech.RecognizerSpec
 import java.io.FileNotFoundException
 
 /**
@@ -14,17 +14,20 @@ import java.io.FileNotFoundException
  *
  * The [OnlineRecognizer] is private so every stream goes through
  * [createStream], which asks [HotwordsGate] first: the wrong hotwords call
- * kills the process with `_Exit(-1)` instead of throwing.
+ * kills the process with `_Exit(-1)` instead of throwing. The gate judges a
+ * [RecognizerSpec] snapshotted from the very config handed to native code.
+ * The `checkSingleChokepoint` Gradle task fails the build if anything else
+ * constructs an [OnlineRecognizer].
  */
 class Stt(
     assets: AssetManager,
-    val config: OnlineRecognizerConfig = SpeechModels.sttConfig(),
-    architecture: ModelArchitecture = SpeechModels.sttArchitecture,
+    config: OnlineRecognizerConfig = SpeechModels.sttConfig(),
 ) : AutoCloseable {
-    val spec = SpeechModels.specOf(config, architecture)
+    val spec: RecognizerSpec = specOf(config)
     private val recognizer: OnlineRecognizer
 
     init {
+        HotwordsGate.configRefusal(spec)?.let { throw IllegalArgumentException(it) }
         requireAssets(assets, assetPaths(config))
         recognizer = OnlineRecognizer(assets, config)
     }
@@ -43,13 +46,27 @@ class Stt(
 
     fun isReady(stream: OnlineStream) = recognizer.isReady(stream)
     fun decode(stream: OnlineStream) = recognizer.decode(stream)
-    fun isEndpoint(stream: OnlineStream) = recognizer.isEndpoint(stream)
-    fun reset(stream: OnlineStream) = recognizer.reset(stream)
     fun text(stream: OnlineStream): String = recognizer.getResult(stream).text
 
     override fun close() = recognizer.release()
 
     private companion object {
+        fun specOf(c: OnlineRecognizerConfig) = with(c.modelConfig) {
+            RecognizerSpec(
+                transducerEncoder = transducer.encoder,
+                transducerDecoder = transducer.decoder,
+                transducerJoiner = transducer.joiner,
+                otherModels = listOf(
+                    paraformer.encoder, paraformer.decoder, zipformer2Ctc.model, neMoCtc.model, toneCtc.model,
+                ),
+                modelType = modelType,
+                decodingMethod = c.decodingMethod,
+                modelingUnit = modelingUnit,
+                bpeVocab = bpeVocab,
+                hotwordsFile = c.hotwordsFile,
+            )
+        }
+
         fun assetPaths(c: OnlineRecognizerConfig) = with(c.modelConfig) {
             listOf(transducer.encoder, transducer.decoder, transducer.joiner, tokens, bpeVocab)
         }.filter { it.isNotEmpty() }
