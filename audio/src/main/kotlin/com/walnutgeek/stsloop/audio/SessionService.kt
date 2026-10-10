@@ -17,6 +17,13 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import com.walnutgeek.stsloop.core.Ids
+import com.walnutgeek.stsloop.core.SessionAction
+import com.walnutgeek.stsloop.core.SessionControls
+import com.walnutgeek.stsloop.core.SessionEffect
+import com.walnutgeek.stsloop.core.SessionEvent
+import com.walnutgeek.stsloop.core.SessionMachine
+import com.walnutgeek.stsloop.core.SessionState
+import com.walnutgeek.stsloop.core.Transition
 import com.walnutgeek.stsloop.core.TurnInProgress
 import com.walnutgeek.stsloop.core.Wav
 import java.io.File
@@ -25,8 +32,14 @@ import java.io.File
  * A Session: a `microphone`-typed foreground service that owns the mic from
  * Start until Stop, then writes the whole capture as one Turn to the Corpus.
  *
- * Must be started from a visible activity — RECORD_AUDIO is while-in-use, so a
- * microphone FGS started from the background throws SecurityException.
+ * Its notification is the Session's eyes-free control surface: Stop while a
+ * Session runs and, once it ends, a detached plain notification that keeps
+ * Start reachable without opening the app.
+ *
+ * RECORD_AUDIO is while-in-use, so a microphone FGS may only start from a
+ * visible activity or a documented exemption. The Start action uses "the user
+ * interacted with a notification": its PendingIntent targets this service
+ * directly. (An activity trampoline from a notification is blocked on 12+.)
  */
 class SessionService : Service() {
 
@@ -34,15 +47,19 @@ class SessionService : Service() {
         private const val TAG = "stsloop.Session"
         private const val ACTION_START = "com.walnutgeek.stsloop.session.START"
         private const val ACTION_STOP = "com.walnutgeek.stsloop.session.STOP"
-        private const val CHANNEL_ID = "session"
+        private const val LEGACY_CHANNEL_ID = "session" // was IMPORTANCE_LOW; importance cannot be raised in place
+        private const val CHANNEL_ID = "session-controls"
         private const val NOTIFICATION_ID = 1
         private const val CHUNK_SAMPLES = SAMPLE_RATE_HZ / 10 // 100 ms
         private const val DESTROY_JOIN_MS = 5_000L
 
-        /** True while a Session holds the microphone. */
+        /** Owned by the main thread; readable anywhere for display. */
         @Volatile
-        var isActive: Boolean = false
+        var state: SessionState = SessionState.Idle
             private set
+
+        /** True while a Session holds the microphone or is still writing its Turn. */
+        val isActive: Boolean get() = state.isActive
 
         /** Starts a Session. Call only from a visible activity with RECORD_AUDIO granted. */
         fun start(context: Context) {
@@ -54,13 +71,23 @@ class SessionService : Service() {
         }
 
         fun corpusDir(context: Context) = File(context.filesDir, "corpus")
+
+        /**
+         * Whether the Session notification would actually be shown: app notifications
+         * allowed (POST_NOTIFICATIONS on 13+) and the Session channel not blocked.
+         */
+        fun controlsVisible(context: Context): Boolean {
+            val nm = context.getSystemService(NotificationManager::class.java)
+            if (!nm.areNotificationsEnabled()) return false
+            val channel = nm.getNotificationChannel(CHANNEL_ID) ?: return true // created on first use
+            return channel.importance != NotificationManager.IMPORTANCE_NONE
+        }
     }
 
-    // Lifecycle state is owned by the main thread; only [capturing] is read by the capture thread.
+    // [state] is owned by the main thread; only [capturing] is read by the capture thread.
     @Volatile
     private var capturing = false
     private var captureThread: Thread? = null
-    private var restartRequested = false
     private var lastStartId = 0
     private var destroyed = false
     private val main = Handler(Looper.getMainLooper())
@@ -70,44 +97,52 @@ class SessionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         lastStartId = startId
         when (intent?.action) {
-            ACTION_START -> startSession(startId)
-            ACTION_STOP -> stopSession(startId)
+            ACTION_START -> onStart(startId)
+            ACTION_STOP -> apply(SessionMachine.on(state, SessionEvent.Stop))
             else -> if (captureThread == null) stopSelf(startId)
         }
         return START_NOT_STICKY
     }
 
-    private fun startSession(startId: Int) {
+    private fun onStart(startId: Int) {
+        val next = SessionMachine.on(state, SessionEvent.Start)
         try {
             // Always, even if already capturing: startForegroundService() requires it.
-            startForeground(NOTIFICATION_ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            startForeground(NOTIFICATION_ID, notification(next.state), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         } catch (e: RuntimeException) {
-            // SecurityException: no RECORD_AUDIO. ForegroundServiceStartNotAllowedException
-            // (an IllegalStateException): not started from a visible activity.
+            // SecurityException: no RECORD_AUDIO, or the app may not use a while-in-use type
+            // right now. ForegroundServiceStartNotAllowedException (an IllegalStateException):
+            // started from the background without an exemption.
             Log.e(TAG, "cannot start a microphone foreground service", e)
-            if (captureThread == null) stopSelf(startId)
+            if (captureThread == null) {
+                showIdleControls()
+                stopSelf(startId)
+            }
             return
         }
-        when {
-            captureThread == null -> launchCapture()
-            !capturing -> restartRequested = true // Start tapped while the previous Turn is still being written
-        }
+        apply(next)
     }
 
-    private fun stopSession(startId: Int) {
-        capturing = false
-        restartRequested = false
-        if (captureThread == null) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf(startId)
+    /** Main thread: commit one transition and run its effects. */
+    private fun apply(transition: Transition) {
+        state = transition.state
+        for (effect in transition.effects) when (effect) {
+            SessionEffect.LaunchCapture -> launchCapture()
+            SessionEffect.SignalStop -> capturing = false
+            SessionEffect.ShowIdleControls -> {
+                stopForeground(STOP_FOREGROUND_DETACH)
+                showIdleControls()
+                stopSelf(lastStartId)
+            }
         }
-        // Otherwise onCaptureEnded() tears the service down once the Turn is published.
+        if (state.isActive) {
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(state))
+        }
     }
 
     private fun launchCapture() {
         val sessionId = Ids.next()
         capturing = true
-        isActive = true
         captureThread = Thread({ capture(sessionId) }, "session-$sessionId").apply { start() }
         Log.i(TAG, "Session $sessionId started")
     }
@@ -116,18 +151,11 @@ class SessionService : Service() {
     private fun onCaptureEnded() {
         if (destroyed) return
         captureThread = null
-        isActive = false
-        if (restartRequested) {
-            restartRequested = false
-            launchCapture()
-        } else {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf(lastStartId)
-        }
+        apply(SessionMachine.on(state, SessionEvent.CaptureEnded))
     }
 
     /** Capture thread: mic → Corpus writer until [capturing] goes false, then publish the Turn. */
-    @SuppressLint("MissingPermission") // the activity holds RECORD_AUDIO before starting a Session
+    @SuppressLint("MissingPermission") // reached only via startForeground(MICROPHONE), which needs RECORD_AUDIO
     private fun capture(sessionId: String) {
         val writer = FileCorpusWriter(corpusDir(this), File(filesDir, "corpus-staging"))
         var turn: TurnInProgress? = null
@@ -169,35 +197,69 @@ class SessionService : Service() {
     }
 
     override fun onDestroy() {
-        // Normally reached only via onCaptureEnded(). If the system tears us down
+        // Normally reached only via ShowIdleControls. If the system tears us down
         // mid-Session, give the capture thread a bounded chance to publish the Turn.
         destroyed = true
         capturing = false
         captureThread?.join(DESTROY_JOIN_MS)
-        isActive = false
+        if (state.isActive) {
+            state = SessionState.Idle
+            stopForeground(STOP_FOREGROUND_DETACH)
+            showIdleControls()
+        }
         super.onDestroy()
     }
 
     private fun appVersion(): String =
         packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown"
 
-    private fun notification(): Notification {
+    /** Leave a plain (non-FGS) notification behind whose Start action restarts a Session. */
+    private fun showIdleControls() {
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(SessionState.Idle))
+    }
+
+    private fun notification(state: SessionState): Notification {
         val nm = getSystemService(NotificationManager::class.java)
+        nm.deleteNotificationChannel(LEGACY_CHANNEL_ID)
+        // DEFAULT, not LOW: LOW files the notification under "Silent", collapsed, with its
+        // action hidden. No sound or vibration, so state changes never alert.
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Session", NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel(CHANNEL_ID, "Session controls", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                setSound(null, null)
+                enableVibration(false)
+                setShowBadge(false)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            },
         )
-        val stop = PendingIntent.getService(
-            this, 0,
-            Intent(this, SessionService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE,
-        )
+        val controls = SessionControls.of(state)
+        val pending = when (controls.action) {
+            // A notification action may start a microphone FGS from the background:
+            // the notification-interaction exemption to while-in-use restrictions.
+            SessionAction.START -> PendingIntent.getForegroundService(
+                this, 1, Intent(this, SessionService::class.java).setAction(ACTION_START), PendingIntent.FLAG_IMMUTABLE,
+            )
+            SessionAction.STOP -> PendingIntent.getService(
+                this, 0, Intent(this, SessionService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE,
+            )
+        }
+        val label = when (controls.action) {
+            SessionAction.START -> "Start"
+            SessionAction.STOP -> "Stop"
+        }
+        val open = packageManager.getLaunchIntentForPackage(packageName)?.let {
+            PendingIntent.getActivity(this, 2, it, PendingIntent.FLAG_IMMUTABLE)
+        }
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("stsloop Session")
-            .setContentText("Listening")
-            .setOngoing(true)
+            .setContentTitle("stsloop")
+            .setContentText(controls.status)
+            .setContentIntent(open)
+            .setOngoing(true) // survives "Clear all"; Android 14+ still lets the user swipe it away
+            .setOnlyAlertOnce(true)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
-            .addAction(Notification.Action.Builder(null, "Stop", stop).build())
+            .addAction(Notification.Action.Builder(null, label, pending).build())
             .build()
     }
 }

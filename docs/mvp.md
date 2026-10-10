@@ -197,6 +197,11 @@ Two Android behaviours directly shape the Session lifecycle:
   the background throws `SecurityException`, and it cannot be launched from a
   `BOOT_COMPLETED` receiver. Any restart path must use a documented exemption —
   a notification action, an app widget, or a `PendingIntent` from a visible app.
+  Verified on Android 17 (#5): a notification action whose `PendingIntent`
+  is `getForegroundService(...)` aimed straight at the Session service starts
+  the `microphone` FGS from the background, from a killed process, and over
+  the keyguard (`reasonCode:NOTIFICATION_SERVICE`, `allowWiu`). Do not route
+  it through an activity: notification trampolines are blocked since 12.
 - **Android 17 hardens background audio playback** — `AudioTrack.write()`,
   audio focus and volume APIs — for **all apps regardless of targetSdk**,
   requiring a visible activity or a non-`SHORT_SERVICE` foreground service. A
