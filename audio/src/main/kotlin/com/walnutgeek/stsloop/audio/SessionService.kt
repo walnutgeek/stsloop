@@ -134,7 +134,7 @@ class SessionService : Service() {
         )
         if (refusal != null && captureThread == null) {
             Log.w(TAG, "Session start refused: $refusal")
-            commit(SessionMachine.on(state, SessionEvent.StartRefused(refusal)))
+            refuse(refusal)
             return
         }
         val next = SessionMachine.on(state, SessionEvent.Start)
@@ -147,10 +147,27 @@ class SessionService : Service() {
             // ForegroundServiceStartNotAllowedException (an IllegalStateException) or
             // SecurityException: started from the background without an exemption.
             Log.e(TAG, "cannot start a microphone foreground service", e)
-            commit(SessionMachine.on(state, SessionEvent.StartRefused(StartRefusal.NOT_ALLOWED)))
+            if (captureThread == null) refuse(StartRefusal.NOT_ALLOWED)
             return
         }
         commit(next)
+    }
+
+    /**
+     * Stop after a refused Start, leaving the reason on the notification. We were started
+     * with startForegroundService(), and stopping without ever calling startForeground()
+     * makes the system crash the app; a permission-free shortService satisfies it.
+     */
+    private fun refuse(refusal: StartRefusal) {
+        val blocked = SessionMachine.on(state, SessionEvent.StartRefused(refusal))
+        val controls = SessionControls.of(blocked.state)
+        try {
+            startForeground(NOTIFICATION_ID, notification(controls), ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE)
+            posted = controls
+        } catch (e: RuntimeException) {
+            Log.e(TAG, "cannot enter the foreground even briefly", e)
+        }
+        commit(blocked)
     }
 
     /** Main thread: commit one transition, run its effects, and update the notification. */
