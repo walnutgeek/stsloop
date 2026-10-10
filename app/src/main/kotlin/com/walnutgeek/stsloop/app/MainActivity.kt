@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.WindowInsets
 import android.widget.Button
 import android.widget.LinearLayout
@@ -49,11 +50,23 @@ class MainActivity : Activity() {
         val missing = wanted
             .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
         if (missing.isEmpty()) {
-            SessionService.start(this)
-            toggle.postDelayed(::refresh, 300)
+            launchSession()
         } else {
             requestPermissions(missing.toTypedArray(), REQUEST_PERMISSIONS)
         }
+    }
+
+    private fun launchSession() {
+        try {
+            SessionService.start(this)
+        } catch (e: IllegalStateException) {
+            // ForegroundServiceStartNotAllowedException: the app was not considered foreground.
+            Log.e(TAG, "cannot start a Session", e)
+            refresh()
+            status.text = "Could not start a Session: ${e.message}"
+            return
+        }
+        toggle.postDelayed(::refresh, 300)
     }
 
     private fun stopSession() {
@@ -66,8 +79,7 @@ class MainActivity : Activity() {
         if (requestCode != REQUEST_PERMISSIONS) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             // POST_NOTIFICATIONS is optional: without it the Session still runs, the notification is just hidden.
-            SessionService.start(this)
-            toggle.postDelayed(::refresh, 300)
+            launchSession()
         } else {
             status.text = "Microphone permission is required to start a Session."
         }
@@ -85,5 +97,6 @@ class MainActivity : Activity() {
 
     private companion object {
         const val REQUEST_PERMISSIONS = 1
+        const val TAG = "stsloop.Main"
     }
 }

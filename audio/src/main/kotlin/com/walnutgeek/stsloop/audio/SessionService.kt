@@ -12,10 +12,13 @@ import android.content.pm.ServiceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import com.walnutgeek.stsloop.core.Ids
 import com.walnutgeek.stsloop.core.TurnInProgress
+import com.walnutgeek.stsloop.core.Wav
 import java.io.File
 
 /**
@@ -34,6 +37,7 @@ class SessionService : Service() {
         private const val CHANNEL_ID = "session"
         private const val NOTIFICATION_ID = 1
         private const val CHUNK_SAMPLES = SAMPLE_RATE_HZ / 10 // 100 ms
+        private const val DESTROY_JOIN_MS = 5_000L
 
         /** True while a Session holds the microphone. */
         @Volatile
@@ -52,45 +56,77 @@ class SessionService : Service() {
         fun corpusDir(context: Context) = File(context.filesDir, "corpus")
     }
 
+    // Lifecycle state is owned by the main thread; only [capturing] is read by the capture thread.
     @Volatile
     private var capturing = false
-    @Volatile
     private var captureThread: Thread? = null
+    private var restartRequested = false
+    private var lastStartId = 0
+    private var destroyed = false
+    private val main = Handler(Looper.getMainLooper())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lastStartId = startId
         when (intent?.action) {
-            ACTION_START -> startSession()
-            ACTION_STOP -> stopSession()
+            ACTION_START -> startSession(startId)
+            ACTION_STOP -> stopSession(startId)
+            else -> if (captureThread == null) stopSelf(startId)
         }
         return START_NOT_STICKY
     }
 
-    @SuppressLint("MissingPermission") // the activity holds RECORD_AUDIO before starting a Session
-    private fun startSession() {
-        if (captureThread != null) return
+    private fun startSession(startId: Int) {
         try {
+            // Always, even if already capturing: startForegroundService() requires it.
             startForeground(NOTIFICATION_ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-        } catch (e: SecurityException) {
-            // Missing RECORD_AUDIO, or not started from a visible activity.
+        } catch (e: RuntimeException) {
+            // SecurityException: no RECORD_AUDIO. ForegroundServiceStartNotAllowedException
+            // (an IllegalStateException): not started from a visible activity.
             Log.e(TAG, "cannot start a microphone foreground service", e)
-            stopSelf()
+            if (captureThread == null) stopSelf(startId)
             return
         }
-        isActive = true
-        capturing = true
+        when {
+            captureThread == null -> launchCapture()
+            !capturing -> restartRequested = true // Start tapped while the previous Turn is still being written
+        }
+    }
+
+    private fun stopSession(startId: Int) {
+        capturing = false
+        restartRequested = false
+        if (captureThread == null) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf(startId)
+        }
+        // Otherwise onCaptureEnded() tears the service down once the Turn is published.
+    }
+
+    private fun launchCapture() {
         val sessionId = Ids.next()
+        capturing = true
+        isActive = true
         captureThread = Thread({ capture(sessionId) }, "session-$sessionId").apply { start() }
         Log.i(TAG, "Session $sessionId started")
     }
 
-    private fun stopSession() {
-        capturing = false
-        if (captureThread == null) stopSelf()
+    /** Main thread, after the capture thread has published (or abandoned) its Turn. */
+    private fun onCaptureEnded() {
+        if (destroyed) return
+        captureThread = null
+        isActive = false
+        if (restartRequested) {
+            restartRequested = false
+            launchCapture()
+        } else {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf(lastStartId)
+        }
     }
 
-    /** Capture thread: mic → Corpus writer, then end the service. */
+    /** Capture thread: mic → Corpus writer until [capturing] goes false, then publish the Turn. */
     @SuppressLint("MissingPermission") // the activity holds RECORD_AUDIO before starting a Session
     private fun capture(sessionId: String) {
         val writer = FileCorpusWriter(corpusDir(this), File(filesDir, "corpus-staging"))
@@ -103,7 +139,7 @@ class SessionService : Service() {
             record = AudioRecord(
                 MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 SAMPLE_RATE_HZ, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
-                maxOf(minBytes, CHUNK_SAMPLES * 2) * 4,
+                maxOf(minBytes, CHUNK_SAMPLES * Wav.BYTES_PER_SAMPLE) * 4,
             )
             check(record.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord failed to initialise" }
             record.startRecording()
@@ -119,8 +155,7 @@ class SessionService : Service() {
                 turn.append(buf, n)
             }
             record.stop()
-            val endedAt = System.currentTimeMillis()
-            val written = turn.finish(endedAt, appVersion())
+            val written = turn.finish(appVersion())
             turn = null
             if (peak == 0) Log.w(TAG, "Turn ${written.id} is all zeros: the mic was silenced")
             Log.i(TAG, "Session $sessionId wrote Turn ${written.directoryName} (${written.audio.durationMs} ms, peak $peak)")
@@ -129,15 +164,17 @@ class SessionService : Service() {
             turn?.abandon()
         } finally {
             record?.release()
-            isActive = false
-            captureThread = null
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            main.post(::onCaptureEnded)
         }
     }
 
     override fun onDestroy() {
+        // Normally reached only via onCaptureEnded(). If the system tears us down
+        // mid-Session, give the capture thread a bounded chance to publish the Turn.
+        destroyed = true
         capturing = false
+        captureThread?.join(DESTROY_JOIN_MS)
+        isActive = false
         super.onDestroy()
     }
 

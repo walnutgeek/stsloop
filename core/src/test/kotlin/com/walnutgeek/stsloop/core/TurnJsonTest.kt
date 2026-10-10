@@ -10,7 +10,6 @@ class TurnJsonTest {
         id = "a3f1c9",
         sessionId = "0f22ab",
         startedAtMs = 1_791_296_527_431,
-        endedAtMs = 1_791_296_531_902,
         audio = TurnAudio(
             file = "audio.wav",
             sha256 = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
@@ -37,6 +36,14 @@ class TurnJsonTest {
             """.trimIndent() + "\n",
             TurnJson.encode(turn),
         )
+    }
+
+    @Test
+    fun `ended_at is started_at plus the sample-derived duration`() {
+        assertEquals(1_791_296_531_902, turn.endedAtMs)
+        val longer = turn.copy(audio = turn.audio.copy(durationMs = 60_000))
+        assertEquals(turn.startedAtMs + 60_000, longer.endedAtMs)
+        assertTrue(TurnJson.encode(longer).contains("\"ended_at\": \"2026-10-06T14:23:07.431Z\""))
     }
 
     @Test

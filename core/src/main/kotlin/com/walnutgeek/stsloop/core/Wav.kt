@@ -3,9 +3,10 @@ package com.walnutgeek.stsloop.core
 /** The Corpus audio format: canonical 44-byte-header WAV, PCM 16-bit, mono. */
 object Wav {
     const val HEADER_BYTES = 44
+    const val BYTES_PER_SAMPLE = 2
     private const val CHANNELS = 1
-    private const val BITS_PER_SAMPLE = 16
-    private const val BLOCK_ALIGN = CHANNELS * BITS_PER_SAMPLE / 8
+    private const val BITS_PER_SAMPLE = BYTES_PER_SAMPLE * 8
+    private const val BLOCK_ALIGN = CHANNELS * BYTES_PER_SAMPLE
 
     fun header(sampleRate: Int, dataBytes: Int): ByteArray {
         val h = ByteArray(HEADER_BYTES)
@@ -25,7 +26,7 @@ object Wav {
         return h
     }
 
-    /** Writes the first [count] samples into [out] as little-endian bytes (2 per sample). */
+    /** Writes the first [count] samples into [out] as little-endian bytes ([BYTES_PER_SAMPLE] each). */
     fun pcm16ToLittleEndian(samples: ShortArray, count: Int, out: ByteArray) {
         for (i in 0 until count) {
             val v = samples[i].toInt()

@@ -49,14 +49,15 @@ class FileCorpusWriter(
         private var samples = 0L
 
         override fun append(samples: ShortArray, count: Int) {
-            if (bytes.size < 2 * count) bytes = ByteArray(2 * count)
+            val n = count * Wav.BYTES_PER_SAMPLE
+            if (bytes.size < n) bytes = ByteArray(n)
             Wav.pcm16ToLittleEndian(samples, count, bytes)
-            wav.write(bytes, 0, 2 * count)
+            wav.write(bytes, 0, n)
             this.samples += count
         }
 
-        override fun finish(endedAtMs: Long, appVersion: String): Turn {
-            val dataBytes = samples * 2
+        override fun finish(appVersion: String): Turn {
+            val dataBytes = samples * Wav.BYTES_PER_SAMPLE
             require(dataBytes <= Int.MAX_VALUE - Wav.HEADER_BYTES) { "Recording too long for a WAV file" }
             wav.seek(0)
             wav.write(Wav.header(sampleRate, dataBytes.toInt()))
@@ -67,7 +68,6 @@ class FileCorpusWriter(
                 id = id,
                 sessionId = sessionId,
                 startedAtMs = startedAtMs,
-                endedAtMs = endedAtMs,
                 audio = TurnAudio(
                     file = AUDIO_FILE,
                     sha256 = sha256(wavFile),

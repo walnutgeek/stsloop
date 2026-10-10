@@ -40,6 +40,9 @@ class WavTest {
     }
 
     @Test
+    fun `PCM16 is two bytes per sample`() = assertEquals(2, Wav.BYTES_PER_SAMPLE)
+
+    @Test
     fun `duration is derived from the sample count`() {
         assertEquals(4471, Wav.durationMs(samples = 71_536, sampleRate = 16_000))
         assertEquals(0, Wav.durationMs(samples = 0, sampleRate = 16_000))
