@@ -1,6 +1,11 @@
 package com.walnutgeek.stsloop.core
 
+import com.walnutgeek.stsloop.core.corpus.Json
 import com.walnutgeek.stsloop.core.corpus.TranscriptList
+import com.walnutgeek.stsloop.core.testmode.MicInput
+import com.walnutgeek.stsloop.core.testmode.MicSource
+import com.walnutgeek.stsloop.core.testmode.TestConfig
+import com.walnutgeek.stsloop.core.testmode.TurnTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -212,5 +217,60 @@ class TurnJsonTest {
     @Test
     fun `Turn directory is named started_at dash id`() {
         assertEquals("2026-10-06T14:22:07.431Z-a3f1c9", turn.directoryName)
+    }
+
+    private val test = TurnTest(
+        config = TestConfig(enabled = true, label = "desk", micSource = MicSource.MIC, micInput = MicInput.BUILTIN),
+        inputDevices = listOf("builtin_mic"),
+        ttsOverlapMs = 820,
+        ttsPhrases = listOf("tts-3"),
+    )
+
+    @Test
+    fun `a test-mode Turn carries its test block after the labels, before app_version`() {
+        val json = TurnJson.encode(turn.copy(transcript = transcript, classification = Classification.UNCLASSIFIED, test = test))
+        assertTrue(
+            json.contains(
+                "  \"content\": null,\n" +
+                    "  \"test\": {\n" +
+                    "    \"label\": \"desk\",\n" +
+                    "    \"mic_source\": \"mic\",\n" +
+                    "    \"mic_input\": \"builtin\",\n" +
+                    "    \"audio_mode\": \"normal\",\n" +
+                    "    \"input_devices\": [\"builtin_mic\"],\n" +
+                    "    \"tts_interval_ms\": 5000,\n" +
+                    "    \"tts_usage\": \"assistant\",\n" +
+                    "    \"tts_overlap\": true,\n" +
+                    "    \"tts_overlap_ms\": 820,\n" +
+                    "    \"tts_phrases\": [\"tts-3\"]\n" +
+                    "  },\n" +
+                    "  \"app_version\"",
+            ),
+            json,
+        )
+        val parsed = Json.parseObject(json)["test"] as Map<*, *>
+        assertEquals(listOf("builtin_mic"), parsed["input_devices"])
+    }
+
+    @Test
+    fun `a Turn with no TTS playing has tts_overlap false and no phrases`() {
+        val json = TurnJson.encode(turn.copy(test = test.copy(ttsOverlapMs = 0, ttsPhrases = emptyList(), inputDevices = emptyList())))
+        val t = Json.parseObject(json)["test"] as Map<*, *>
+        assertEquals(false, t["tts_overlap"])
+        assertEquals(0L, t["tts_overlap_ms"])
+        assertEquals(emptyList<String>(), t["tts_phrases"])
+        assertEquals(emptyList<String>(), t["input_devices"])
+    }
+
+    @Test
+    fun `outside test mode there is no test block`() {
+        assertFalse(TurnJson.encode(turn).contains("\"test\""))
+    }
+
+    @Test
+    fun `the transcript list still reads a test-mode Turn`() {
+        val listed = TranscriptList.read(turn.directoryName, TurnJson.encode(turn.copy(transcript = transcript, test = test)))
+        assertEquals(null, listed.problem)
+        assertEquals(transcript.text, listed.transcript)
     }
 }

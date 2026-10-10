@@ -167,3 +167,50 @@ mise exec -- adb exec-in run-as com.walnutgeek.stsloop sh -c 'cat > files/timing
 mise exec -- adb exec-out run-as com.walnutgeek.stsloop cat files/timings.json
 mise exec -- adb shell run-as com.walnutgeek.stsloop rm files/timings.json
 ```
+
+### Bluetooth test mode (debug builds)
+
+For the in-car experiment (#8, checklist in
+[`docs/test-drive.md`](./docs/test-drive.md)), a debug build shows test-mode
+buttons under Start/Stop. With test mode on, a Session speaks a fixed phrase
+every N seconds through Android's offline `TextToSpeech` **while it keeps
+recording** (deliberately not Half-duplex), records with the chosen microphone
+path, and logs every routing fact. Each Turn gets a `test` block in
+`turn.json`, and each Session a route-event log in
+`corpus/sessions/<started_at>-<session_id>.jsonl` (one JSON object per line,
+append-only; the transcript list skips that directory).
+
+A release (non-debuggable) build ignores the file, and its manifest has none
+of test mode's extra permissions (they are in `audio/src/debug/`). The buttons
+write `files/testmode.json`, read at every Session start. Every key
+is optional and falls back per key like `timings.json`; a missing file means
+test mode is off:
+
+```json
+{
+  "enabled": true,
+  "label": "parked-ac-off",
+  "mic_source": "voice_recognition",
+  "mic_input": "builtin",
+  "audio_mode": "normal",
+  "tts_interval_ms": 5000,
+  "tts_usage": "assistant",
+  "tts_phrase": "This is the machine speaking, test number {n}."
+}
+```
+
+- `mic_source`: `voice_recognition` | `mic` | `unprocessed` | `voice_communication` (the `AudioRecord` source).
+- `mic_input`: `default` (no preference) | `builtin` (`setPreferredDevice` on the phone mic) |
+  `bluetooth` (`setCommunicationDevice` on the first Bluetooth SCO / LE headset, then prefer its mic;
+  logs `bluetooth_unavailable` and records from the default mic when there is none).
+- `audio_mode`: `normal` | `in_communication` (held for the Session, restored at the end).
+- `tts_interval_ms`: 0 (off) or 2000–600000. `tts_usage`: `assistant` | `media` | `navigation` |
+  `voice_communication`, the phrase's `AudioAttributes` usage, which picks its output route.
+
+```sh
+mise exec -- adb exec-in run-as com.walnutgeek.stsloop sh -c 'cat > files/testmode.json' < testmode.json
+mise exec -- adb shell run-as com.walnutgeek.stsloop rm files/testmode.json   # test mode off
+mise exec -- adb logcat -s stsloop.TestMode                                  # the route log, live
+uv run scripts/test_drive_report.py <pulled corpus dir>                      # summary per configuration
+uv run scripts/test_drive_report_test.py                                     # the report's own tests
+```

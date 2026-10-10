@@ -47,10 +47,27 @@ object TurnJson {
             append("  \"bucket_source\": ").strOrNull(c.bucketSource?.json).append(",\n")
             append("  \"content\": ").strOrNull(c.content).append(",\n")
         }
+        turn.test?.let { t ->
+            val c = t.config
+            append("  \"test\": {\n")
+            append("    \"label\": ").str(c.label).append(",\n")
+            append("    \"mic_source\": ").str(c.micSource.json).append(",\n")
+            append("    \"mic_input\": ").str(c.micInput.json).append(",\n")
+            append("    \"audio_mode\": ").str(c.audioMode.json).append(",\n")
+            append("    \"input_devices\": ").strList(t.inputDevices).append(",\n")
+            append("    \"tts_interval_ms\": ").append(c.ttsIntervalMs).append(",\n")
+            append("    \"tts_usage\": ").str(c.ttsUsage.json).append(",\n")
+            append("    \"tts_overlap\": ").append(t.ttsOverlap).append(",\n")
+            append("    \"tts_overlap_ms\": ").append(t.ttsOverlapMs).append(",\n")
+            append("    \"tts_phrases\": ").strList(t.ttsPhrases).append("\n")
+            append("  },\n")
+        }
         append("  \"app_version\": ").str(turn.appVersion).append(",\n")
         append("  \"tombstoned_by\": ").strOrNull(turn.tombstonedBy).append("\n")
         append("}\n")
     }
+
+    private fun StringBuilder.strList(l: List<String>): StringBuilder = append(l.joinToString(", ", "[", "]", transform = ::jsonString))
 
     private fun StringBuilder.strOrNull(s: String?): StringBuilder = if (s == null) append("null") else str(s)
 

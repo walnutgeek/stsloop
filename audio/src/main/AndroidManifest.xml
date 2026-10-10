@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Bluetooth test mode's permissions live in src/debug/AndroidManifest.xml only. -->
 
     <application>
         <!-- A Session. Typed `microphone` (a while-in-use type), never shortService.

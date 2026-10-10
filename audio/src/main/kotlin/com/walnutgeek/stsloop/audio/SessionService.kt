@@ -22,6 +22,7 @@ import android.util.Log
 import com.k2fsa.sherpa.onnx.Vad
 import com.walnutgeek.stsloop.audio.speech.SpeechModels
 import com.walnutgeek.stsloop.audio.speech.SttRecognizer
+import com.walnutgeek.stsloop.audio.testmode.TestModeSession
 import com.walnutgeek.stsloop.core.Ids
 import com.walnutgeek.stsloop.core.SessionAction
 import com.walnutgeek.stsloop.core.SessionControls
@@ -34,6 +35,7 @@ import com.walnutgeek.stsloop.core.StartRefusal
 import com.walnutgeek.stsloop.core.Transition
 import com.walnutgeek.stsloop.core.turn.SttTiming
 import com.walnutgeek.stsloop.core.Wav
+import com.walnutgeek.stsloop.core.testmode.TestConfig
 import java.io.File
 
 /**
@@ -84,6 +86,25 @@ class SessionService : Service() {
         }
 
         fun corpusDir(context: Context) = File(context.filesDir, "corpus")
+
+        /**
+         * Bluetooth test mode changes the phone's audio mode and route and
+         * speaks over the user, so it only ever runs in a debuggable build;
+         * a release build ignores `testmode.json`.
+         */
+        fun testModeAllowed(context: Context): Boolean =
+            context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+
+        /** The Bluetooth test mode config the next Session will use (`files/testmode.json`). */
+        fun testConfig(context: Context): TestConfig = TurnCapture.loadTestConfig(context.filesDir)
+
+        /** Writes `files/testmode.json`; the next Session reads it. */
+        fun saveTestConfig(context: Context, config: TestConfig) {
+            val file = File(context.filesDir, TestConfig.FILE)
+            val tmp = File(context.filesDir, TestConfig.FILE + ".tmp")
+            tmp.writeText(config.toJson())
+            if (!tmp.renameTo(file)) throw java.io.IOException("cannot write $file")
+        }
 
         /**
          * Whether the Session notification would actually be shown: app notifications
@@ -229,29 +250,45 @@ class SessionService : Service() {
         var record: AudioRecord? = null
         var vad: Vad? = null
         var capture: TurnCapture? = null
+        var test: TestModeSession? = null
         try {
             val timings = TurnCapture.loadTimings(filesDir)
             Log.i(TAG, "Session $sessionId timings: ${timings.toJson().replace(Regex("\\s+"), " ")}")
             val buckets = TurnCapture.loadBuckets(filesDir)
             Log.i(TAG, "Session $sessionId buckets: ${buckets.toJson().replace(Regex("\\s+"), " ")}")
             vad = SpeechModels.newVad(assets)
+            val testConfig = TurnCapture.loadTestConfig(filesDir)
+            if (testConfig.enabled && !testModeAllowed(this)) {
+                Log.w(TAG, "Session $sessionId: ignoring ${TestConfig.FILE}; test mode is for debug builds only")
+            } else if (testConfig.enabled) {
+                Log.i(TAG, "Session $sessionId is a test Session: ${testConfig.summary()}")
+                // Assigned before prepare(), so the finally below always closes it and puts the route back.
+                val t = TestModeSession(this, testConfig, sessionId, corpusDir(this), SAMPLE_RATE_HZ)
+                test = t
+                t.prepare()
+            }
             val minBytes = AudioRecord.getMinBufferSize(
                 SAMPLE_RATE_HZ, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
             )
             record = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                test?.audioSource ?: MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 SAMPLE_RATE_HZ, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
                 maxOf(minBytes, CHUNK_SAMPLES * Wav.BYTES_PER_SAMPLE) * 4,
             )
             check(record.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord failed to initialise" }
+            test?.attach(record)
             record.startRecording()
             val startedAt = System.currentTimeMillis()
+            test?.started()
+            val testMode = test
             val turns = TurnCapture(
                 writer, sessionId, startedAt, appVersion(), timings,
                 TurnCapture.silero(vad), SpeechModels.vadConfig().sileroVadModelConfig.windowSize,
                 recognizer = { SttRecognizer.load(assets) },
                 buckets = buckets,
+                testOf = testMode?.let { t -> t::turnTest },
             ) { turn, u, timing ->
+                testMode?.turnWritten(turn, u)
                 Log.i(
                     TAG,
                     "Session $sessionId wrote Turn ${turn.directoryName} (${turn.audio.durationMs} ms, ${u.closedBy}, " +
@@ -271,6 +308,7 @@ class SessionService : Service() {
                 if (n < 0) error("AudioRecord.read returned $n")
                 for (i in 0 until n) peak = maxOf(peak, kotlin.math.abs(buf[i].toInt()))
                 samples += n
+                testMode?.captured(samples, readAtNs, buf, n)
                 turns.accept(buf, n, readAtNs)
             }
             record.stop()
@@ -293,6 +331,7 @@ class SessionService : Service() {
             capture?.let { c -> runCatching { c.finish() }.onFailure { Log.e(TAG, "Session $sessionId lost its open Turn", it) } }
         } finally {
             turnCapture = null
+            test?.let { t -> runCatching { t.close() }.onFailure { Log.e(TAG, "Session $sessionId: test mode did not close cleanly", it) } }
             record?.release()
             vad?.release()
             main.post(::onCaptureEnded)

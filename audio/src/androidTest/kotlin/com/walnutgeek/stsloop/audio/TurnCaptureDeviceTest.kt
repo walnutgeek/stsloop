@@ -252,9 +252,11 @@ class TurnCaptureDeviceTest {
 
     /**
      * Buckets read from a `buckets.json` on the device, with aliases at the
-     * ends of the upstream wavs: 1.wav starts with "GOD" (and ends with "IN
-     * HEAVEN", another Bucket: the leading one wins), 0.wav ends with "THE
-     * BROTHELS".
+     * ends of the upstream wavs: 0.wav ends with "THE BROTHELS" (a trailing
+     * Declaration); 1.wav starts with "GOD" and ends with "IN HEAVEN", both
+     * aliases of one Bucket, so it is one leading Declaration with both ends
+     * taken out of the content. (Aliases of different Buckets at the two ends
+     * would be no Declaration at all, since #26.)
      */
     @Test
     fun declaredTurnsAreWrittenWithTheirBucketFromTheConfigFile() {
@@ -263,8 +265,8 @@ class TurnCaptureDeviceTest {
             """
             {
               "buckets": [
-                { "name": "theology", "aliases": ["god"] },
-                { "name": "afterlife", "aliases": ["in heaven"] },
+                { "name": "theology", "aliases": ["god", "in heaven"] },
+                { "name": "afterlife", "aliases": ["the hereafter"] },
                 { "name": "night-walks", "aliases": ["the brothels", "nightfall"] },
                 { "name": "typo", "aliases": [7] }
               ]
@@ -290,7 +292,8 @@ class TurnCaptureDeviceTest {
 
         val god = turns[1].classification!!
         assertEquals(Declaration("theology", DeclarationPosition.LEADING, "god"), god.declaration)
-        assertEquals(TEXT_1.removePrefix("GOD ").lowercase(), god.content)
+        assertEquals("theology", god.bucket)
+        assertEquals(TEXT_1.removePrefix("GOD ").removeSuffix(" IN HEAVEN").lowercase(), god.content)
 
         // The raw transcript is untouched, and turn.json carries the full Declaration.
         assertEquals(TEXT_0, turns[0].text)
