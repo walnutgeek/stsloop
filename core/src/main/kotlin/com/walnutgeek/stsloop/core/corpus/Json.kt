@@ -1,17 +1,33 @@
 package com.walnutgeek.stsloop.core.corpus
 
+/** Thrown for any input that is not a single valid JSON document; the message ends with the offset. */
 class JsonException(message: String) : IllegalArgumentException(message)
 
 /**
- * A small, strict RFC 8259 reader for reading `turn.json` back. Stdlib-only,
- * to keep `:core` free of a serialisation dependency and ready for the KMP lift.
+ * The JSON reader for `:core`: strict RFC 8259, stdlib-only, so `:core` stays
+ * free of a serialisation dependency and ready for the KMP lift.
  *
- * Values come back as `Map<String, Any?>` (key order kept), `List<Any?>`,
- * `String`, `Long` (integers that fit), `Double`, `Boolean` or `null`.
+ * Values come back as plain Kotlin values:
+ * - object: `Map<String, Any?>`, keys in document order;
+ * - array: `List<Any?>`;
+ * - string: `String` (escapes decoded; a lone surrogate escape is kept as is);
+ * - number: `Long` when it is an integer that fits, otherwise `Double`;
+ * - `true`/`false`: `Boolean`; `null`: `null`.
+ *
+ * Duplicate keys in one object are rejected: RFC 8259 leaves their meaning
+ * open, and for the Corpus a duplicate is corruption, not something to guess at.
+ * Nesting deeper than 64 levels is rejected too.
  */
 object Json {
     private const val MAX_DEPTH = 64
 
+    /** Like [parse], but the value must be an object. */
+    fun parseObject(text: String): Map<String, Any?> {
+        @Suppress("UNCHECKED_CAST")
+        return parse(text) as? Map<String, Any?> ?: throw JsonException("not a JSON object at offset 0")
+    }
+
+    /** Parses [text], which must hold exactly one JSON value (whitespace around it is fine). */
     fun parse(text: String): Any? {
         val p = Parser(text)
         p.ws()
@@ -63,7 +79,9 @@ object Json {
             while (true) {
                 ws()
                 if (i >= s.length || s[i] != '"') fail("expected a key")
+                val keyAt = i
                 val k = str()
+                if (k in m) { i = keyAt; fail("duplicate key \"$k\"") }
                 ws()
                 expect(':')
                 ws()
@@ -110,9 +128,18 @@ object Json {
                             'r' -> b.append('\r')
                             't' -> b.append('\t')
                             'u' -> {
-                                if (i + 4 > s.length) fail("short \\u escape")
-                                val code = s.substring(i, i + 4).toIntOrNull(16) ?: fail("bad \\u escape")
-                                i += 4
+                                var code = 0
+                                repeat(4) {
+                                    val c = if (i < s.length) s[i] else ' '
+                                    val h = when (c) {
+                                        in '0'..'9' -> c - '0'
+                                        in 'a'..'f' -> c - 'a' + 10
+                                        in 'A'..'F' -> c - 'A' + 10
+                                        else -> fail("\\u needs four hex digits")
+                                    }
+                                    code = code * 16 + h
+                                    i++
+                                }
                                 b.append(code.toChar())
                             }
                             else -> fail("bad escape")

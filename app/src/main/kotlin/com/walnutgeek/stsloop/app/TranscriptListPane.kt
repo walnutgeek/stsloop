@@ -136,7 +136,6 @@ class TranscriptListPane(context: Context, private val corpusDir: File) {
                     append("Bucket: ").append(t.bucket ?: "none")
                     append(" · kind: ").append(t.kind ?: "none")
                     t.tombstonedBy?.let { append(" · TOMBSTONED by ").append(it) }
-                    t.tombstones?.let { append(" · tombstones ").append(it) }
                 }
             }
         }
@@ -159,6 +158,7 @@ class TranscriptListPane(context: Context, private val corpusDir: File) {
         /** Reads every Turn directory in the Corpus. Never writes; tolerates anything it finds. */
         fun readCorpus(corpusDir: File): List<ListedTurn> {
             val dirs = corpusDir.listFiles { f -> f.isDirectory && !f.name.startsWith(".") }.orEmpty()
+            // No tombstone mapping yet: #13 defines the tombstone record and supplies it here.
             return TranscriptList.of(dirs.map(::readTurn))
         }
 

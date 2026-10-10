@@ -11,7 +11,6 @@ package com.walnutgeek.stsloop.core.corpus
  * [transcript] is `transcript.text` exactly as the engine produced it; null
  * means the Turn has no transcript, `""` that the recognizer heard nothing.
  * [kind] is shown as written, so a value from a newer app is not lost.
- * [tombstones] is the id of the Turn this record tombstones, if it is one.
  * [problem] says why `turn.json` could not be read; the rest is then null.
  */
 data class ListedTurn(
@@ -23,7 +22,6 @@ data class ListedTurn(
     val bucket: String? = null,
     val kind: String? = null,
     val tombstonedBy: String? = null,
-    val tombstones: String? = null,
     val problem: String? = null,
 ) {
     val tombstoned: Boolean get() = tombstonedBy != null
@@ -49,31 +47,28 @@ object TranscriptList {
             bucket = root.string("bucket"),
             kind = root.string("kind"),
             tombstonedBy = root.string("tombstoned_by"),
-            tombstones = root.string("tombstones"),
         )
     }
 
     /**
-     * Orders [turns] newest first and resolves tombstones.
+     * Orders [turns] newest first and marks tombstoned Turns.
      *
-     * A Turn directory is immutable, so a Turn tombstoned after it was written
-     * cannot carry the mark itself: a later record in the Corpus naming its id
-     * under `tombstones` marks it instead. A Turn's own `tombstoned_by` wins.
-     * Directory names are `<started_at>-<id>`, so they sort chronologically.
+     * A Turn directory is immutable, so a Turn tombstoned after it was
+     * published can never carry the mark in its own `turn.json`: tombstoning
+     * is derived on read. [tombstonedBy] maps a tombstoned Turn's directory
+     * name to the directory name of the Turn that tombstoned it. Directory
+     * names, not ids: they are unique, 6-hex ids are not. Until #13 defines
+     * the tombstone record and builds this map, it is empty. A Turn's own
+     * non-null `tombstoned_by` still wins. Directory names are
+     * `<started_at>-<id>`, so they sort chronologically.
      */
-    fun of(turns: List<ListedTurn>): List<ListedTurn> {
-        val tombstonedBy = HashMap<String, String>()
-        for (t in turns.sortedBy { it.directoryName }) {
-            val target = t.tombstones ?: continue
-            tombstonedBy.putIfAbsent(target, t.id ?: t.directoryName)
-        }
-        return turns
+    fun of(turns: List<ListedTurn>, tombstonedBy: Map<String, String> = emptyMap()): List<ListedTurn> =
+        turns
             .sortedByDescending { it.directoryName }
             .map { t ->
-                val by = t.id?.let(tombstonedBy::get)
+                val by = tombstonedBy[t.directoryName]
                 if (t.tombstonedBy == null && by != null) t.copy(tombstonedBy = by) else t
             }
-    }
 
     private fun Map<*, *>.string(key: String): String? = this[key] as? String
     private fun Map<*, *>.long(key: String): Long? = this[key] as? Long

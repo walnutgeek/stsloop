@@ -206,30 +206,51 @@ class TranscriptListTest {
     }
 
     @Test
-    fun `a tombstone record elsewhere in the Corpus marks the Turn it names`() {
-        val tombstone = """{ "id": "dead01", "kind": "command", "tombstones": "a3f1c9", "tombstoned_by": null }"""
+    fun `a tombstone mapping marks the Turn by directory name`() {
+        val command = "2026-10-06T14:22:20.000Z-dead01"
         val listed = TranscriptList.of(
             listOf(
                 TranscriptList.read(declaredDir, declared),
-                TranscriptList.read("2026-10-06T14:22:20.000Z-dead01", tombstone),
+                TranscriptList.read(command, """{ "id": "dead01", "kind": "command" }"""),
                 TranscriptList.read(beforeVadDir, beforeVad),
             ),
+            tombstonedBy = mapOf(declaredDir to command),
         )
-        val byId = listed.associateBy { it.id }
-        assertEquals("dead01", byId.getValue("a3f1c9").tombstonedBy)
-        assertEquals("a3f1c9", byId.getValue("dead01").tombstones)
-        assertFalse(byId.getValue("dead01").tombstoned)
-        assertFalse(byId.getValue("7d192e").tombstoned)
+        val byDir = listed.associateBy { it.directoryName }
+        assertEquals(command, byDir.getValue(declaredDir).tombstonedBy)
+        assertFalse(byDir.getValue(command).tombstoned)
+        assertFalse(byDir.getValue(beforeVadDir).tombstoned)
     }
 
     @Test
-    fun `a Turn's own tombstoned_by wins over a tombstone record`() {
+    fun `Turns sharing an id are told apart by directory name`() {
+        val sameIdDir = "2026-10-11T09:00:00.000Z-a3f1c9"
         val listed = TranscriptList.of(
-            listOf(
-                TranscriptList.read(declaredDir, declared.replace("\"tombstoned_by\": null", "\"tombstoned_by\": \"first1\"")),
-                TranscriptList.read("2026-10-06T14:22:20.000Z-dead01", """{ "id": "dead01", "tombstones": "a3f1c9" }"""),
-            ),
+            listOf(TranscriptList.read(declaredDir, declared), TranscriptList.read(sameIdDir, declared)),
+            tombstonedBy = mapOf(sameIdDir to "2026-10-11T09:00:05.000Z-dead01"),
         )
-        assertEquals("first1", listed.single { it.id == "a3f1c9" }.tombstonedBy)
+        assertEquals(listOf(true, false), listed.map { it.tombstoned })
+        assertEquals(listOf(sameIdDir, declaredDir), listed.map { it.directoryName })
+    }
+
+    @Test
+    fun `without a tombstone mapping nothing is tombstoned unless its own turn json says so`() {
+        val listed = TranscriptList.of(listOf(TranscriptList.read(declaredDir, declared), TranscriptList.read(beforeVadDir, beforeVad)))
+        assertTrue(listed.none { it.tombstoned })
+    }
+
+    @Test
+    fun `a Turn's own tombstoned_by wins over the mapping`() {
+        val listed = TranscriptList.of(
+            listOf(TranscriptList.read(declaredDir, declared.replace("\"tombstoned_by\": null", "\"tombstoned_by\": \"first1\""))),
+            tombstonedBy = mapOf(declaredDir to "2026-10-06T14:22:20.000Z-dead01"),
+        )
+        assertEquals("first1", listed.single().tombstonedBy)
+    }
+
+    @Test
+    fun `a duplicate key makes turn json a problem`() {
+        val t = TranscriptList.read(declaredDir, """{ "kind": "note", "kind": "command" }""")
+        assertTrue(t.problem!!.contains("duplicate key"), t.problem)
     }
 }
