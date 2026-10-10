@@ -57,3 +57,19 @@ separate license-acceptance step any more. The script passes `--no-metrics`.
 
 The NDK and CMake are needed because sherpa-onnx ships no prebuilt AAR; its
 native libraries are built locally.
+
+`mise.toml` puts `adb` on the PATH only in shells where mise is activated; in
+any other shell use `mise exec -- adb …`.
+
+### Development phone
+
+| | |
+| --- | --- |
+| Model | Pixel 10 Pro (`blazer`) |
+| Android | 17 (API 37), build `CP3A.260905.009` |
+
+It runs Android 17, so the background-audio hardening in
+[`docs/mvp.md`](./docs/mvp.md#platform-constraints-on-the-loop) applies, and
+every on-device measurement is taken on this phone. For screenshots while
+plugged in, `adb shell svc power stayon usb` keeps the screen awake (undo with
+`svc power stayon false`).
