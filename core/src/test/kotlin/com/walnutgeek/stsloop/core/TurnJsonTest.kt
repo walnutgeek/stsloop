@@ -53,9 +53,33 @@ class TurnJsonTest {
     }
 
     @Test
+    fun `a VAD-cut Turn carries the vad block right after audio`() {
+        val json = TurnJson.encode(turn.copy(vad = TurnVad(speechMs = 3180, trailingSilenceMs = 1500)))
+        assertTrue(
+            json.contains(
+                "\"duration_ms\": 4471 },\n" +
+                    "  \"vad\": { \"speech_ms\": 3180, \"trailing_silence_ms\": 1500 },\n" +
+                    "  \"app_version\"",
+            ),
+            json,
+        )
+    }
+
+    @Test
+    fun `the vad block does not change ended_at`() {
+        val json = TurnJson.encode(turn.copy(vad = TurnVad(3180, 1500)))
+        assertTrue(json.contains("\"ended_at\": \"2026-10-06T14:22:11.902Z\""), json)
+    }
+
+    @Test
+    fun `without a VAD cut the vad block is absent`() {
+        assertFalse(TurnJson.encode(turn).contains("\"vad\""))
+    }
+
+    @Test
     fun `fields owned by later tickets are absent, not null`() {
         val json = TurnJson.encode(turn)
-        for (key in listOf("vad", "transcript", "kind", "declaration", "bucket", "bucket_source", "content")) {
+        for (key in listOf("transcript", "kind", "declaration", "bucket", "bucket_source", "content")) {
             assertFalse(json.contains("\"$key\""), "unexpected $key in $json")
         }
     }

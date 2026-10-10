@@ -48,7 +48,7 @@ Each of these is deferred on purpose, not forgotten:
 ```
   ┌──────────────────────────── SESSION ACTIVE ───────────────────────────┐
   │                                                                       │
-  │   IDLE ──speech detected──→ CAPTURING ──trailing silence──→ TRANSCRIBE│
+  │   LISTENING ──speech──────→ CAPTURING ──trailing silence──→ TRANSCRIBE│
   │    ↑                            │                               │     │
   │    │                       (max duration)                        │     │
   │    │                            └───────────────────────────────┤     │
@@ -65,14 +65,16 @@ Each of these is deferred on purpose, not forgotten:
   └───────────────────────────────────────────────────────────────────────┘
 ```
 
-The microphone is open in `IDLE` and `CAPTURING`, and closed from the moment
-`SPEAKING` begins until the guard interval after it ends. This is what makes
-self-transcription structurally impossible rather than merely unlikely.
+The microphone is open in `LISTENING` and `CAPTURING`, and closed from the
+moment `SPEAKING` begins until the guard interval after it ends. This is what
+makes self-transcription structurally impossible rather than merely unlikely.
 
 ### Timings — all tunable, none final
 
 These are starting points to be tuned in the car, and they are the most
-important numbers in the product. They should be adjustable without a rebuild.
+important numbers in the product. They should be adjustable without a
+rebuild: they are read from `files/timings.json` at Session start (see the
+README, "Tuning the timings").
 
 | Parameter | Start at | Governs |
 | --- | --- | --- |
@@ -295,14 +297,14 @@ corpus/
   "id": "a3f1c9",
   "session_id": "0f22ab",
   "started_at": "2026-10-06T14:22:07.431Z",
-  "ended_at": "2026-10-06T14:22:11.902Z",
-  "audio": { "file": "audio.wav", "sha256": "…", "sample_rate": 16000, "duration_ms": 4471 },
+  "ended_at": "2026-10-06T14:22:12.411Z",
+  "audio": { "file": "audio.wav", "sha256": "…", "sample_rate": 16000, "duration_ms": 4980 },
   "vad": { "speech_ms": 3180, "trailing_silence_ms": 1500 },
   "transcript": {
     "text": "errands order roofing screws",
     "engine": "sherpa-onnx",
     "model": "…",
-    "finished_at": "2026-10-06T14:22:12.140Z"
+    "finished_at": "2026-10-06T14:22:12.650Z"
   },
   "kind": "note",
   "declaration": { "bucket": "errands", "position": "leading", "matched": "errands" },
@@ -321,6 +323,10 @@ Design notes worth keeping:
 - `model` and `app_version` are recorded on every Turn, so the Corpus remains
   interpretable after the engine changes underneath it.
 - `kind` is one of `note`, `command`, `unclassified`.
+- A Turn's audio is pre-roll + speech + trailing Silence, so `duration_ms` is
+  `pre_roll_ms` (300 above) + `vad.speech_ms` + `vad.trailing_silence_ms`, less
+  any pre-roll clipped by the previous Turn. `speech_ms` spans first to last
+  speech window, gaps shorter than the trailing Silence included.
 - A tombstoned Turn keeps its audio. "Scratch that" usually means *I misspoke*,
   and the misspeaking is training data.
 

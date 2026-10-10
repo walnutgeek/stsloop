@@ -1,0 +1,125 @@
+package com.walnutgeek.stsloop.core.turn
+
+import com.walnutgeek.stsloop.core.CorpusWriter
+import com.walnutgeek.stsloop.core.Turn
+import com.walnutgeek.stsloop.core.TurnAudio
+import com.walnutgeek.stsloop.core.TurnInProgress
+import com.walnutgeek.stsloop.core.TurnVad
+import org.junit.jupiter.api.Assertions.assertArrayEquals
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Test
+import java.io.IOException
+
+class CorpusSinkTest {
+    private class FakeWriter : CorpusWriter {
+        var failAppendOn: Int? = null
+        var failFinishOn: Int? = null
+        var failAbandon = false
+        val begun = mutableListOf<Triple<String, Long, Int>>()
+        val written = mutableListOf<ShortArray>()
+        val abandoned = mutableListOf<String>()
+
+        override fun begin(id: String, sessionId: String, startedAtMs: Long, sampleRate: Int): TurnInProgress {
+            begun += Triple(id, startedAtMs, sampleRate)
+            val n = begun.size
+            return object : TurnInProgress {
+                var pcm = ShortArray(0)
+                override fun append(samples: ShortArray, count: Int) {
+                    if (failAppendOn == n) throw IOException("disk full")
+                    pcm += samples.copyOf(count)
+                }
+
+                override fun finish(appVersion: String, vad: TurnVad?): Turn {
+                    if (failFinishOn == n) throw IOException("fsync failed")
+                    written += pcm
+                    return Turn(id, sessionId, startedAtMs, TurnAudio("audio.wav", "x", sampleRate, pcm.size * 1000L / sampleRate), appVersion, vad)
+                }
+
+                override fun abandon() {
+                    abandoned += id
+                    if (failAbandon) throw IOException("cannot delete")
+                }
+            }
+        }
+    }
+
+    private val writer = FakeWriter()
+    private val published = mutableListOf<Pair<Turn, Utterance>>()
+    private val failures = mutableListOf<Pair<Utterance, Exception>>()
+    private var ids = 0
+    private val sink = CorpusSink(
+        writer, sessionId = "5e5510", sessionStartedAtMs = 1_000_000, sampleRate = 1000, appVersion = "t",
+        newId = { "id${++ids}" },
+        listener = object : CorpusSink.Listener {
+            override fun published(turn: Turn, utterance: Utterance) { published += turn to utterance }
+            override fun failed(utterance: Utterance, error: Exception) { failures += utterance to error }
+        },
+    )
+
+    private fun u(start: Long, end: Long) = Utterance(start, end, end - start - 100, 100, CloseReason.SILENCE)
+    private fun pcm(n: Int) = ShortArray(n) { it.toShort() }
+
+    @Test
+    fun `publishes a Turn per utterance with its offset-derived start and vad block`() {
+        sink.closed(u(2500, 3700), pcm(1200))
+        val (turn, _) = published.single()
+        assertEquals(1_002_500, turn.startedAtMs)
+        assertEquals(TurnVad(speechMs = 1100, trailingSilenceMs = 100), turn.vad)
+        assertEquals(1200, turn.audio.durationMs)
+        assertArrayEquals(pcm(1200), writer.written.single())
+        assertEquals(1, sink.published)
+    }
+
+    @Test
+    fun `a failed append abandons that Turn, reports it, and the next Turn still publishes`() {
+        writer.failAppendOn = 1
+        sink.closed(u(0, 500), pcm(500))
+        sink.closed(u(1000, 1500), pcm(500))
+        assertEquals(listOf("id1"), writer.abandoned)
+        assertEquals("disk full", failures.single().second.message)
+        assertEquals(0L, failures.single().first.startSample)
+        assertEquals(listOf("id2"), published.map { it.first.id })
+        assertEquals(1, sink.published)
+        assertEquals(1, sink.failed)
+    }
+
+    @Test
+    fun `a failed finish abandons that Turn too`() {
+        writer.failFinishOn = 1
+        sink.closed(u(0, 500), pcm(500))
+        assertEquals(listOf("id1"), writer.abandoned)
+        assertEquals(1, sink.failed)
+    }
+
+    @Test
+    fun `a failing abandon does not escape`() {
+        writer.failAppendOn = 1
+        writer.failAbandon = true
+        sink.closed(u(0, 500), pcm(500))
+        assertEquals(1, sink.failed)
+        assertEquals("disk full", failures.single().second.message)
+    }
+
+    @Test
+    fun `a failing begin is reported, not thrown`() {
+        val broken = CorpusSink(
+            object : CorpusWriter {
+                override fun begin(id: String, sessionId: String, startedAtMs: Long, sampleRate: Int): TurnInProgress =
+                    throw IOException("no staging dir")
+            },
+            "s", 0, 1000, "t", listener = object : CorpusSink.Listener {},
+        )
+        broken.closed(u(0, 500), pcm(500))
+        assertEquals(1, broken.failed)
+    }
+
+    @Test
+    fun `discards are passed to the listener`() {
+        val seen = mutableListOf<TurnEvent.Discarded>()
+        val s = CorpusSink(writer, "s", 0, 1000, "t", listener = object : CorpusSink.Listener {
+            override fun discarded(event: TurnEvent.Discarded) { seen += event }
+        })
+        s.discarded(TurnEvent.Discarded(0, 200, 20))
+        assertEquals(20L, seen.single().speechSamples)
+    }
+}

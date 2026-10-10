@@ -18,6 +18,10 @@ object TurnJson {
         append(", \"sha256\": ").str(a.sha256)
         append(", \"sample_rate\": ").append(a.sampleRate)
         append(", \"duration_ms\": ").append(a.durationMs).append(" },\n")
+        turn.vad?.let { v ->
+            append("  \"vad\": { \"speech_ms\": ").append(v.speechMs)
+            append(", \"trailing_silence_ms\": ").append(v.trailingSilenceMs).append(" },\n")
+        }
         append("  \"app_version\": ").str(turn.appVersion).append(",\n")
         append("  \"tombstoned_by\": ").strOrNull(turn.tombstonedBy).append("\n")
         append("}\n")

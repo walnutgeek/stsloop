@@ -18,6 +18,8 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import com.k2fsa.sherpa.onnx.Vad
+import com.walnutgeek.stsloop.audio.speech.SpeechModels
 import com.walnutgeek.stsloop.core.Ids
 import com.walnutgeek.stsloop.core.SessionAction
 import com.walnutgeek.stsloop.core.SessionControls
@@ -28,13 +30,13 @@ import com.walnutgeek.stsloop.core.SessionState
 import com.walnutgeek.stsloop.core.StartGate
 import com.walnutgeek.stsloop.core.StartRefusal
 import com.walnutgeek.stsloop.core.Transition
-import com.walnutgeek.stsloop.core.TurnInProgress
 import com.walnutgeek.stsloop.core.Wav
 import java.io.File
 
 /**
  * A Session: a `microphone`-typed foreground service that owns the mic from
- * Start until Stop, then writes the whole capture as one Turn to the Corpus.
+ * Start until Stop. Each utterance the VAD finds becomes its own Turn in the
+ * Corpus ([TurnCapture]).
  *
  * Its notification is the Session's eyes-free control surface: Stop while a
  * Session runs and, once it ends, a detached plain notification that keeps
@@ -206,13 +208,17 @@ class SessionService : Service() {
         commit(SessionMachine.on(state, SessionEvent.CaptureEnded))
     }
 
-    /** Capture thread: mic → Corpus writer until [capturing] goes false, then publish the Turn. */
+    /** Capture thread: mic → [TurnCapture] until [capturing] goes false, then publish any open Turn. */
     @SuppressLint("MissingPermission") // the activity holds RECORD_AUDIO before starting a Session
     private fun capture(sessionId: String) {
         val writer = FileCorpusWriter(corpusDir(this), File(filesDir, "corpus-staging"))
-        var turn: TurnInProgress? = null
         var record: AudioRecord? = null
+        var vad: Vad? = null
+        var capture: TurnCapture? = null
         try {
+            val timings = TurnCapture.loadTimings(filesDir)
+            Log.i(TAG, "Session $sessionId timings: ${timings.toJson().replace(Regex("\\s+"), " ")}")
+            vad = SpeechModels.newVad(assets)
             val minBytes = AudioRecord.getMinBufferSize(
                 SAMPLE_RATE_HZ, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
             )
@@ -224,26 +230,41 @@ class SessionService : Service() {
             check(record.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord failed to initialise" }
             record.startRecording()
             val startedAt = System.currentTimeMillis()
-            turn = writer.begin(Ids.next(), sessionId, startedAt, SAMPLE_RATE_HZ)
+            val turns = TurnCapture(
+                writer, sessionId, startedAt, appVersion(), timings,
+                TurnCapture.silero(vad), SpeechModels.vadConfig().sileroVadModelConfig.windowSize,
+            ) { turn, u ->
+                Log.i(TAG, "Session $sessionId wrote Turn ${turn.directoryName} (${turn.audio.durationMs} ms, ${u.closedBy}, samples ${u.startSample}..${u.endSample})")
+            }
+            capture = turns
 
             val buf = ShortArray(CHUNK_SAMPLES)
             var peak = 0
+            var samples = 0L
             while (capturing) {
                 val n = record.read(buf, 0, buf.size)
                 if (n < 0) error("AudioRecord.read returned $n")
                 for (i in 0 until n) peak = maxOf(peak, kotlin.math.abs(buf[i].toInt()))
-                turn.append(buf, n)
+                samples += n
+                turns.accept(buf, n)
             }
             record.stop()
-            val written = turn.finish(appVersion())
-            turn = null
-            if (peak == 0) Log.w(TAG, "Turn ${written.id} is all zeros: the mic was silenced")
-            Log.i(TAG, "Session $sessionId wrote Turn ${written.directoryName} (${written.audio.durationMs} ms, peak $peak)")
+            turns.finish()
+            if (peak == 0) Log.w(TAG, "Session $sessionId captured only zeros: the mic was silenced")
+            Log.i(
+                TAG,
+                "Session $sessionId ended: ${Wav.durationMs(samples, SAMPLE_RATE_HZ)} ms captured, " +
+                    "${turns.publishedTurns} Turns, ${turns.failedTurns} failed to write, peak $peak",
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Session $sessionId failed", e)
-            turn?.abandon()
+            // Best effort: publish the utterance that was open when capture broke.
+            capture?.let { c -> runCatching { c.finish() }.onFailure { Log.e(TAG, "Session $sessionId lost its open Turn", it) } }
+        } catch (e: LinkageError) {
+            Log.e(TAG, "Session $sessionId has no speech natives; run scripts/build-sherpa-onnx.sh", e)
         } finally {
             record?.release()
+            vad?.release()
             main.post(::onCaptureEnded)
         }
     }

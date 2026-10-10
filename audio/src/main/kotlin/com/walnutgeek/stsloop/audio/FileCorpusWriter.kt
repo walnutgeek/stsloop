@@ -7,6 +7,7 @@ import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.TurnAudio
 import com.walnutgeek.stsloop.core.TurnInProgress
 import com.walnutgeek.stsloop.core.TurnJson
+import com.walnutgeek.stsloop.core.TurnVad
 import com.walnutgeek.stsloop.core.Wav
 import com.walnutgeek.stsloop.core.turnDirectoryName
 import java.io.File
@@ -56,7 +57,7 @@ class FileCorpusWriter(
             this.samples += count
         }
 
-        override fun finish(appVersion: String): Turn {
+        override fun finish(appVersion: String, vad: TurnVad?): Turn {
             val dataBytes = samples * Wav.BYTES_PER_SAMPLE
             require(dataBytes <= Int.MAX_VALUE - Wav.HEADER_BYTES) { "Recording too long for a WAV file" }
             wav.seek(0)
@@ -75,6 +76,7 @@ class FileCorpusWriter(
                     durationMs = Wav.durationMs(samples, sampleRate),
                 ),
                 appVersion = appVersion,
+                vad = vad,
             )
             FileOutputStream(File(staged, TURN_FILE)).use {
                 it.write(TurnJson.encode(turn).toByteArray(Charsets.UTF_8))

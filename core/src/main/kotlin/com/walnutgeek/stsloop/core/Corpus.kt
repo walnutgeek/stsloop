@@ -13,8 +13,8 @@ const val TURN_FILE = "turn.json"
  * Timestamps are epoch milliseconds, UTC. `ended_at` is not observed
  * separately: it is `started_at + duration_ms`, so a sample offset into the
  * Recording maps to wall time exactly. Fields owned by later tickets
- * (`vad`, `transcript`, `kind`, `declaration`, `bucket`, …) are not modelled
- * yet and are absent from the JSON.
+ * (`transcript`, `kind`, `declaration`, `bucket`, …) are not modelled yet and
+ * are absent from the JSON; so is `vad` when no VAD cut the Turn.
  */
 data class Turn(
     val id: String,
@@ -22,6 +22,7 @@ data class Turn(
     val startedAtMs: Long,
     val audio: TurnAudio,
     val appVersion: String,
+    val vad: TurnVad? = null,
     val tombstonedBy: String? = null,
 ) {
     val endedAtMs: Long get() = startedAtMs + audio.durationMs
@@ -36,6 +37,17 @@ data class TurnAudio(
     val sha256: String,
     val sampleRate: Int,
     val durationMs: Long,
+)
+
+/**
+ * How the VAD cut a human Turn: speech from the first to the last speech
+ * window (gaps shorter than the trailing Silence included), then the trailing
+ * Silence that closed it.
+ * Pre-roll before the onset makes up the rest of `duration_ms`.
+ */
+data class TurnVad(
+    val speechMs: Long,
+    val trailingSilenceMs: Long,
 )
 
 fun turnDirectoryName(startedAtMs: Long, id: String): String = "${UtcTimestamp.format(startedAtMs)}-$id"
@@ -55,7 +67,7 @@ interface TurnInProgress {
     fun append(samples: ShortArray, count: Int)
 
     /** Seals the Recording, writes `turn.json`, and publishes the Turn directory. */
-    fun finish(appVersion: String): Turn
+    fun finish(appVersion: String, vad: TurnVad? = null): Turn
 
     /** Discards everything written so far; nothing appears in the Corpus. */
     fun abandon()
