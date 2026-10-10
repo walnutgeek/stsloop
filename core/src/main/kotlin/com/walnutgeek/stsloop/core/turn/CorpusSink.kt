@@ -2,13 +2,18 @@ package com.walnutgeek.stsloop.core.turn
 
 import com.walnutgeek.stsloop.core.CorpusWriter
 import com.walnutgeek.stsloop.core.Ids
+import com.walnutgeek.stsloop.core.Transcript
 import com.walnutgeek.stsloop.core.Turn
+import com.walnutgeek.stsloop.core.TurnKind
 
 /**
- * Writes each closed utterance as its own Turn. Sample 0 of the stream is wall
- * time [sessionStartedAtMs], so a Turn's `started_at` is derived from its
- * sample offset. A Turn that fails to write is abandoned and reported to the
- * [Listener]; it never takes the rest of the Session down with it.
+ * Writes each closed utterance as its own Turn, transcript included, in one
+ * publish. Sample 0 of the stream is wall time [sessionStartedAtMs], so a
+ * Turn's `started_at` is derived from its sample offset. A Turn that fails to
+ * write is abandoned and reported to the [Listener]; it never takes the rest
+ * of the Session down with it.
+ *
+ * Without a phrase grammar every Turn is [TurnKind.UNCLASSIFIED].
  */
 class CorpusSink(
     private val writer: CorpusWriter,
@@ -18,9 +23,10 @@ class CorpusSink(
     private val appVersion: String,
     private val newId: () -> String = Ids::next,
     private val listener: Listener,
-) : UtteranceSink {
+) {
     interface Listener {
-        fun published(turn: Turn, utterance: Utterance) {}
+        /** [timing] is null when the Turn has no transcript. */
+        fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) {}
         fun failed(utterance: Utterance, error: Exception) {}
         fun discarded(event: TurnEvent.Discarded) {}
     }
@@ -33,12 +39,13 @@ class CorpusSink(
     var failed = 0
         private set
 
-    override fun closed(utterance: Utterance, pcm: ShortArray) {
+    /** Publishes [pcm] (exactly the [utterance]'s samples) with its [transcript], if the recognizer gave one. */
+    fun closed(utterance: Utterance, pcm: ShortArray, transcript: Transcript? = null, timing: SttTiming? = null) {
         val turn = try {
             val inProgress = writer.begin(newId(), sessionId, utterance.startedAtMs(sessionStartedAtMs, sampleRate), sampleRate)
             try {
                 inProgress.append(pcm, pcm.size)
-                inProgress.finish(appVersion, utterance.vad(sampleRate))
+                inProgress.finish(appVersion, utterance.vad(sampleRate), transcript, TurnKind.UNCLASSIFIED)
             } catch (e: Exception) {
                 runCatching { inProgress.abandon() }
                 throw e
@@ -49,8 +56,8 @@ class CorpusSink(
             return
         }
         published++
-        listener.published(turn, utterance)
+        listener.published(turn, utterance, timing.takeIf { transcript != null })
     }
 
-    override fun discarded(event: TurnEvent.Discarded) = listener.discarded(event)
+    fun discarded(event: TurnEvent.Discarded) = listener.discarded(event)
 }

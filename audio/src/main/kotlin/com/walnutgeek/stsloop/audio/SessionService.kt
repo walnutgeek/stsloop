@@ -20,6 +20,7 @@ import android.os.Looper
 import android.util.Log
 import com.k2fsa.sherpa.onnx.Vad
 import com.walnutgeek.stsloop.audio.speech.SpeechModels
+import com.walnutgeek.stsloop.audio.speech.SttRecognizer
 import com.walnutgeek.stsloop.core.Ids
 import com.walnutgeek.stsloop.core.SessionAction
 import com.walnutgeek.stsloop.core.SessionControls
@@ -30,13 +31,16 @@ import com.walnutgeek.stsloop.core.SessionState
 import com.walnutgeek.stsloop.core.StartGate
 import com.walnutgeek.stsloop.core.StartRefusal
 import com.walnutgeek.stsloop.core.Transition
+import com.walnutgeek.stsloop.core.turn.SttTiming
 import com.walnutgeek.stsloop.core.Wav
 import java.io.File
 
 /**
  * A Session: a `microphone`-typed foreground service that owns the mic from
- * Start until Stop. Each utterance the VAD finds becomes its own Turn in the
- * Corpus ([TurnCapture]).
+ * Start until Stop. Each utterance the VAD finds becomes its own transcribed
+ * Turn in the Corpus ([TurnCapture]). Speech recognition is sherpa-onnx only:
+ * the system SpeechRecognizer is never started, because it would capture
+ * the same mic and one of the two would silently get silence.
  *
  * Its notification is the Session's eyes-free control surface: Stop while a
  * Session runs and, once it ends, a detached plain notification that keeps
@@ -208,7 +212,10 @@ class SessionService : Service() {
         commit(SessionMachine.on(state, SessionEvent.CaptureEnded))
     }
 
-    /** Capture thread: mic → [TurnCapture] until [capturing] goes false, then publish any open Turn. */
+    /**
+     * Capture thread: mic → [TurnCapture] until [capturing] goes false, then
+     * publish any open Turn and wait for every transcript to be written.
+     */
     @SuppressLint("MissingPermission") // the activity holds RECORD_AUDIO before starting a Session
     private fun capture(sessionId: String) {
         val writer = FileCorpusWriter(corpusDir(this), File(filesDir, "corpus-staging"))
@@ -233,8 +240,13 @@ class SessionService : Service() {
             val turns = TurnCapture(
                 writer, sessionId, startedAt, appVersion(), timings,
                 TurnCapture.silero(vad), SpeechModels.vadConfig().sileroVadModelConfig.windowSize,
-            ) { turn, u ->
-                Log.i(TAG, "Session $sessionId wrote Turn ${turn.directoryName} (${turn.audio.durationMs} ms, ${u.closedBy}, samples ${u.startSample}..${u.endSample})")
+                recognizer = { SttRecognizer.load(assets) },
+            ) { turn, u, timing ->
+                Log.i(
+                    TAG,
+                    "Session $sessionId wrote Turn ${turn.directoryName} (${turn.audio.durationMs} ms, ${u.closedBy}, " +
+                        "samples ${u.startSample}..${u.endSample}): ${SttTiming.summary(turn, timing)}",
+                )
             }
             capture = turns
 

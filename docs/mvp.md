@@ -109,6 +109,40 @@ layer does not mutate the caller's buffer, so one array can serve both
 consumers. `SpeechSegment(start, samples)` gives a sample offset, so each VAD
 utterance maps to an exact byte range in the retained stream.
 
+### TRANSCRIBE: streamed while capturing, published once
+
+Each utterance gets its own recognizer stream, opened at its first sample
+(pre-roll included) and fed while it is still being captured. Samples go to
+it once the VAD has judged them, so a stream never receives audio past the
+cut. When trailing Silence closes the utterance, almost all of it is already
+decoded; the only work left is the final flush (300 ms of zero padding,
+`inputFinished`, the last decode). That is what gates the echo, so it is kept
+as small as possible.
+
+```
+capture thread                         STT thread (one per Session)
+AudioRecord → Segmenter ─ opened ───→  recognizer.open()       (one stream per Turn)
+              (VAD cuts) ─ captured ─→  stream.accept + decode
+                         ─ closed ───→  stream.finish → transcript
+                                        → CorpusSink → FileCorpusWriter (one atomic publish)
+```
+
+- **Capture never waits on decoding.** The capture thread only posts work to
+  the Session's STT thread. The recognizer, its streams and the Corpus writes
+  all live there, so the mic is never starved. The queue is unbounded; at the
+  measured RTF it stays nearly empty.
+- **One recognizer per Session**, loaded on the STT thread when the Session
+  starts, so the mic opens without waiting about 1.3 s for the model. It is
+  never reloaded per Turn, and it is released when the Session ends.
+- **A Turn is published once, transcript included.** `audio.wav` and
+  `turn.json` are staged and renamed into the Corpus only after the transcript
+  is final, so a Turn directory never changes after it appears.
+- **No recognizer, no transcript, still a Turn.** If the model fails to load,
+  or a stream fails, the Turn is written without a `transcript` block. The
+  Recording is the primary record, and transcription can be re-run later.
+- **Latency is `finished_at - ended_at`**, and it is logged per Turn with the
+  RTF (recognizer time over audio time) under `stsloop.Session`.
+
 ### Never run the system recognizer concurrently
 
 This is the sharpest finding of the research, and it is a hard rule.
@@ -322,7 +356,14 @@ Design notes worth keeping:
   ground truth never get confused in the same field.
 - `model` and `app_version` are recorded on every Turn, so the Corpus remains
   interpretable after the engine changes underneath it.
-- `kind` is one of `note`, `command`, `unclassified`.
+- `kind` is one of `note`, `command`, `unclassified`. Until the phrase
+  grammar exists, every Turn is `unclassified`.
+- `transcript.text` is the recognizer's output lower-cased with whitespace
+  collapsed (the model only emits upper case). `transcript.model` names the
+  model directory, encoder variant and decoding method. The block is absent
+  when no recognizer was available for the Turn.
+- `transcript.finished_at - ended_at` is the end-of-utterance to transcript
+  latency: how long after the trailing Silence ended the text was final.
 - A Turn's audio is pre-roll + speech + trailing Silence, so `duration_ms` is
   `pre_roll_ms` (300 above) + `vad.speech_ms` + `vad.trailing_silence_ms`, less
   any pre-roll clipped by the previous Turn. `speech_ms` spans first to last
