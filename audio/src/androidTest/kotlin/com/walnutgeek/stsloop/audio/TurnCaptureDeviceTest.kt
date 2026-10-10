@@ -230,10 +230,10 @@ class TurnCaptureDeviceTest {
                 "sherpa-onnx-streaming-zipformer-en-2023-06-26/epoch-99-avg-1-chunk-16-left-128.int8 modified_beam_search",
                 t.model,
             )
-            // No default Bucket alias at either end of these wavs: an undeclared Note.
-            assertEquals(TurnKind.NOTE, turn.kind)
+            // No default Bucket alias at either end of these wavs: not Declared, so unclassified.
+            assertEquals(TurnKind.UNCLASSIFIED, turn.kind)
             assertNull(turn.classification!!.bucket)
-            assertEquals(t.text.trim().lowercase(), turn.classification!!.content)
+            assertNull(turn.classification!!.content)
             assertTrue("timing for ${turn.directoryName}", timing != null)
             val json = turnJson(turn)
             assertTrue(json, json.contains("\"transcript\": {\n    \"text\": \"${t.text}\",\n    \"engine\": \"sherpa-onnx\",\n"))
@@ -243,8 +243,8 @@ class TurnCaptureDeviceTest {
             assertTrue(
                 json,
                 json.contains(
-                    "\"kind\": \"note\",\n  \"declaration\": null,\n  \"bucket\": null,\n  \"bucket_source\": null,\n" +
-                        "  \"content\": \"${t.text.trim().lowercase()}\",\n",
+                    "\"kind\": \"unclassified\",\n  \"declaration\": null,\n  \"bucket\": null,\n  \"bucket_source\": null,\n" +
+                        "  \"content\": null,\n",
                 ),
             )
         }

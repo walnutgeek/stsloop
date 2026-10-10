@@ -10,107 +10,114 @@ import com.walnutgeek.stsloop.core.DeclarationPosition
  *
  * A **Declaration** is a Bucket's name or alias ([BucketConfig]) at the very
  * start or the very end of the transcript, read as words (see [Words]: case,
- * punctuation and dashes are ignored):
+ * punctuation, dashes, apostrophe style and Unicode composition are ignored):
  *
  * ```
  * [fillers] ALIAS [fillers] content          → leading
  * content [fillers] ALIAS [fillers]          → trailing
  * ```
  *
+ * Corpus labels are permanent training data, so anything short of a clear
+ * Declaration is left unclassified:
  * - An alias anywhere else is not a Declaration: "I need to work on the roof"
  *   is not in `work`.
- * - [FILLERS] around the alias are skipped; inside the content they stay.
- * - Where several aliases fit at one end, the one with the most words wins
- *   ("house project" over "house"), then the longer spelling.
- * - An alias at both ends declares the leading one; the trailing one stays in
- *   the content. A Bucket named first is the deliberate pattern.
- * - An utterance that is only an alias (and fillers) is not a Declaration: a
- *   Note with no content is not worth a Bucket, and it is likelier a false
- *   start than a thought.
+ * - Aliases of **different** Buckets at the two ends are not a Declaration.
+ *   The **same** Bucket at both ends is one leading Declaration, with both
+ *   aliases taken out of the content.
+ * - An utterance that is only aliases and fillers is not a Declaration.
  *
- * The content is the transcript between the Declaration's words, cut from the
- * original text, so the engine's own casing and punctuation inside it are
- * kept. An engine that only writes upper case (the current one) is
- * lower-cased. The transcript itself is never changed.
+ * [FILLERS] around the alias are skipped; inside the content they stay. Where
+ * several aliases fit at one end, the one with the most words wins ("house
+ * project" over "house"), then the longer spelling.
+ *
+ * The content runs from its first word to its last, cut from the transcript
+ * after [Words.prepare], so the engine's casing and the punctuation *inside*
+ * it are kept and punctuation around it is dropped. An engine that only
+ * writes upper case (the current one) is lower-cased. The transcript itself is
+ * never changed.
  */
-class PhraseGrammar(private val buckets: BucketConfig) {
+class PhraseGrammar(buckets: BucketConfig) {
     /** A Declaration and the content left once it is taken out. */
-    data class Declared(val declaration: Declaration, val content: String)
+    internal data class Declared(val declaration: Declaration, val content: String)
 
     /** Forms longest first: most words, then most letters. */
     private val forms: List<Pair<List<String>, String>> = buckets.forms.entries
         .map { it.key to it.value }
         .sortedWith(compareByDescending<Pair<List<String>, String>> { it.first.size }.thenByDescending { it.first.sumOf(String::length) })
 
+    /** The same forms with their words reversed, for matching from the end. */
+    private val reversedForms = forms.map { (form, bucket) -> form.reversed() to bucket }
+
     /**
-     * What [transcript] (exactly as the engine produced it) is. Nothing heard
-     * is unclassified; anything else is a Note, with a Bucket when it is
-     * Declared.
+     * What [transcript] (exactly as the engine produced it) is: a Note in its
+     * Bucket when Declared, otherwise unclassified.
      */
     fun classify(transcript: String?): Classification {
-        if (transcript == null) return Classification.UNCLASSIFIED
-        val words = Words.of(transcript)
-        if (words.isEmpty()) return Classification.UNCLASSIFIED
-        declaration(transcript, words)?.let { return Classification.declared(it.declaration, it.content) }
-        return Classification.undeclared(content(transcript, transcript.trim()))
+        val d = transcript?.let { declaration(it) } ?: return Classification.UNCLASSIFIED
+        return Classification.declared(d.declaration, d.content)
     }
 
     /** The Declaration in [transcript], or null when there is none. */
-    fun declaration(transcript: String): Declared? = declaration(transcript, Words.of(transcript))
-
-    private fun declaration(text: String, words: List<Word>): Declared? {
+    internal fun declaration(transcript: String): Declared? {
+        val text = Words.prepare(transcript)
+        val words = Words.of(text)
         val texts = words.map { it.text }
-        val leading = match(texts, DeclarationPosition.LEADING)
-        val found = leading ?: match(texts, DeclarationPosition.TRAILING) ?: return null
-        val (bucket, from, to, contentRange) = found
-        if (contentRange.isEmpty()) return null
-        val matched = texts.subList(from, to).joinToString(" ")
-        val span = text.substring(words[contentRange.first].start, words[contentRange.last].end)
-        return Declared(Declaration(bucket, found.position, matched), content(text, span))
+        val n = texts.size
+        val lead = matchStart(texts, reversed = false)
+        val trail = matchStart(texts.asReversed(), reversed = true)
+        // Indices of the content's words, [from, to).
+        val (found, from, to) = when {
+            lead != null && trail != null && n - trail.aliasEnd < lead.aliasEnd ->
+                // The two ends are the same words (the whole utterance is one alias).
+                Triple(lead, lead.contentFrom, n)
+            lead != null && trail != null -> {
+                if (lead.bucket != trail.bucket) return null
+                Triple(lead, lead.contentFrom, n - trail.contentFrom)
+            }
+            lead != null -> Triple(lead, lead.contentFrom, n)
+            trail != null -> Triple(trail.copy(position = DeclarationPosition.TRAILING), 0, n - trail.contentFrom)
+            else -> return null
+        }
+        if (from >= to) return null
+        val content = text.substring(words[from].start, words[to - 1].end)
+        return Declared(
+            Declaration(found.bucket, found.position, found.matched),
+            if (text.any { it.isLowerCase() }) content else content.lowercase(),
+        )
     }
 
-    /** An alias at one end: the Bucket, its words `[from, to)`, and the content's word indices. */
+    /**
+     * An alias at the start of [words]: its Bucket, the words heard, where the
+     * alias ends and where the content starts (after fillers on both sides).
+     */
     private data class Match(
         val bucket: String,
-        val from: Int,
-        val to: Int,
-        val content: IntRange,
-        val position: DeclarationPosition,
+        val matched: String,
+        val aliasEnd: Int,
+        val contentFrom: Int,
+        val position: DeclarationPosition = DeclarationPosition.LEADING,
     )
 
-    private fun match(words: List<String>, position: DeclarationPosition): Match? {
-        val leading = position == DeclarationPosition.LEADING
-        // Walk in from this end over fillers until an alias fits.
-        var edge = if (leading) 0 else words.size // leading: alias starts here; trailing: alias ends here
-        while (if (leading) edge < words.size else edge > 0) {
-            val hit = forms.firstOrNull { (form, _) ->
-                if (leading) {
-                    edge + form.size <= words.size && words.subList(edge, edge + form.size) == form
-                } else {
-                    edge - form.size >= 0 && words.subList(edge - form.size, edge) == form
-                }
-            }
+    /** Matches at the start of [words]; the trailing case passes the words [reversed]. */
+    private fun matchStart(words: List<String>, reversed: Boolean): Match? {
+        val forms = if (reversed) reversedForms else forms
+        var at = 0
+        while (at < words.size) {
+            val hit = forms.firstOrNull { (form, _) -> at + form.size <= words.size && words.subList(at, at + form.size) == form }
             if (hit != null) {
                 val (form, bucket) = hit
-                return if (leading) {
-                    var start = edge + form.size
-                    while (start < words.size && words[start] in FILLERS) start++
-                    Match(bucket, edge, edge + form.size, start until words.size, position)
-                } else {
-                    var end = edge - form.size
-                    while (end > 0 && words[end - 1] in FILLERS) end--
-                    Match(bucket, edge - form.size, edge, 0 until end, position)
-                }
+                val end = at + form.size
+                var content = end
+                while (content < words.size && words[content] in FILLERS) content++
+                // The heard words read forwards, whichever end they were matched from.
+                val heard = if (reversed) form.reversed() else form
+                return Match(bucket, heard.joinToString(" "), end, content)
             }
-            val next = if (leading) words[edge] else words[edge - 1]
-            if (next !in FILLERS) return null
-            edge += if (leading) 1 else -1
+            if (words[at] !in FILLERS) return null
+            at++
         }
         return null
     }
-
-    /** [span] of [text] as Note content: lower-cased when the engine wrote no lower case at all. */
-    private fun content(text: String, span: String): String = if (text.any { it.isLowerCase() }) span else span.lowercase()
 
     companion object {
         /**

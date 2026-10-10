@@ -333,18 +333,21 @@ The rules in full (`:core` `PhraseGrammar`, `BucketConfig`):
   `um umm uh uhm er erm ah hmm mm so okay ok`. Fillers inside the content stay.
 - When several aliases fit at one end, the one with the most words wins
   ("house project" over "house"), then the longer spelling.
-- An alias at **both** ends declares the leading one. The trailing one stays in
-  the content.
-- An utterance that is **only** an alias (and fillers), such as "errands", is
-  not a Declaration. It is stored as an undeclared Note: an empty Note is not
-  worth a Bucket, and it is more likely a false start.
+- Corpus labels are permanent training data, so anything short of a clear
+  Declaration stays unlabelled. Aliases of **different** Buckets at the two
+  ends are not a Declaration. The **same** Bucket at both ends is one leading
+  Declaration, with both aliases taken out of the content. An utterance that is
+  **only** aliases and fillers, such as "errands", is not a Declaration either.
+- Before matching, the transcript and every alias are put in Unicode NFC, and
+  every apostrophe (’, ʼ) becomes `'`.
 - `content` is the transcript with the Declaration and its fillers taken out.
-  It is cut from the original text, so a cased or punctuated engine keeps its
-  casing and inner punctuation. An all-caps engine (the current one) is
-  lower-cased. `transcript.text` is never changed.
+  It runs from its first word to its last, so punctuation around it is dropped.
+  It is cut from the NFC text, so a cased or punctuated engine keeps its casing
+  and inner punctuation. An all-caps engine (the current one) is lower-cased.
+  `transcript.text` is never changed.
 - Config errors fall back per Bucket, not for the whole file. A broken Bucket
   or alias is dropped and logged. An alias claimed by two Buckets is dropped
-  from **both**, because either could be meant, and an unlabelled Note is
+  from **both**, because either could be meant, and an unlabelled Turn is
   better than a wrong one. An alias equal to another Bucket's name loses to
   the name. Only a file that is not a JSON object with a `buckets` array falls
   back to the defaults above.
@@ -414,11 +417,10 @@ Design notes worth keeping:
   ground truth never get confused in the same field.
 - `model` and `app_version` are recorded on every Turn, so the Corpus remains
   interpretable after the engine changes underneath it.
-- `kind` is one of `note`, `command`, `unclassified`. A Turn with a transcript
-  is a `note`, Declared or not. An undeclared Note has `declaration`, `bucket`
-  and `bucket_source` set to `null`, and its whole transcript as `content`
-  (cased as above). A Turn with no transcript, or with nothing but punctuation
-  in it, is `unclassified` and has none of those four fields.
+- `kind` is one of `note`, `command`, `unclassified`. Until the phrase
+  grammar exists, every Turn is `unclassified`. With it, only a Declared Turn is
+  a `note`; an undeclared one stays `unclassified` (unlabelled test data), with
+  `declaration`, `bucket`, `bucket_source` and `content` written as `null`.
 - `transcript.text` is exactly what the engine produced. The current model
   emits upper case with no punctuation. A
   future cased or punctuated model must not be flattened, so normalisation is

@@ -1,6 +1,7 @@
 package com.walnutgeek.stsloop.core.grammar
 
 import com.walnutgeek.stsloop.core.BucketSource
+import com.walnutgeek.stsloop.core.Classification
 import com.walnutgeek.stsloop.core.Declaration
 import com.walnutgeek.stsloop.core.DeclarationPosition.LEADING
 import com.walnutgeek.stsloop.core.DeclarationPosition.TRAILING
@@ -22,14 +23,9 @@ class PhraseGrammarTest {
         assertEquals(content, c.content, text)
     }
 
-    /** Asserts [text] is an undeclared Note: no Bucket, the whole transcript as [content]. */
-    private fun undeclared(text: String, content: String = text.trim().let { if (it.any(Char::isLowerCase)) it else it.lowercase() }) {
-        val c = grammar.classify(text)
-        assertEquals(TurnKind.NOTE, c.kind, text)
-        assertNull(c.declaration, text)
-        assertNull(c.bucket, text)
-        assertNull(c.bucketSource, text)
-        assertEquals(content, c.content, text)
+    /** Asserts [text] is not Declared: unclassified, with no label of any kind and no content. */
+    private fun undeclared(text: String, g: PhraseGrammar = grammar) {
+        assertEquals(Classification.UNCLASSIFIED, g.classify(text), text)
     }
 
     // --- the mvp.md examples ---
@@ -45,14 +41,14 @@ class PhraseGrammarTest {
         declared("house project — check the joist spacing", "house-project", LEADING, "house project", "check the joist spacing")
 
     @Test
-    fun `mvp undeclared example is a Note with no Bucket`() = undeclared("order roofing screws")
+    fun `mvp undeclared example is unlabelled`() = undeclared("order roofing screws")
 
     @Test
     fun `I need to work on the roof does not land in work`() = undeclared("I need to work on the roof")
 
     @Test
     fun `I NEED TO WORK ON THE ROOF in raw engine output does not land in work either`() =
-        undeclared("I NEED TO WORK ON THE ROOF", "i need to work on the roof")
+        undeclared("I NEED TO WORK ON THE ROOF")
 
     @Test
     fun `the corpus example in raw engine output`() =
@@ -100,7 +96,37 @@ class PhraseGrammarTest {
     fun `an apostrophe does not split a word`() = declared("idea don't park on the left", "ideas", LEADING, "idea", "don't park on the left")
 
     @Test
-    fun `a curly apostrophe does not split a word`() = declared("idea don’t park on the left", "ideas", LEADING, "idea", "don’t park on the left")
+    fun `a curly apostrophe reads as a straight one`() = declared("idea don\u2019t park on the left", "ideas", LEADING, "idea", "don't park on the left")
+
+    @Test
+    fun `a modifier-letter apostrophe reads as a straight one`() = declared("idea don\u02bct park", "ideas", LEADING, "idea", "don't park")
+
+    @Test
+    fun `an apostrophe in an alias matches any apostrophe in the transcript`() {
+        val g = PhraseGrammar(BucketConfig(listOf(Bucket("kids", listOf("kid\u2019s stuff")))))
+        assertEquals("kids", g.classify("kid's stuff buy crayons").bucket)
+        assertEquals("kids", g.classify("KIDS STUFF BUY CRAYONS").bucket)
+    }
+
+    @Test
+    fun `a decomposed accent in the transcript matches a composed alias`() {
+        val g = PhraseGrammar(BucketConfig(listOf(Bucket("cafe", listOf("caf\u00e9")))))
+        val c = g.classify("cafe\u0301 order beans")
+        assertEquals("cafe", c.bucket)
+        assertEquals("order beans", c.content)
+    }
+
+    @Test
+    fun `a decomposed accent in an alias matches a composed transcript`() {
+        val g = PhraseGrammar(BucketConfig(listOf(Bucket("cafe", listOf("cafe\u0301")))))
+        assertEquals("cafe", g.classify("caf\u00e9 order beans").bucket)
+    }
+
+    @Test
+    fun `content is cut from the NFC form of the transcript`() {
+        val g = PhraseGrammar(BucketConfig(listOf(Bucket("food", emptyList()))))
+        assertEquals("cr\u00e8me br\u00fbl\u00e9e", g.classify("food cre\u0300me bru\u0302le\u0301e").content)
+    }
 
     // --- STT spelling variants ---
 
@@ -197,30 +223,50 @@ class PhraseGrammarTest {
     fun `only a Bucket name is not a Declaration`() = undeclared("errands")
 
     @Test
-    fun `only a multi-word Bucket name is not a Declaration`() = undeclared("House project.", "House project.")
+    fun `only a multi-word Bucket name is not a Declaration`() = undeclared("House project.")
 
     @Test
     fun `only a Bucket name and fillers is not a Declaration`() = undeclared("um errands okay")
 
     @Test
-    fun `two Bucket names and nothing else declare the first with the second as content`() =
-        declared("errands work", "errands", LEADING, "errands", "work")
+    fun `two different Bucket names and nothing else are not a Declaration`() = undeclared("errands work")
+
+    @Test
+    fun `the same Bucket name twice and nothing else is not a Declaration`() = undeclared("errands errands")
+
+    @Test
+    fun `the same Bucket name twice around a filler is not a Declaration`() = undeclared("errands um errands")
 
     // --- both ends ---
 
     @Test
-    fun `an alias at both ends declares the leading one`() =
-        declared("work, call the roofer about the house", "work", LEADING, "work", "call the roofer about the house")
+    fun `different Buckets at the two ends are not a Declaration`() = undeclared("work, call the roofer about the house")
 
     @Test
-    fun `the same Bucket at both ends declares the leading one and keeps the trailing one in the content`() =
-        declared("errands buy milk errands", "errands", LEADING, "errands", "buy milk errands")
+    fun `different Buckets at the two ends behind fillers are not a Declaration`() = undeclared("okay work fix it, errands um")
+
+    @Test
+    fun `the same Bucket at both ends declares the leading one and takes both out of the content`() =
+        declared("errands buy milk errands", "errands", LEADING, "errands", "buy milk")
+
+    @Test
+    fun `the same Bucket by different aliases at both ends is one Declaration`() =
+        declared("shopping, buy milk - errands.", "errands", LEADING, "shopping", "buy milk")
+
+    @Test
+    fun `an alias whose words overlap at both ends is still only one alias`() = undeclared("work log")
 
     // --- content ---
 
     @Test
-    fun `content keeps the engine's casing and punctuation when it has lower case`() =
-        declared("Errands — order 3 roofing screws, the long ones.", "errands", LEADING, "errands", "order 3 roofing screws, the long ones")
+    fun `content keeps the engine's casing and inner punctuation when it has lower case`() =
+        declared("Errands — order 3 roofing screws, the long ones", "errands", LEADING, "errands", "order 3 roofing screws, the long ones")
+
+    @Test
+    fun `punctuation around the content is dropped, whichever end the Declaration is at`() {
+        declared("Errands: order screws.", "errands", LEADING, "errands", "order screws")
+        declared("\"Order screws!\" — errands", "errands", TRAILING, "errands", "Order screws")
+    }
 
     @Test
     fun `content of an all-caps engine is lower-cased`() =
@@ -241,10 +287,8 @@ class PhraseGrammarTest {
     }
 
     @Test
-    fun `undeclared content is lower-cased from an all-caps engine`() = undeclared("ORDER ROOFING SCREWS", "order roofing screws")
-
-    @Test
-    fun `undeclared content keeps a cased engine's text, trimmed`() = undeclared("  Order roofing screws. ", "Order roofing screws.")
+    fun `an undeclared transcript gets no content, so nothing derived from it can be mistaken for a label`() =
+        assertNull(grammar.classify("ORDER ROOFING SCREWS").content)
 
     // --- what is not a Note ---
 
@@ -263,11 +307,10 @@ class PhraseGrammarTest {
     fun `a transcript of only punctuation is unclassified`() = assertEquals(TurnKind.UNCLASSIFIED, grammar.classify(" ... ").kind)
 
     @Test
-    fun `with no Buckets every transcript is an undeclared Note`() {
-        val c = PhraseGrammar(BucketConfig(emptyList())).classify("errands buy milk")
-        assertEquals(TurnKind.NOTE, c.kind)
-        assertNull(c.bucket)
-    }
+    fun `with no Buckets every transcript is unclassified`() = undeclared("errands buy milk", PhraseGrammar(BucketConfig(emptyList())))
+
+    @Test
+    fun `scratch that is not a Note`() = undeclared("SCRATCH THAT")
 
     // --- the parser on its own ---
 

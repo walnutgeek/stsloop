@@ -101,6 +101,10 @@ class TurnJsonTest {
                     "    \"latency_ms\": 239\n" +
                     "  },\n" +
                     "  \"kind\": \"unclassified\",\n" +
+                    "  \"declaration\": null,\n" +
+                    "  \"bucket\": null,\n" +
+                    "  \"bucket_source\": null,\n" +
+                    "  \"content\": null,\n" +
                     "  \"app_version\"",
             ),
             json,
@@ -108,10 +112,21 @@ class TurnJsonTest {
     }
 
     @Test
-    fun `kind is written without a transcript, and each kind has its spec name`() {
+    fun `kind and null labels are written without a transcript, and each kind has its spec name`() {
         assertEquals(listOf("note", "command", "unclassified"), TurnKind.entries.map { it.json })
         val json = TurnJson.encode(turn.copy(classification = Classification.UNCLASSIFIED))
-        assertTrue(json.contains("\"duration_ms\": 4471 },\n  \"kind\": \"unclassified\",\n  \"app_version\""), json)
+        assertTrue(
+            json.contains(
+                "\"duration_ms\": 4471 },\n" +
+                    "  \"kind\": \"unclassified\",\n" +
+                    "  \"declaration\": null,\n" +
+                    "  \"bucket\": null,\n" +
+                    "  \"bucket_source\": null,\n" +
+                    "  \"content\": null,\n" +
+                    "  \"app_version\"",
+            ),
+            json,
+        )
         assertFalse(json.contains("\"transcript\""))
     }
 
@@ -128,9 +143,9 @@ class TurnJsonTest {
     }
 
     @Test
-    fun `an unclassified Turn has no Note fields, not even null ones`() {
-        val json = TurnJson.encode(turn.copy(transcript = transcript, classification = Classification.UNCLASSIFIED))
-        for (key in listOf("declaration", "bucket", "bucket_source", "content")) {
+    fun `a Turn never classified has no label fields at all`() {
+        val json = TurnJson.encode(turn.copy(transcript = transcript))
+        for (key in listOf("kind", "declaration", "bucket", "bucket_source", "content")) {
             assertFalse(json.contains("\"$key\""), "unexpected $key in $json")
         }
     }
@@ -161,27 +176,13 @@ class TurnJsonTest {
     }
 
     @Test
-    fun `an undeclared Note writes the Bucket fields as null and keeps its content`() {
-        val json = TurnJson.encode(turn.copy(transcript = transcript, classification = Classification.undeclared("order \"roofing\" screws")))
-        assertTrue(
-            json.contains(
-                "  \"kind\": \"note\",\n" +
-                    "  \"declaration\": null,\n" +
-                    "  \"bucket\": null,\n" +
-                    "  \"bucket_source\": null,\n" +
-                    "  \"content\": \"order \\\"roofing\\\" screws\",\n" +
-                    "  \"app_version\"",
-            ),
-            json,
-        )
-    }
-
-    @Test
     fun `a Classification refuses inconsistent fields`() {
         val d = Declaration("errands", DeclarationPosition.LEADING, "errands")
         assertThrows<IllegalArgumentException> { Classification(TurnKind.NOTE, d, "work", BucketSource.DECLARATION, "x") }
         assertThrows<IllegalArgumentException> { Classification(TurnKind.NOTE, null, "work", null, "x") }
         assertThrows<IllegalArgumentException> { Classification(TurnKind.UNCLASSIFIED, content = "x") }
+        // A Note always has a Bucket: an unlabelled transcript is unclassified, not a Note.
+        assertThrows<IllegalArgumentException> { Classification(TurnKind.NOTE, content = "x") }
     }
 
     @Test

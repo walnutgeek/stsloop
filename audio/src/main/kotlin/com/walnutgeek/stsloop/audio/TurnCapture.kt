@@ -180,19 +180,8 @@ class TurnCapture(
          * be tuned without a rebuild. A missing file means defaults; each
          * rejected key is logged and keeps its default, the rest still apply.
          */
-        fun loadTimings(dir: File): Timings {
-            val file = File(dir, Timings.FILE)
-            if (!file.exists()) return Timings()
-            val text = try {
-                file.readText()
-            } catch (e: Exception) {
-                Log.e(TAG, "cannot read $file, using default timings", e)
-                return Timings()
-            }
-            val parsed = Timings.parse(text)
-            for (r in parsed.rejected) Log.e(TAG, "$file: ignoring $r")
-            return parsed.timings
-        }
+        fun loadTimings(dir: File): Timings =
+            loadConfig(File(dir, Timings.FILE), Timings()) { Timings.parse(it).run { timings to rejected } }
 
         /**
          * The [BucketConfig] in `<dir>/buckets.json`, read at Session start so
@@ -200,18 +189,21 @@ class TurnCapture(
          * or unreadable file means the mvp.md defaults; otherwise each rejected
          * Bucket or alias is logged and the rest still apply.
          */
-        fun loadBuckets(dir: File): BucketConfig {
-            val file = File(dir, BucketConfig.FILE)
-            if (!file.exists()) return BucketConfig.DEFAULT
+        fun loadBuckets(dir: File): BucketConfig =
+            loadConfig(File(dir, BucketConfig.FILE), BucketConfig.DEFAULT) { BucketConfig.parse(it).run { config to rejected } }
+
+        /** Reads a runtime-editable config [file]: [default] when missing or unreadable, each rejection logged. */
+        private fun <T> loadConfig(file: File, default: T, parse: (String) -> Pair<T, List<String>>): T {
+            if (!file.exists()) return default
             val text = try {
                 file.readText()
             } catch (e: Exception) {
-                Log.e(TAG, "cannot read $file, using default Buckets", e)
-                return BucketConfig.DEFAULT
+                Log.e(TAG, "cannot read $file, using the defaults", e)
+                return default
             }
-            val parsed = BucketConfig.parse(text)
-            for (r in parsed.rejected) Log.e(TAG, "$file: ignoring $r")
-            return parsed.config
+            val (value, rejected) = parse(text)
+            for (r in rejected) Log.e(TAG, "$file: ignoring $r")
+            return value
         }
     }
 }

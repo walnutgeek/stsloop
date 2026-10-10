@@ -154,7 +154,7 @@ class TranscriberTest {
         assertEquals(listOf(" TURN 1", " TURN 2"), transcripts.map { it!!.text })
         assertEquals(listOf(5_000_070L, 5_000_140L), transcripts.map { it!!.finishedAtMs })
         assertTrue(transcripts.all { it!!.engine == "sherpa-onnx" && it.model == "fake-model greedy" })
-        assertTrue(published.all { it.first.kind == TurnKind.NOTE })
+        assertTrue(published.all { it.first.kind == TurnKind.UNCLASSIFIED })
         assertEquals(0, transcriber.untranscribed)
     }
 

@@ -13,9 +13,9 @@ const val TURN_FILE = "turn.json"
  * Timestamps are epoch milliseconds, UTC. `ended_at` is not observed
  * separately: it is `started_at + duration_ms`, so a sample offset into the
  * Recording maps to wall time exactly. `vad` is absent from the JSON when no
- * VAD cut the Turn, `transcript` when the recognizer produced none, and
- * `kind` (with the rest of the [classification]) when the Turn was never
- * classified.
+ * VAD cut the Turn, and `transcript` when the recognizer produced none. A
+ * classified Turn always writes `kind`, `declaration`, `bucket`,
+ * `bucket_source` and `content`, as `null` where unset.
  */
 data class Turn(
     val id: String,
@@ -74,8 +74,9 @@ data class Transcript(
 )
 
 /**
- * `kind` in `turn.json`. A Turn with a transcript is a [NOTE] unless it is a
- * command; a Turn with nothing heard is [UNCLASSIFIED].
+ * `kind` in `turn.json`. Corpus labels are permanent training data, so a Turn
+ * is a [NOTE] only when its Bucket is known (today: Declared). Everything
+ * else, transcribed or not, is [UNCLASSIFIED].
  */
 enum class TurnKind(val json: String) {
     NOTE("note"),
@@ -87,9 +88,10 @@ enum class TurnKind(val json: String) {
  * What the phrase grammar made of a Turn: its [kind] and, for a [TurnKind.NOTE],
  * the Bucket and the Note's [content].
  *
- * A Note always has [content]; its [bucket] is null when nothing assigned one.
- * [bucketSource] says where the [bucket] came from, so a later classifier's
- * predictions never mix with Declarations (ground truth).
+ * A Note is assigned to exactly one Bucket (CONTEXT.md), so it always has a
+ * [bucket] and [content]. [bucketSource] says where the [bucket] came from,
+ * so a later classifier's predictions never mix with Declarations (ground
+ * truth). An unclassified Turn carries no label and no content.
  */
 data class Classification(
     val kind: TurnKind,
@@ -104,6 +106,7 @@ data class Classification(
             "a Declaration sets the bucket, with bucket_source declaration"
         }
         require(kind == TurnKind.NOTE || (bucket == null && content == null)) { "only a Note has a bucket and content" }
+        require(kind != TurnKind.NOTE || (bucket != null && content != null)) { "a Note has a bucket and content" }
     }
 
     companion object {
@@ -112,9 +115,6 @@ data class Classification(
         /** A Note whose Bucket was named aloud. */
         fun declared(declaration: Declaration, content: String) =
             Classification(TurnKind.NOTE, declaration, declaration.bucket, BucketSource.DECLARATION, content)
-
-        /** A Note with no Bucket. */
-        fun undeclared(content: String) = Classification(TurnKind.NOTE, content = content)
     }
 }
 

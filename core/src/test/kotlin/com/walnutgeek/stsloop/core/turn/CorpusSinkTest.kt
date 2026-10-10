@@ -88,13 +88,13 @@ class CorpusSinkTest {
     }
 
     @Test
-    fun `the transcript goes into the same publish, and an undeclared transcript is a Note with no Bucket`() {
+    fun `the transcript goes into the same publish, and an undeclared transcript is unclassified`() {
         val transcript = Transcript("HELLO THERE", "sherpa-onnx", "m", 1_003_900, latencyMs = 200)
         val timing = SttTiming(computeMs = 120, queuedMs = 10, finalizeMs = 40)
         sink.closed(u(2500, 3700), pcm(1200), Transcription(transcript, timing))
         val (turn, _) = published.single()
         assertEquals(transcript, turn.transcript)
-        assertEquals(Classification.undeclared("hello there"), turn.classification)
+        assertEquals(Classification.UNCLASSIFIED, turn.classification)
         assertEquals(timing, timings.single())
     }
 
@@ -115,12 +115,9 @@ class CorpusSinkTest {
     }
 
     @Test
-    fun `I need to work on the roof is published as a Note with no Bucket`() {
+    fun `I need to work on the roof is published unclassified`() {
         sink.closed(u(0, 500), pcm(500), transcribed("I NEED TO WORK ON THE ROOF"))
-        val c = published.single().first.classification!!
-        assertEquals(TurnKind.NOTE, c.kind)
-        assertEquals(null, c.bucket)
-        assertEquals(null, c.declaration)
+        assertEquals(Classification.UNCLASSIFIED, published.single().first.classification)
     }
 
     @Test

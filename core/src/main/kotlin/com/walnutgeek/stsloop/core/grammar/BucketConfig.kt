@@ -1,5 +1,7 @@
 package com.walnutgeek.stsloop.core.grammar
 
+import com.walnutgeek.stsloop.core.jsonString
+
 /**
  * A Bucket as configured: its canonical [name] (written to `turn.json` as
  * `bucket`) and the [aliases] it may be declared by aloud. The name is always
@@ -84,7 +86,7 @@ data class BucketConfig(val buckets: List<Bucket>) {
          *   an unknown key (the Bucket stays);
          * - an alias that is another Bucket's name is dropped (names win);
          * - an alias shared by two Buckets is dropped from both: either Bucket
-         *   could be meant, and an unlabelled Note is better than a wrong one.
+         *   could be meant, and an unlabelled Turn is better than a wrong label.
          */
         fun parse(json: String): Parsed {
             val rejected = mutableListOf<String>()
@@ -175,17 +177,6 @@ data class BucketConfig(val buckets: List<Bucket>) {
             else -> v.toString()
         }
 
-        private fun quote(s: String): String = buildString {
-            append('"')
-            for (c in s) {
-                when {
-                    c == '"' -> append("\\\"")
-                    c == '\\' -> append("\\\\")
-                    c < ' ' -> append("\\u").append(c.code.toString(16).padStart(4, '0'))
-                    else -> append(c)
-                }
-            }
-            append('"')
-        }
+        private fun quote(s: String): String = jsonString(s)
     }
 }
