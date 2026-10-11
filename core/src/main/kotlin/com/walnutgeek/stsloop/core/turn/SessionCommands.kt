@@ -17,8 +17,10 @@ import com.walnutgeek.stsloop.core.Turn
  * to write has done nothing, and the loop says nothing for it.
  *
  * "Scratch that" ([Command.SCRATCH_THAT]) drops **what the loop last read
- * back to you**: the most recent Turn of this Session that is not a command
- * and has a transcript worth echoing ([EchoText]). So:
+ * back to you**, or is about to: the most recent Turn of this Session that
+ * is not a command and has a transcript worth echoing ([EchoText]), whether
+ * or not its echo has played yet (it may still be waiting for Silence, and a
+ * test Session echoes nothing). So:
  * - Turns with no transcript, or an empty one (noise the recognizer heard
  *   nothing in), are skipped: the person never heard them, and they are not
  *   what "that" means.
@@ -37,12 +39,12 @@ class SessionCommands {
     data class Outcome(val classification: Classification, val say: String)
 
     /** Directory name of the Turn "scratch that" would drop now, or null. */
-    private var scratchable: String? = null
+    private var dropTarget: String? = null
 
     /** The effect of [invocation], given the Turns published so far. Changes nothing until [published]. */
     fun plan(invocation: CommandInvocation): Outcome = when (invocation.command) {
         Command.SCRATCH_THAT -> {
-            val target = scratchable
+            val target = dropTarget
             Outcome(Classification.command(invocation.copy(tombstones = target)), if (target != null) DROPPED else NOTHING_TO_DROP)
         }
     }
@@ -51,8 +53,8 @@ class SessionCommands {
     fun published(turn: Turn) {
         val command = turn.classification?.command
         when {
-            command != null -> if (command.tombstones != null) scratchable = null
-            EchoText.of(turn.transcript?.text) != null -> scratchable = turn.directoryName
+            command != null -> if (command.tombstones != null) dropTarget = null
+            EchoText.of(turn.transcript?.text) != null -> dropTarget = turn.directoryName
         }
     }
 

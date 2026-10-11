@@ -415,9 +415,11 @@ The rules in full (`:core` `PhraseGrammar`, `Command`, `SessionCommands`):
   like any echo: spoken into the next Silence, with the mic closed. The
   command's own transcript is not echoed.
 
-What "scratch that" drops — **what the loop last read back to you**: the most
-recent Turn of the current Session that is not a command and has a transcript
-worth echoing. At the edges:
+What "scratch that" drops — **what the loop last read back to you** (or is
+about to: an echo still waiting for Silence counts, and so does every Turn
+when there is no echo, as in test mode): the most recent Turn of the current
+Session that is not a command and has a transcript worth echoing. At the
+edges:
 
 | Situation | Effect |
 | --- | --- |
@@ -432,7 +434,7 @@ worth echoing. At the edges:
 
 Immutable, append-only, one directory per Turn. Nothing is ever edited;
 "scratch that" writes a tombstone rather than deleting in place, so the Corpus
-stays append-only and the deletion itself is data. The tombstone **is** the
+stays append-only and the tombstone itself is data. The tombstone **is** the
 command Turn: it names its target by directory name in its own `turn.json`
 (`tombstones`, below), and the target's directory is never touched.
 

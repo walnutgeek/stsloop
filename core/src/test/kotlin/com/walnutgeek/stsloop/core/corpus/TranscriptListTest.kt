@@ -289,6 +289,11 @@ class TranscriptListTest {
     }
 
     @Test
+    fun `a directory name gives back its started_at`() {
+        assertEquals("2026-10-06T14:22:20.000Z", TranscriptList.startedAtOf("2026-10-06T14:22:20.000Z-dead01"))
+    }
+
+    @Test
     fun `a duplicate key makes turn json a problem`() {
         val t = TranscriptList.read(declaredDir, """{ "kind": "note", "kind": "command" }""")
         assertTrue(t.problem!!.contains("duplicate key"), t.problem)

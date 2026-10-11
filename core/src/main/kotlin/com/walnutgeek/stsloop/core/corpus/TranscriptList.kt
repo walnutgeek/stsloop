@@ -1,5 +1,6 @@
 package com.walnutgeek.stsloop.core.corpus
 
+import com.walnutgeek.stsloop.core.TurnKind
 import com.walnutgeek.stsloop.core.testmode.SESSIONS_DIR
 
 /**
@@ -84,10 +85,13 @@ object TranscriptList {
         val out = HashMap<String, String>()
         for (t in turns.sortedBy { it.directoryName }) {
             val target = t.tombstones ?: continue
-            if (t.kind == "command") out.putIfAbsent(target, t.directoryName)
+            if (t.kind == TurnKind.COMMAND.json) out.putIfAbsent(target, t.directoryName)
         }
         return out
     }
+
+    /** The `started_at` part of a Turn directory name (`<started_at>-<id>`). */
+    fun startedAtOf(directoryName: String): String = directoryName.substringBeforeLast('-')
 
     /**
      * Orders [turns] newest first and marks tombstoned Turns, by default as
