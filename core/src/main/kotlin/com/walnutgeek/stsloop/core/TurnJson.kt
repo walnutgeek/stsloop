@@ -46,6 +46,11 @@ object TurnJson {
             append("  \"bucket\": ").strOrNull(c.bucket).append(",\n")
             append("  \"bucket_source\": ").strOrNull(c.bucketSource?.json).append(",\n")
             append("  \"content\": ").strOrNull(c.content).append(",\n")
+            c.command?.let { cmd ->
+                append("  \"command\": { \"name\": ").str(cmd.command.json)
+                append(", \"matched\": ").str(cmd.matched).append(" },\n")
+                if (cmd.command == Command.SCRATCH_THAT) append("  \"tombstones\": ").strOrNull(cmd.tombstones).append(",\n")
+            }
         }
         turn.test?.let { t ->
             val c = t.config
@@ -62,8 +67,7 @@ object TurnJson {
             append("    \"tts_phrases\": ").strList(t.ttsPhrases).append("\n")
             append("  },\n")
         }
-        append("  \"app_version\": ").str(turn.appVersion).append(",\n")
-        append("  \"tombstoned_by\": ").strOrNull(turn.tombstonedBy).append("\n")
+        append("  \"app_version\": ").str(turn.appVersion).append("\n")
         append("}\n")
     }
 

@@ -13,6 +13,11 @@ import com.walnutgeek.stsloop.core.testmode.SESSIONS_DIR
  * [transcript] is `transcript.text` exactly as the engine produced it; null
  * means the Turn has no transcript, `""` that the recognizer heard nothing.
  * [kind] is shown as written, so a value from a newer app is not lost.
+ * [command] is a command Turn's `command.name`; [tombstones] the directory
+ * name a "scratch that" Turn tombstones. [tombstonedBy] is the directory
+ * name of the command Turn that tombstoned this one: never in a Turn's own
+ * `turn.json` (it would mean editing a published Turn), so it is filled in by
+ * [TranscriptList.of], except that a non-null value already there is kept.
  * [problem] says why `turn.json` could not be read; the rest is then null.
  */
 data class ListedTurn(
@@ -23,6 +28,8 @@ data class ListedTurn(
     val transcript: String? = null,
     val bucket: String? = null,
     val kind: String? = null,
+    val command: String? = null,
+    val tombstones: String? = null,
     val tombstonedBy: String? = null,
     val problem: String? = null,
 ) {
@@ -55,23 +62,39 @@ object TranscriptList {
             transcript = root.obj("transcript")?.string("text"),
             bucket = root.string("bucket"),
             kind = root.string("kind"),
+            command = root.obj("command")?.string("name"),
+            tombstones = root.string("tombstones"),
             tombstonedBy = root.string("tombstoned_by"),
         )
     }
 
     /**
-     * Orders [turns] newest first and marks tombstoned Turns.
+     * Tombstoned Turn's directory name → the directory name of the command
+     * Turn that tombstoned it, from every command Turn's `tombstones`.
      *
      * A Turn directory is immutable, so a Turn tombstoned after it was
-     * published can never carry the mark in its own `turn.json`: tombstoning
-     * is derived on read. [tombstonedBy] maps a tombstoned Turn's directory
-     * name to the directory name of the Turn that tombstoned it. Directory
-     * names, not ids: they are unique, 6-hex ids are not. Until #13 defines
-     * the tombstone record and builds this map, it is empty. A Turn's own
-     * non-null `tombstoned_by` still wins. Directory names are
+     * published can never carry the mark in its own `turn.json`: the "scratch
+     * that" Turn records its target instead, and tombstoning is derived on
+     * read. Directory names, not ids: they are unique, 6-hex ids are not.
+     * Only a Turn whose `kind` is `command` tombstones. Should two name the
+     * same Turn, the earlier one did it. Directory names are
      * `<started_at>-<id>`, so they sort chronologically.
      */
-    fun of(turns: List<ListedTurn>, tombstonedBy: Map<String, String> = emptyMap()): List<ListedTurn> =
+    fun tombstonedBy(turns: List<ListedTurn>): Map<String, String> {
+        val out = HashMap<String, String>()
+        for (t in turns.sortedBy { it.directoryName }) {
+            val target = t.tombstones ?: continue
+            if (t.kind == "command") out.putIfAbsent(target, t.directoryName)
+        }
+        return out
+    }
+
+    /**
+     * Orders [turns] newest first and marks tombstoned Turns, by default as
+     * the command Turns among them say ([tombstonedBy]). A Turn's own
+     * non-null `tombstoned_by` (never written, but readers honour it) wins.
+     */
+    fun of(turns: List<ListedTurn>, tombstonedBy: Map<String, String> = tombstonedBy(turns)): List<ListedTurn> =
         turns
             .sortedByDescending { it.directoryName }
             .map { t ->

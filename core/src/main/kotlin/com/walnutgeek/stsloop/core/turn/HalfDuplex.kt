@@ -110,7 +110,7 @@ class HalfDuplex(
             Phase.OPEN -> if (segmenter.state == TurnState.CAPTURING) LoopState.CAPTURING else LoopState.LISTENING
         }
 
-    /** Any thread: echo a published Turn's transcript. Nothing to say ([EchoText]) or no speaker: ignored. */
+    /** Any thread: echo a published Turn's transcript, or say a command's reply. Nothing to say ([EchoText]) or no speaker: ignored. */
     fun echo(transcript: String?) {
         if (speaker == null) return
         val text = EchoText.of(transcript) ?: return

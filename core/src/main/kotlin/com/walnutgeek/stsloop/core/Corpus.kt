@@ -17,8 +17,14 @@ const val TURN_FILE = "turn.json"
  * Recording maps to wall time exactly. `vad` is absent from the JSON when no
  * VAD cut the Turn, and `transcript` when the recognizer produced none. A
  * classified Turn always writes `kind`, `declaration`, `bucket`,
- * `bucket_source` and `content`, as `null` where unset. `test` is present
+ * `bucket_source` and `content`, as `null` where unset; a command Turn also
+ * writes `command` (and, for "scratch that", `tombstones`). `test` is present
  * only for Turns recorded in Bluetooth test mode (#27).
+ *
+ * There is no `tombstoned_by`: a Turn directory never changes once
+ * published, so a Turn cannot record that it was tombstoned later. Readers
+ * derive it from the command Turns' `tombstones`
+ * ([com.walnutgeek.stsloop.core.corpus.TranscriptList.tombstonedBy]).
  */
 data class Turn(
     val id: String,
@@ -29,7 +35,6 @@ data class Turn(
     val vad: TurnVad? = null,
     val transcript: Transcript? = null,
     val classification: Classification? = null,
-    val tombstonedBy: String? = null,
     val test: TurnTest? = null,
 ) {
     val kind: TurnKind? get() = classification?.kind
@@ -90,7 +95,7 @@ enum class TurnKind(val json: String) {
 
 /**
  * What the phrase grammar made of a Turn: its [kind] and, for a [TurnKind.NOTE],
- * the Bucket and the Note's [content].
+ * the Bucket and the Note's [content]; for a [TurnKind.COMMAND], the [command].
  *
  * A Note is assigned to exactly one Bucket (CONTEXT.md), so it always has a
  * [bucket] and [content]. [bucketSource] says where the [bucket] came from,
@@ -103,8 +108,10 @@ data class Classification(
     val bucket: String? = null,
     val bucketSource: BucketSource? = null,
     val content: String? = null,
+    val command: CommandInvocation? = null,
 ) {
     init {
+        require((kind == TurnKind.COMMAND) == (command != null)) { "a command Turn, and only a command Turn, has a command" }
         require((bucket == null) == (bucketSource == null)) { "bucket and bucket_source go together" }
         require(declaration == null || (declaration.bucket == bucket && bucketSource == BucketSource.DECLARATION)) {
             "a Declaration sets the bucket, with bucket_source declaration"
@@ -119,6 +126,37 @@ data class Classification(
         /** A Note whose Bucket was named aloud. */
         fun declared(declaration: Declaration, content: String) =
             Classification(TurnKind.NOTE, declaration, declaration.bucket, BucketSource.DECLARATION, content)
+
+        /** A Turn that was a whole-utterance command. */
+        fun command(invocation: CommandInvocation) = Classification(TurnKind.COMMAND, command = invocation)
+    }
+}
+
+/**
+ * A whole-utterance command (`docs/mvp.md`, "Commands"): [json] is its
+ * `command.name` in `turn.json`, [phrases] what may be said for it. The
+ * phrase grammar obeys a phrase only when it is the whole utterance.
+ *
+ * To add one (#14): an entry here, and its effect in
+ * [com.walnutgeek.stsloop.core.turn.SessionCommands.plan]. The grammar needs no change.
+ */
+enum class Command(val json: String, val phrases: List<String>) {
+    /** Tombstones the previous Turn (see [com.walnutgeek.stsloop.core.turn.SessionCommands]). */
+    SCRATCH_THAT("scratch_that", listOf("scratch that", "discard that")),
+}
+
+/**
+ * A command as invoked in one Turn: which [command], the words heard
+ * (normalised), and, for [Command.SCRATCH_THAT], the directory name of the
+ * Turn it tombstones, or null when there was nothing to drop.
+ */
+data class CommandInvocation(
+    val command: Command,
+    val matched: String,
+    val tombstones: String? = null,
+) {
+    init {
+        require(tombstones == null || command == Command.SCRATCH_THAT) { "only scratch_that tombstones a Turn" }
     }
 }
 

@@ -37,8 +37,7 @@ class TurnJsonTest {
               "started_at": "2026-10-06T14:22:07.431Z",
               "ended_at": "2026-10-06T14:22:11.902Z",
               "audio": { "file": "audio.wav", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "sample_rate": 16000, "duration_ms": 4471 },
-              "app_version": "0.1.0",
-              "tombstoned_by": null
+              "app_version": "0.1.0"
             }
             """.trimIndent() + "\n",
             TurnJson.encode(turn),
@@ -54,9 +53,68 @@ class TurnJsonTest {
     }
 
     @Test
-    fun `a tombstoned Turn names the Turn that tombstoned it`() {
-        val json = TurnJson.encode(turn.copy(tombstonedBy = "b4e2d0"))
-        assertTrue(json.contains("\"tombstoned_by\": \"b4e2d0\""), json)
+    fun `no Turn is written with tombstoned_by, since a published Turn never changes`() {
+        assertFalse(TurnJson.encode(turn).contains("tombstoned_by"))
+    }
+
+    private val scratch = Classification.command(
+        CommandInvocation(Command.SCRATCH_THAT, "scratch that", tombstones = "2026-10-06T14:22:00.120Z-0dd5e7"),
+    )
+
+    @Test
+    fun `a scratch that Turn names the Turn it tombstones by directory name`() {
+        val json = TurnJson.encode(turn.copy(transcript = transcript, classification = scratch))
+        assertTrue(
+            json.contains(
+                "  \"kind\": \"command\",\n" +
+                    "  \"declaration\": null,\n" +
+                    "  \"bucket\": null,\n" +
+                    "  \"bucket_source\": null,\n" +
+                    "  \"content\": null,\n" +
+                    "  \"command\": { \"name\": \"scratch_that\", \"matched\": \"scratch that\" },\n" +
+                    "  \"tombstones\": \"2026-10-06T14:22:00.120Z-0dd5e7\",\n" +
+                    "  \"app_version\": \"0.1.0\"\n}\n",
+            ),
+            json,
+        )
+    }
+
+    @Test
+    fun `a scratch that with nothing to drop writes tombstones null`() {
+        val nothing = Classification.command(CommandInvocation(Command.SCRATCH_THAT, "discard that"))
+        val parsed = Json.parseObject(TurnJson.encode(turn.copy(transcript = transcript, classification = nothing)))
+        assertTrue(parsed.containsKey("tombstones"))
+        assertEquals(null, parsed["tombstones"])
+        assertEquals(mapOf("name" to "scratch_that", "matched" to "discard that"), parsed["command"])
+    }
+
+    @Test
+    fun `a Note has no command or tombstones fields`() {
+        val note = Classification.declared(Declaration("errands", DeclarationPosition.LEADING, "errands"), "x")
+        val json = TurnJson.encode(turn.copy(transcript = transcript, classification = note))
+        assertFalse(json.contains("\"command\""), json)
+        assertFalse(json.contains("\"tombstones\""), json)
+    }
+
+    @Test
+    fun `command names are permanent`() {
+        assertEquals(listOf("scratch_that"), Command.entries.map { it.json })
+    }
+
+    @Test
+    fun `a command Classification refuses inconsistent fields`() {
+        val inv = CommandInvocation(Command.SCRATCH_THAT, "scratch that")
+        assertThrows<IllegalArgumentException> { Classification(TurnKind.COMMAND) }
+        assertThrows<IllegalArgumentException> { Classification(TurnKind.UNCLASSIFIED, command = inv) }
+        assertThrows<IllegalArgumentException> { Classification(TurnKind.COMMAND, bucket = "work", bucketSource = BucketSource.DECLARATION, command = inv) }
+    }
+
+    @Test
+    fun `the transcript list reads back what a scratch that tombstones`() {
+        val listed = TranscriptList.read(turn.directoryName, TurnJson.encode(turn.copy(transcript = transcript, classification = scratch)))
+        assertEquals("command", listed.kind)
+        assertEquals("scratch_that", listed.command)
+        assertEquals("2026-10-06T14:22:00.120Z-0dd5e7", listed.tombstones)
     }
 
     @Test
@@ -168,7 +226,7 @@ class TurnJsonTest {
                     "  \"bucket\": \"errands\",\n" +
                     "  \"bucket_source\": \"declaration\",\n" +
                     "  \"content\": \"order roofing screws\",\n" +
-                    "  \"app_version\": \"0.1.0\",\n",
+                    "  \"app_version\": \"0.1.0\"\n",
             ),
             json,
         )

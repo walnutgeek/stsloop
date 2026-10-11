@@ -1,12 +1,21 @@
 package com.walnutgeek.stsloop.core.grammar
 
 import com.walnutgeek.stsloop.core.Classification
+import com.walnutgeek.stsloop.core.Command
+import com.walnutgeek.stsloop.core.CommandInvocation
 import com.walnutgeek.stsloop.core.Declaration
 import com.walnutgeek.stsloop.core.DeclarationPosition
 
 /**
  * The phrase grammar (`docs/mvp.md`, "Phrase grammar"): pure string matching
  * against a transcript. No inference, no model, no thresholds.
+ *
+ * A **command** ([Command]) is obeyed only when it is the whole utterance:
+ * its phrase, read as words, with nothing around it but [FILLERS]. Anything
+ * more is not a command, so "scratch that idea about the roof" is stored, not
+ * obeyed: ambiguity resolves toward storing, because losing a thought is worse
+ * than ignoring a command. A command is matched before any Declaration, so a
+ * Bucket alias that happens to be a command phrase cannot shadow it.
  *
  * A **Declaration** is a Bucket's name or alias ([BucketConfig]) at the very
  * start or the very end of the transcript, read as words (see [Words]: case,
@@ -48,13 +57,32 @@ class PhraseGrammar(buckets: BucketConfig) {
     /** The same forms with their words reversed, for matching from the end. */
     private val reversedForms = forms.map { (form, bucket) -> form.reversed() to bucket }
 
+    /** Every command phrase as words → its command. */
+    private val commands: Map<List<String>, Command> =
+        Command.entries.flatMap { c -> c.phrases.map { Words.normalise(it) to c } }.toMap()
+
     /**
-     * What [transcript] (exactly as the engine produced it) is: a Note in its
-     * Bucket when Declared, otherwise unclassified.
+     * What [transcript] (exactly as the engine produced it) is: a command when
+     * it is one as a whole, a Note in its Bucket when Declared, otherwise
+     * unclassified.
      */
     fun classify(transcript: String?): Classification {
-        val d = transcript?.let { declaration(it) } ?: return Classification.UNCLASSIFIED
+        if (transcript == null) return Classification.UNCLASSIFIED
+        command(transcript)?.let { return Classification.command(it) }
+        val d = declaration(transcript) ?: return Classification.UNCLASSIFIED
         return Classification.declared(d.declaration, d.content)
+    }
+
+    /** The command [transcript] is as a whole, fillers at its ends aside, or null. */
+    internal fun command(transcript: String): CommandInvocation? {
+        val words = Words.normalise(transcript)
+        var from = 0
+        var to = words.size
+        while (from < to && words[from] in FILLERS) from++
+        while (to > from && words[to - 1] in FILLERS) to--
+        val said = words.subList(from, to)
+        val command = commands[said] ?: return null
+        return CommandInvocation(command, said.joinToString(" "))
     }
 
     /** The Declaration in [transcript], or null when there is none. */

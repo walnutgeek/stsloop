@@ -248,6 +248,46 @@ class TranscriptListTest {
         assertEquals("first1", listed.single().tombstonedBy)
     }
 
+    private fun scratch(dir: String, target: String?, kind: String = "command") = TranscriptList.read(
+        dir,
+        """{ "id": "${dir.takeLast(6)}", "kind": "$kind", "command": { "name": "scratch_that", "matched": "scratch that" }, """ +
+            """"tombstones": ${target?.let { "\"$it\"" } ?: "null"} }""",
+    )
+
+    @Test
+    fun `the tombstone mapping is derived from the command Turns' tombstones`() {
+        val command = "2026-10-06T14:22:20.000Z-dead01"
+        val turns = listOf(TranscriptList.read(declaredDir, declared), scratch(command, declaredDir), TranscriptList.read(beforeVadDir, beforeVad))
+        assertEquals(mapOf(declaredDir to command), TranscriptList.tombstonedBy(turns))
+        val byDir = TranscriptList.of(turns).associateBy { it.directoryName }
+        assertEquals(command, byDir.getValue(declaredDir).tombstonedBy)
+        assertEquals("scratch_that", byDir.getValue(command).command)
+        assertEquals(declaredDir, byDir.getValue(command).tombstones)
+        assertFalse(byDir.getValue(command).tombstoned)
+        assertFalse(byDir.getValue(beforeVadDir).tombstoned)
+    }
+
+    @Test
+    fun `a scratch that with nothing to drop tombstones nothing`() {
+        val turns = listOf(TranscriptList.read(declaredDir, declared), scratch("2026-10-06T14:22:20.000Z-dead01", null))
+        assertTrue(TranscriptList.tombstonedBy(turns).isEmpty())
+        assertTrue(TranscriptList.of(turns).none { it.tombstoned })
+    }
+
+    @Test
+    fun `only a command Turn tombstones`() {
+        val turns = listOf(TranscriptList.read(declaredDir, declared), scratch("2026-10-06T14:22:20.000Z-dead01", declaredDir, kind = "note"))
+        assertTrue(TranscriptList.tombstonedBy(turns).isEmpty())
+    }
+
+    @Test
+    fun `when two commands name one Turn the earlier one tombstoned it`() {
+        val first = "2026-10-06T14:22:20.000Z-dead01"
+        val second = "2026-10-06T14:22:30.000Z-dead02"
+        val turns = listOf(scratch(second, declaredDir), TranscriptList.read(declaredDir, declared), scratch(first, declaredDir))
+        assertEquals(mapOf(declaredDir to first), TranscriptList.tombstonedBy(turns))
+    }
+
     @Test
     fun `a duplicate key makes turn json a problem`() {
         val t = TranscriptList.read(declaredDir, """{ "kind": "note", "kind": "command" }""")

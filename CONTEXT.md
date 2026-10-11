@@ -94,6 +94,12 @@ Buckets. The primary output of early stsloop, and the training and evaluation
 material for classification.
 _Avoid_: dataset, log, history
 
+**Tombstone**:
+The mark "scratch that" leaves on the previous Turn: that Turn stays in the
+Corpus, audio and all, but is dropped from use. The tombstone is the command
+Turn itself, which names its target; the target is never edited.
+_Avoid_: delete, removal (nothing is removed)
+
 **Declaration**:
 An explicit spoken naming of a Bucket at the start or end of an utterance.
 A declared Turn needs no classification and yields free ground truth.

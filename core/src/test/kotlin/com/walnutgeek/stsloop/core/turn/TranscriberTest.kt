@@ -105,7 +105,7 @@ class TranscriberTest {
             FakeWriter(), "5e5510", sessionStartedAtMs = 1_000_000, sampleRate = 1000, appVersion = "t",
             grammar = PhraseGrammar(BucketConfig.DEFAULT),
             listener = object : CorpusSink.Listener {
-                override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) {
+                override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) {
                     published += Triple(turn, utterance, timing)
                 }
                 override fun discarded(event: TurnEvent.Discarded) { discards += event }
