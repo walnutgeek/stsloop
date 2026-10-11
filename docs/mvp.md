@@ -676,8 +676,12 @@ list is ticked off:
 - [ ] A Bucket taxonomy that emerged from use rather than from this document —
       including Buckets not listed here, and the removal of ones that were.
 - [ ] Battery cost over a commute is known and acceptable.
-- [ ] Transcription latency measured on-device in the **final** decoding
-      configuration (`modified_beam_search`), not the default, and recorded.
+- [ ] Transcription latency measured on-device in the **final** model and
+      decoding configuration, in real Sessions, and recorded. (The final
+      configuration is now nemotron with `greedy_search`, ADR-0004. Its
+      benchmark gave a median `latency_ms` of 325 ms, but that ran in the test
+      process; the `latency_ms` from real in-car Sessions is still to be read
+      from the Corpus.)
 - [ ] The Corpus is readable on the Linux box with a script, and a first
       classifier experiment has been run against it even if it performs badly.
 
@@ -686,31 +690,49 @@ proven itself usable as training data.
 
 ## Known unknowns, to be settled empirically
 
-These cannot be designed away and are the reason Phase 0 exists:
+These cannot be designed away and are the reason Phase 0 exists.
 
-- **Tesla Bluetooth routing.** Whether the phone microphone stays usable while
-  audio plays over A2DP, or whether the stack drops to the hands-free profile
-  and degrades output. Test this before building anything else; it is the one
-  finding that could force a redesign.
+Settled so far (evidence on the issue named):
+
+- **Tesla Bluetooth routing (#8): settled, GO on the hands-free route.** Over
+  SCO the car's mic had about 30 dB less road noise than the phone mic while
+  driving (speech/noise 28–33 dB against 5–10 dB, and 0–29% empty transcripts
+  against 23–60%). None of the 126 machine phrases played over SCO, while
+  recording on purpose, was captured as a Turn: the car cancels the echo.
+  Call mode added nothing measurable. `unprocessed` records only silence on
+  this phone.
+- **Whether road noise defeats the VAD (#8): on the phone mic, yes.** About
+  two thirds of drive 1's driving Turns were noise only. The hands-free route
+  largely fixes it.
+- **Real-time factor, peak memory, and whether the int8 subset loads (#10, #30,
+  ADR-0004): measured.** The zipformer subset loaded standalone. It was replaced
+  for recognition quality (64–73% word error rate on the owner's voice). The
+  shipped nemotron keeps up with the mic (RTF 0.23 unpaced, 0.57 paced) at
+  757 MB of memory and a 692 MB APK.
+- **Whether the model hears the command phrases (#14, #30).** Fed the system
+  TTS voice, nemotron hears all eight exactly. The zipformer heard "end session"
+  as "IN SESSION". A real voice in the car is still to be checked.
+
+Still open:
+
 - **Does the echo help or grate?** Hearing every utterance read back may be
   reassuring confirmation or instantly tiresome. If the latter, the echo
   becomes an earcon plus the Bucket name.
 - **Declaration rate.** If, in practice, you rarely remember to declare, the
   Corpus starves and Q7's bootstrap fails. The fallback is confirmation-driven
   labelling — the loop guessing aloud and learning from the correction.
-- **Whether the model hears the command phrases.** Fed the system TTS
-  voice (`CommandsDeviceTest`), the bundled model heard every phrase except
-  "end session", which came out as "IN SESSION" and is stored as an
-  undeclared Turn. Commands are not fuzzy-matched (ambiguity resolves toward
-  storing), so if that holds for a real voice in the car, "stop listening"
-  is the phrase to use, or "end session" is replaced.
-- **Whether road noise defeats the VAD**, and whether the min-utterance filter
-  is enough to keep the Corpus clean.
-- **Real-time factor of `modified_beam_search` on the actual phone.** No figure
-  is published for any model in this configuration, so transcription latency is
-  genuinely unknown. Measure this before anything else is built on top of it —
-  it is the one number that could force a different model or a chunked
-  non-streaming approach.
-- **Peak memory of the recommended model on Android.** Also unpublished.
-- **Whether shipping only the int8 `chunk-16-left-128` subset loads standalone.**
-  Inferred from the release file listing, not verified by running it.
+- **Whether the 300 ms guard covers Bluetooth output latency.** The guard runs
+  from the engine's end report, and over SCO the audio leaves the car later.
+- **Why the car mic transcribes worse than the phone mic** for every strong
+  model in the A/B (#8), even parked, despite far better signal-to-noise. It is
+  not a plain 4 kHz cutoff; the SCO codec is a guess.
+- **A pause after a leading Bucket word splits the Declaration.** In drive 2,
+  "ERRANDS" and "ORDER ROOF INSCREWS" became two Turns. A Turn that is only an
+  alias is not a Declaration, so the label was lost.
+- **Some words no model hears** (#8 A/B): "errands" as errants, aarons or arens,
+  and "roofing screws" as "ruffins cross". Bucket names and aliases may need to
+  be chosen for what the recogniser emits.
+- **Whether the min-utterance filter keeps the Corpus clean** on the
+  hands-free route while driving: one SCO configuration still had 29% empty
+  transcripts.
+- **Battery cost of a 0.6B model** over a commute.

@@ -1,7 +1,9 @@
 # Brainstorm inputs
 
-These documents are **inputs, not requirements.** They are the output of an
+These documents are **inputs, not requirements.** Most are the output of an
 exploratory Perplexity session that kicked off the project.
+[`2026-10-10-phase0-findings.md`](./2026-10-10-phase0-findings.md) is later:
+what building and test-driving Phase 0 found that pushes on the vision.
 
 The grilled decisions that supersede them live in:
 
