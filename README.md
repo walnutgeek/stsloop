@@ -27,7 +27,7 @@ To build and install it, see [Development setup](#development-setup).
 | [`docs/corpus-sync.md`](./docs/corpus-sync.md) | Getting the Corpus onto the Linux box, and loading it with `scripts/corpus_load.py` |
 | [`docs/adr/`](./docs/adr/) | Architectural decisions and the alternatives rejected |
 | [`docs/research/`](./docs/research/) | Primary-source verification of load-bearing technical claims |
-| [`docs/brainstorm/`](./docs/brainstorm/) | The original exploratory session. **Inputs, not requirements** |
+| [`docs/brainstorm/`](./docs/brainstorm/) | The original exploratory session, and Phase 0 findings that push on the vision. **Inputs, not requirements** |
 
 ## In one page
 
