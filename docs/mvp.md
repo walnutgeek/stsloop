@@ -432,8 +432,7 @@ has a transcript worth echoing. At the edges:
 
 What each one says (#14):
 
-- **"Repeat"** says the previous Turn's transcript again, exactly as it was
-  echoed.
+- **"Repeat"** says the previous Turn's transcript again, as it was echoed.
 - **"What bucket"** says the previous Turn's Bucket by its name, read as
   words (`house-project` → "house project."), or "no bucket." for a Turn
   that was not Declared.
@@ -445,8 +444,10 @@ What each one says (#14):
   Session ends once the engine reports the reply's end (or the reply is
   lost); with no echo (test mode) it ends as soon as the command Turn is
   written. If you are already speaking again, the reply, and so the end,
-  waits for your Silence like any echo, and what you said is still a Turn.
-  A "stop listening" that fails to write ends nothing, like any command.
+  waits for your Silence like any echo, and what you said is still a Turn;
+  noise the VAD keeps hearing as speech holds it off too, as it does every
+  echo (the Stop button still works). A "stop listening" that fails to write
+  ends nothing and says nothing, like any command.
 
 ## Corpus format
 

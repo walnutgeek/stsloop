@@ -203,8 +203,8 @@ mise exec -- adb logcat -s stsloop.Echo stsloop.TurnCapture stsloop.Session
 
 ### Commands
 
-Each is obeyed only when it is the whole utterance ("um" and "okay" at
-either end aside), and each is stored as a Turn of its own,
+Each is obeyed only when it is all you said ("um" and "okay" at either
+end aside), and each is stored as a Turn of its own,
 `kind: "command"`. A Note that only contains the phrase is stored, not
 obeyed. They act on the last Turn the loop read back to you in this
 Session:

@@ -132,7 +132,7 @@ class SessionService : Service() {
     @Volatile
     private var turnCapture: TurnCapture? = null
     private var lastStartId = 0
-    private var sessionId: String? = null // main thread: the running capture's Session
+    private var capturingSessionId: String? = null // main thread: the running capture's Session
     private var destroyed = false
     private var posted: SessionControls? = null // what the notification currently shows
     private val main = Handler(Looper.getMainLooper())
@@ -234,7 +234,7 @@ class SessionService : Service() {
 
     private fun launchCapture() {
         val sessionId = Ids.next()
-        this.sessionId = sessionId
+        capturingSessionId = sessionId
         capturing = true
         captureThread = Thread({ capture(sessionId) }, "session-$sessionId").apply { start() }
         Log.i(TAG, "Session $sessionId started")
@@ -244,7 +244,7 @@ class SessionService : Service() {
     private fun onCaptureEnded() {
         if (destroyed) return
         captureThread = null
-        sessionId = null
+        capturingSessionId = null
         commit(SessionMachine.on(state, SessionEvent.CaptureEnded))
     }
 
@@ -254,7 +254,7 @@ class SessionService : Service() {
      * a late reply from a Session already ending (or about to restart) is ignored.
      */
     private fun stopListening(id: String) {
-        if (destroyed || id != sessionId || state != SessionState.Capturing) return
+        if (destroyed || id != capturingSessionId || state != SessionState.Capturing) return
         Log.i(TAG, "Session $id: stop listening")
         commit(SessionMachine.on(state, SessionEvent.Stop))
     }

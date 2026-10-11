@@ -37,7 +37,7 @@ import com.walnutgeek.stsloop.core.Turn
  *   with none, the command Turn is still written (`tombstones: null`) and
  *   says [NOTHING_TO_DROP].
  * - [Command.REPEAT]: says its transcript again, or [NOTHING_TO_REPEAT].
- * - [Command.WHAT_BUCKET]: says its Bucket's name ([spoken]), [NO_BUCKET]
+ * - [Command.WHAT_BUCKET]: says its Bucket's name ([bucketAsWords]), [NO_BUCKET]
  *   when it has none (an undeclared Turn), or [NOTHING_SAID_YET].
  * - [Command.STOP_LISTENING]: says [STOPPED_LISTENING] and [Outcome.endsSession].
  */
@@ -48,7 +48,7 @@ class SessionCommands {
      */
     data class Outcome(val classification: Classification, val say: String, val endsSession: Boolean = false)
 
-    /** The previous Turn, or null. */
+    /** The previous Turn, or null. Its transcript is never null or blank: only such a Turn becomes [previous]. */
     private var previous: Turn? = null
 
     /** Whether [previous] has been tombstoned. */
@@ -57,7 +57,7 @@ class SessionCommands {
     /** The effect of [invocation], given the Turns published so far. Changes nothing until [published]. */
     fun plan(invocation: CommandInvocation): Outcome {
         val turn = previous?.takeUnless { dropped }
-        val plain = Classification.command(invocation)
+        val plain by lazy { Classification.command(invocation) }
         return when (invocation.command) {
             Command.SCRATCH_THAT ->
                 Outcome(Classification.command(invocation.copy(tombstones = turn?.directoryName)), if (turn != null) DROPPED else NOTHING_TO_DROP)
@@ -74,7 +74,7 @@ class SessionCommands {
                 when {
                     previous == null -> NOTHING_SAID_YET
                     turn == null -> WAS_DROPPED
-                    else -> turn.classification?.bucket?.let(::spoken) ?: NO_BUCKET
+                    else -> turn.classification?.bucket?.let(::bucketAsWords) ?: NO_BUCKET
                 },
             )
             Command.STOP_LISTENING -> Outcome(plain, STOPPED_LISTENING, endsSession = true)
@@ -116,6 +116,6 @@ class SessionCommands {
         const val STOPPED_LISTENING = "stopped listening."
 
         /** A Bucket's name as words a TTS engine reads: `house-project` → "house project.". */
-        fun spoken(bucket: String): String = bucket.replace('-', ' ').replace('_', ' ').trim() + "."
+        fun bucketAsWords(bucket: String): String = bucket.replace('-', ' ').replace('_', ' ').trim() + "."
     }
 }
