@@ -14,9 +14,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     // sherpa-onnx reads each model asset whole into memory; storing the
-    // ~70 MB of .onnx uncompressed spares an inflate on every load (measured
-    // 1.27 s vs 1.56 s). This covers this module's test APK only; :app sets
-    // the same for the app APK.
+    // .onnx uncompressed spares an inflate on every load (measured 1.27 s vs
+    // 1.56 s for the 70 MB zipformer; the shipped model is ~660 MB). This
+    // covers this module's test APK only; :app sets the same for the app APK.
     androidResources { noCompress += "onnx" }
 }
 

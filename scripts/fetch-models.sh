@@ -5,23 +5,34 @@
 #   scripts/fetch-models.sh
 #
 # Writes:
-#   audio/src/main/assets/sherpa-onnx-streaming-zipformer-en-2023-06-26/
-#       {encoder,decoder,joiner}-epoch-99-avg-1-chunk-16-left-128.int8.onnx
-#       tokens.txt  bpe.vocab
+#   audio/src/main/assets/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25/
+#       {encoder,decoder,joiner}.int8.onnx  tokens.txt          (the app's STT, ~662 MB)
 #   audio/src/main/assets/silero_vad.onnx
-#   audio/src/androidTest/assets/test_wavs/{0,1}.wav   (upstream test wavs)
+#   audio/src/androidTest/assets/sherpa-onnx-streaming-zipformer-en-2023-06-26/
+#       {encoder,decoder,joiner}-epoch-99-avg-1-chunk-16-left-128.int8.onnx
+#       tokens.txt  bpe.vocab                                   (test APK only, ~70 MB)
+#   audio/src/androidTest/assets/test_wavs/{0,1}.wav            (upstream test wavs)
 #
-# Only the int8 chunk-16-left-128 subset (~70 MB) is fetched, file by file
-# from a pinned Hugging Face revision, not the 296 MB tarball. Needs curl,
-# sha256sum and uv (bpe.vocab export). Idempotent: verified files are kept.
+# The STT model comes from sherpa-onnx's release tarball (464 MB, kept in the
+# cache), of which only the int8 model files are extracted. The previous model,
+# a zipformer, is now only a test baseline and the one hotwords-capable model
+# for the device tests (#30); its int8 chunk-16-left-128 subset is fetched file
+# by file from a pinned Hugging Face revision. Needs curl, sha256sum, tar with
+# bzip2, and uv (bpe.vocab export). Idempotent: verified files are kept.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CACHE="${STSLOOP_CACHE:-$HOME/.cache/stsloop}"
 
-MODEL="sherpa-onnx-streaming-zipformer-en-2023-06-26"
+# NVIDIA's nemotron-speech-streaming-en-0.6b (NVIDIA Open Model License),
+# exported by k2-fsa. Release asset checksum: the digest GitHub reports for it.
+STT_MODEL="sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25"
+STT_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$STT_MODEL.tar.bz2"
+STT_SHA256="78e2b79fcf7271553a74402a76b771b09ea40117a39566a79f52235b23db6358"
+
+ZIPFORMER="sherpa-onnx-streaming-zipformer-en-2023-06-26"
 # k2-fsa's mirror (license: apache-2.0 in its card), pinned to a commit.
-HF_REPO="csukuangfj/$MODEL"
+HF_REPO="csukuangfj/$ZIPFORMER"
 HF_REV="672fbf1b30579d6585301139bb363f42a0ad4a24"
 PREFIX="epoch-99-avg-1-chunk-16-left-128"
 
@@ -29,19 +40,19 @@ MAIN_ASSETS="$REPO_ROOT/audio/src/main/assets"
 TEST_ASSETS="$REPO_ROOT/audio/src/androidTest/assets"
 
 say() { printf '==> %s\n' "$*"; }
-for tool in curl sha256sum uv; do
+for tool in curl sha256sum uv tar bzip2; do
   command -v "$tool" >/dev/null || { echo "error: $tool is required" >&2; exit 1; }
 done
+
+verified() { [[ -f "$1" ]] && echo "$2  $1" | sha256sum -c --quiet - 2>/dev/null; }
 
 # fetch URL DEST SHA256 — download to DEST unless it already verifies.
 fetch() {
   local url="$1" dest="$2" sha="$3"
-  if [[ -f "$dest" ]] && echo "$sha  $dest" | sha256sum -c --quiet - 2>/dev/null; then
-    return
-  fi
+  verified "$dest" "$sha" && return
   say "Fetching ${dest#"$REPO_ROOT"/}"
   mkdir -p "$(dirname "$dest")"
-  curl -fsSL --retry 3 -o "$dest.part" "$url"
+  curl -fSL --retry 3 -o "$dest.part" "$url"
   if ! echo "$sha  $dest.part" | sha256sum -c --quiet -; then
     rm -f "$dest.part"
     echo "error: checksum mismatch for $url" >&2
@@ -50,28 +61,66 @@ fetch() {
   mv "$dest.part" "$dest"
 }
 
+# --- STT: nemotron, from the pinned release tarball --------------------------
+# Each extracted file is pinned too (recorded from the verified tarball), so a
+# half-written asset is re-extracted rather than shipped.
+STT_FILES=(
+  "encoder.int8.onnx 7d932213491ad355c6e5576705dc3494731a52af87d7a1b954559340147909d8"
+  "decoder.int8.onnx 0be9702c2f427a2b6bb241d298e0d3836a558de1f5b9fd3018f1cce6e2b3fa98"
+  "joiner.int8.onnx a35eac38a22ebceb04d230ed7afe0d68f446ba6914a036b97f14fece95967e23"
+  "tokens.txt dc0b4584ab2e4ddbf888425c076c61b736e7356a015250db7d307e6f1a8188ff"
+)
+dir="$MAIN_ASSETS/$STT_MODEL"
+missing=()
+for entry in "${STT_FILES[@]}"; do
+  read -r name sha <<<"$entry"
+  verified "$dir/$name" "$sha" || missing+=("$STT_MODEL/$name")
+done
+if ((${#missing[@]})); then
+  tarball="$CACHE/$STT_MODEL.tar.bz2"
+  fetch "$STT_URL" "$tarball" "$STT_SHA256"
+  say "Extracting ${#missing[@]} file(s) of $STT_MODEL"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  tar -xjf "$tarball" -C "$tmp" "${missing[@]}"
+  mkdir -p "$dir"
+  for entry in "${STT_FILES[@]}"; do
+    read -r name sha <<<"$entry"
+    [[ -f "$tmp/$STT_MODEL/$name" ]] || continue
+    if ! verified "$tmp/$STT_MODEL/$name" "$sha"; then
+      echo "error: checksum mismatch for $name in $tarball" >&2
+      exit 1
+    fi
+    mv "$tmp/$STT_MODEL/$name" "$dir/$name"
+  done
+fi
+
+# The zipformer used to ship in the app; a stale copy would add 70 MB to it.
+rm -rf "${MAIN_ASSETS:?}/$ZIPFORMER"
+
+# --- Test-only baseline: the zipformer subset, file by file ------------------
 hf() { echo "https://huggingface.co/$HF_REPO/resolve/$HF_REV/$1"; }
 
 # Checksums: LFS files use the Hugging Face API's lfs.oid; the non-LFS
 # tokens.txt and test wav were recorded on first download.
-dir="$MAIN_ASSETS/$MODEL"
-fetch "$(hf "encoder-$PREFIX.int8.onnx")" "$dir/encoder-$PREFIX.int8.onnx" \
+zdir="$TEST_ASSETS/$ZIPFORMER"
+fetch "$(hf "encoder-$PREFIX.int8.onnx")" "$zdir/encoder-$PREFIX.int8.onnx" \
   563fde436d16cf7607cf408cd6b30909819d03162652ef389c2450ced3f45ac1
-fetch "$(hf "decoder-$PREFIX.int8.onnx")" "$dir/decoder-$PREFIX.int8.onnx" \
+fetch "$(hf "decoder-$PREFIX.int8.onnx")" "$zdir/decoder-$PREFIX.int8.onnx" \
   98da299f471e38bb4e1a8df579b8cc9122d6039576a77e357b3c60f17dd83b02
-fetch "$(hf "joiner-$PREFIX.int8.onnx")" "$dir/joiner-$PREFIX.int8.onnx" \
+fetch "$(hf "joiner-$PREFIX.int8.onnx")" "$zdir/joiner-$PREFIX.int8.onnx" \
   d944208d660d67c8d72cd2acaeac971fa5ceb8c80e76c1968148846fedd6e297
-fetch "$(hf tokens.txt)" "$dir/tokens.txt" \
+fetch "$(hf tokens.txt)" "$zdir/tokens.txt" \
   49e3c2646595fd907228b3c6787069658f67b17377c60aeb8619c4551b2316fb
 
-# bpe.model is a build input only; the app ships the derived bpe.vocab.
-bpe_model="$CACHE/$MODEL/bpe.model"
+# bpe.model is a build input only; the tests ship the derived bpe.vocab.
+bpe_model="$CACHE/$ZIPFORMER/bpe.model"
 fetch "$(hf bpe.model)" "$bpe_model" \
   c53433de083c4a6ad12d034550ef22de68cec62c4f58932a7b6b8b2f1e743fa5
-if [[ ! -f "$dir/bpe.vocab" || "$bpe_model" -nt "$dir/bpe.vocab" ]]; then
+if [[ ! -f "$zdir/bpe.vocab" || "$bpe_model" -nt "$zdir/bpe.vocab" ]]; then
   say "Exporting bpe.vocab"
-  uv run --quiet --script "$REPO_ROOT/scripts/export_bpe_vocab.py" "$bpe_model" "$dir/bpe.vocab.part"
-  mv "$dir/bpe.vocab.part" "$dir/bpe.vocab"
+  uv run --quiet --script "$REPO_ROOT/scripts/export_bpe_vocab.py" "$bpe_model" "$zdir/bpe.vocab.part"
+  mv "$zdir/bpe.vocab.part" "$zdir/bpe.vocab"
 fi
 
 # Silero VAD, MIT. Checksum is the digest GitHub reports for the release asset.
@@ -89,4 +138,4 @@ fetch "$(hf test_wavs/0.wav)" "$TEST_ASSETS/test_wavs/0.wav" \
 fetch "$(hf test_wavs/1.wav)" "$TEST_ASSETS/test_wavs/1.wav" \
   5143a6ba93c4b274e2c4ac22deb75c2c48936c853f0519add1de828b6c79cc5a
 
-du -sh "$dir" "$MAIN_ASSETS/silero_vad.onnx"
+du -sh "$dir" "$zdir" "$MAIN_ASSETS/silero_vad.onnx"

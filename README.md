@@ -66,11 +66,15 @@ native libraries are built locally:
    `audio/src/main/jniLibs/`. It also refreshes the vendored Kotlin API in
    `audio/src/main/kotlin/com/k2fsa/sherpa/onnx/`, copied from upstream's
    `sherpa-onnx/kotlin-api/` (the example apps symlink to it).
-4. Run `scripts/fetch-models.sh`. It downloads the int8 `chunk-16-left-128`
-   files of `sherpa-onnx-streaming-zipformer-en-2023-06-26` and Silero VAD
-   (about 70 MB) into `audio/src/main/assets/`, checks each against a pinned
-   SHA-256, and generates `bpe.vocab` from `bpe.model` with
-   `scripts/export_bpe_vocab.py` (run through `uv`).
+4. Run `scripts/fetch-models.sh`. It downloads the STT model,
+   `sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25`
+   (a 464 MB tarball, kept in `~/.cache/stsloop`; about 660 MB extracted), and
+   Silero VAD into `audio/src/main/assets/`. Into the test assets it fetches
+   the int8 `chunk-16-left-128` files of
+   `sherpa-onnx-streaming-zipformer-en-2023-06-26` (about 70 MB), the model
+   shipped before #30, and generates its `bpe.vocab` from `bpe.model` with
+   `scripts/export_bpe_vocab.py` (run through `uv`). Every file is checked
+   against a pinned SHA-256. The app APK is about 690 MB.
 
 The `.so` files and models are git-ignored, so the repo stays small. CI builds
 without them: it checks that everything compiles and the JVM tests pass, and

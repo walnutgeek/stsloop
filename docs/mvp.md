@@ -173,7 +173,7 @@ AudioRecord → Segmenter ─ opened ───→  recognizer.open()       (one 
   Each case is logged, and the Session end logs the count. The Recording is the
   primary record, and transcription can be re-run later.
 - **One recognizer per Session**, loaded on the STT thread when the Session
-  starts, so the mic opens without waiting about 1.3 s for the model. It is
+  starts, so the mic opens without waiting about 3.3 s for the model. It is
   never reloaded per Turn, and it is released when the Session ends.
 - **A Turn is published once, transcript included.** `audio.wav` and
   `turn.json` are staged and renamed into the Corpus only after the transcript
@@ -198,6 +198,12 @@ batch it is 0.08–0.12. That gap is probably CPU frequency scaling between chun
 is where any further latency would come from. Decoding only on close would
 cost about 0.6 s for a 7.5 s Turn even at the batch RTF, so streaming stays.
 
+Those figures are for the zipformer. With nemotron (#30, ADR-0004), the same
+pipeline gave 87–279 ms, and `SttBenchmarkDeviceTest` on 20 wavs (18 of them
+drive Recordings) gave a median of 207–219 ms (p90 279–439 ms) against the
+zipformer's 152 ms, an RTF of 0.21 in a batch and 0.53–0.56 paced, a 3.3 s
+load and 757 MB of memory.
+
 ### Never run the system recognizer concurrently
 
 This is the sharpest finding of the research, and it is a hard rule.
@@ -216,6 +222,12 @@ an `AudioManager.AudioRecordingCallback` and check `isClientSilenced()`
 defensively.
 
 ### Model: forced, not preferred
+
+> **Since #30 the app ships `sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25`**
+> (~660 MB, `greedy_search`), for recognition quality, and has no hotwords
+> until a sherpa-onnx bump; see [ADR-0004](./adr/0004-nemotron-streaming-stt.md).
+> The zipformer below is now the device tests' baseline only. This section
+> records the original reasoning.
 
 Use **`sherpa-onnx-streaming-zipformer-en-2023-06-26`**, int8,
 `chunk-16-left-128` (~70 MB on disk), configured from day one as:

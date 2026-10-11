@@ -144,8 +144,8 @@ class EchoDeviceTest {
         Log.i(TAG, "turns: ${turns.map { it.transcript?.text }}; said: $said; unobserved ${echo.unobserved}")
         assertEquals(1, turns.size)
         val heard = turns.single().transcript?.text?.trim()
-        assertTrue("transcript: $heard", heard!!.startsWith("AFTER EARLY NIGHTFALL"))
-        assertEquals(listOf(heard.lowercase()), said.toList())
+        assertTrue("transcript: $heard", heard!!.startsWith("After early nightfall"))
+        assertEquals(listOf(heard), said.toList()) // mixed-case text is spoken as is
         assertEquals(1, echo.spoken)
     }
 }

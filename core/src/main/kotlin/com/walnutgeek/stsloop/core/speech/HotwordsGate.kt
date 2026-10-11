@@ -46,9 +46,12 @@ object HotwordsGate {
 
     /**
      * Zipformer-family types, loaded by sherpa-onnx's OnlineRecognizerTransducerImpl.
-     * sherpa-onnx also loads NeMo and Parakeet-unified transducers from the same
-     * transducer fields (chosen by inspecting the files); Parakeet-unified has no
-     * hotwords support and would exit, so an unlisted or empty type is refused.
+     * sherpa-onnx also loads NeMo transducers (the shipped nemotron model) and
+     * Parakeet-unified ones from the same transducer fields, chosen by
+     * inspecting the files, not by `modelType`. In the pinned v1.13.8 neither
+     * has hotwords support (a hotwords stream exits), and the NeMo impl exits
+     * at load under anything but greedy_search. So an unlisted or empty type
+     * is refused.
      */
     private val ZIPFORMER_TYPES = setOf("zipformer", "zipformer2", "lstm", "conformer")
 

@@ -24,6 +24,13 @@ class RecognizerTest {
     }
 
     @Test
+    fun `model id of a NeMo export, whose encoder is named encoder dot variant`() {
+        val dir = "sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25"
+        val spec = RecognizerSpec("$dir/encoder.int8.onnx", "$dir/decoder.int8.onnx", "$dir/joiner.int8.onnx", emptyList(), "", "greedy_search", "", "", "")
+        assertEquals("$dir/int8 greedy_search", spec.modelId)
+    }
+
+    @Test
     fun `model id of an encoder outside a directory, without the usual prefix`() {
         val spec = RecognizerSpec("model.onnx", "d", "j", emptyList(), "zipformer", "greedy_search", "", "", "")
         assertEquals("model greedy_search", spec.modelId)

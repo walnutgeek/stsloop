@@ -30,12 +30,15 @@ interface RecognitionStream {
 
 /**
  * `transcript.model`: the model directory, the encoder variant, and the
- * decoding method, e.g. `sherpa-onnx-streaming-zipformer-en-2023-06-26/epoch-99-avg-1-chunk-16-left-128.int8 modified_beam_search`.
+ * decoding method, e.g.
+ * `sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25/int8 greedy_search` or
+ * `sherpa-onnx-streaming-zipformer-en-2023-06-26/epoch-99-avg-1-chunk-16-left-128.int8 modified_beam_search`.
  * Derived from the loaded config, so the Corpus records what actually ran.
  */
 val RecognizerSpec.modelId: String
     get() {
         val dir = transducerEncoder.substringBeforeLast('/', "")
-        val variant = transducerEncoder.substringAfterLast('/').removePrefix("encoder-").removeSuffix(".onnx")
+        val variant = transducerEncoder.substringAfterLast('/')
+            .removePrefix("encoder-").removePrefix("encoder.").removeSuffix(".onnx")
         return (if (dir.isEmpty()) variant else "$dir/$variant") + " " + decodingMethod
     }

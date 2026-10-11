@@ -48,13 +48,17 @@ class TurnCaptureDeviceTest {
         const val CHUNK = RATE / 10
         const val SESSION_START_MS = 1_791_296_527_000L
 
-        /** What the shipped model hears in the upstream wavs (`test_wavs/trans.txt`), as it emits it. */
+        /**
+         * What the shipped model hears in the upstream wavs (`test_wavs/trans.txt`), as it emits it
+         * when spliced between this test's noise. Its punctuation and spelling ("blest", "forever")
+         * shift with the audio around a Turn, so these are exact only for the batch Sessions below.
+         */
         const val TEXT_0 =
-            "AFTER EARLY NIGHTFALL THE YELLOW LAMPS WOULD LIGHT UP HERE AND THERE THE SQUALID QUARTER OF THE BROTHELS"
+            "After early nightfall, the yellow lamps would light up here and there the squalid quarter of the brothels"
         const val TEXT_1 =
-            "GOD AS A DIRECT CONSEQUENCE OF THE SIN WHICH MAN THUS PUNISHED HAD GIVEN HER A LOVELY CHILD " +
-                "WHOSE PLACE WAS ON THAT SAME DISHONOURED BOSOM TO CONNECT HER PARENT FOR EVER WITH THE RACE " +
-                "AND DESCENT OF MORTALS AND TO BE FINALLY A BLESSED SOUL IN HEAVEN"
+            "God as a direct consequence of the sin which man thus punished had given her a lovely child " +
+                "whose place was on that same dishonoured bosom to connect her parent for ever with the race " +
+                "and descent of mortals and to be finally a blest soul in heaven"
     }
 
     private class Run(
@@ -228,7 +232,7 @@ class TurnCaptureDeviceTest {
             val t = turn.transcript!!
             assertEquals("sherpa-onnx", t.engine)
             assertEquals(
-                "sherpa-onnx-streaming-zipformer-en-2023-06-26/epoch-99-avg-1-chunk-16-left-128.int8 modified_beam_search",
+                "sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25/int8 greedy_search",
                 t.model,
             )
             // No default Bucket alias at either end of these wavs: not Declared, so unclassified.
@@ -288,13 +292,14 @@ class TurnCaptureDeviceTest {
         assertEquals(Declaration("night-walks", DeclarationPosition.TRAILING, "the brothels"), night.declaration)
         assertEquals("night-walks", night.bucket)
         assertEquals(BucketSource.DECLARATION, night.bucketSource)
-        val nightContent = TEXT_0.removeSuffix(" THE BROTHELS").lowercase()
+        // Mixed-case text keeps its case in the content (only all-caps text is lower-cased).
+        val nightContent = TEXT_0.removeSuffix(" the brothels")
         assertEquals(nightContent, night.content)
 
         val god = turns[1].classification!!
         assertEquals(Declaration("theology", DeclarationPosition.LEADING, "god"), god.declaration)
         assertEquals("theology", god.bucket)
-        assertEquals(TEXT_1.removePrefix("GOD ").removeSuffix(" IN HEAVEN").lowercase(), god.content)
+        assertEquals(TEXT_1.removePrefix("God ").removeSuffix(" in heaven"), god.content)
 
         // The raw transcript is untouched, and turn.json carries the full Declaration.
         assertEquals(TEXT_0, turns[0].text)
@@ -319,7 +324,10 @@ class TurnCaptureDeviceTest {
             noise(1500, rnd), wav("0.wav"), noise(2500, rnd), wav("1.wav"), noise(2500, rnd),
         ) { it % 2 == 1 }
         val r = run(stream, realTime = true)
-        assertEquals(listOf(TEXT_0, TEXT_1), r.turns.map { it.first.text })
+        // This noise shifts the model's punctuation and spelling, so only the openings are pinned.
+        assertEquals(2, r.turns.size)
+        assertTrue(r.turns[0].first.text!!, r.turns[0].first.text!!.startsWith("After early nightfall"))
+        assertTrue(r.turns[1].first.text!!, r.turns[1].first.text!!.startsWith("God as a direct consequence"))
         for ((turn, _, timing) in r.turns) {
             val latency = turn.transcript!!.latencyMs
             Log.i(TAG, "real-time Turn ${turn.directoryName}: latency $latency ms, ${SttTiming.summary(turn, timing)}")
@@ -383,8 +391,8 @@ class TurnCaptureDeviceTest {
         // The cut-off Turn is still transcribed, up to where it was cut.
         val text = turn.text!!
         Log.i(TAG, "cut-off transcript: $text")
-        assertTrue(text, text.startsWith("AFTER EARLY NIGHTFALL"))
-        assertTrue(text, !text.contains("BROTHELS"))
+        assertTrue(text, text.startsWith("After early nightfall"))
+        assertTrue(text, !text.contains("brothels"))
     }
 
     @Test
