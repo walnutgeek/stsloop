@@ -2,6 +2,8 @@ package com.walnutgeek.stsloop.core.turn
 
 import com.walnutgeek.stsloop.core.BucketSource
 import com.walnutgeek.stsloop.core.Classification
+import com.walnutgeek.stsloop.core.Command
+import com.walnutgeek.stsloop.core.CommandInvocation
 import com.walnutgeek.stsloop.core.CorpusWriter
 import com.walnutgeek.stsloop.core.Declaration
 import com.walnutgeek.stsloop.core.DeclarationPosition
@@ -18,6 +20,7 @@ import com.walnutgeek.stsloop.core.testmode.TestConfig
 import com.walnutgeek.stsloop.core.testmode.TurnTest
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import java.io.IOException
 
@@ -67,15 +70,17 @@ class CorpusSinkTest {
     private val published = mutableListOf<Pair<Turn, Utterance>>()
     private val timings = mutableListOf<SttTiming?>()
     private val failures = mutableListOf<Pair<Utterance, Exception>>()
+    private val said = mutableListOf<String?>()
     private var ids = 0
     private val sink = CorpusSink(
         writer, sessionId = "5e5510", sessionStartedAtMs = 1_000_000, sampleRate = 1000, appVersion = "t",
         grammar = PhraseGrammar(BucketConfig.DEFAULT),
         newId = { "id${++ids}" },
         listener = object : CorpusSink.Listener {
-            override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) {
+            override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) {
                 published += turn to utterance
                 timings += timing
+                said += say
             }
             override fun failed(utterance: Utterance, error: Exception) { failures += utterance to error }
         },
@@ -139,7 +144,7 @@ class CorpusSinkTest {
         val s = CorpusSink(
             writer, "s", 0, 1000, "t", PhraseGrammar(BucketConfig(listOf(Bucket("garden", listOf("yard"))))),
             listener = object : CorpusSink.Listener {
-                override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) { published += turn to utterance }
+                override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) { published += turn to utterance }
             },
         )
         s.closed(u(0, 500), pcm(500), transcribed("YARD WATER THE BEDS"))
@@ -221,7 +226,7 @@ class CorpusSinkTest {
             writer, "s", 0, 1000, "t", PhraseGrammar(BucketConfig.DEFAULT),
             testOf = { utt -> asked += utt; TurnTest(TestConfig(enabled = true), listOf("builtin_mic"), utt.startSample, listOf("x")) },
             listener = object : CorpusSink.Listener {
-                override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) { published += turn to utterance }
+                override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) { published += turn to utterance }
             },
         )
         s.closed(u(0, 500), pcm(500))
@@ -236,11 +241,116 @@ class CorpusSinkTest {
             writer, "s", 0, 1000, "t", PhraseGrammar(BucketConfig.DEFAULT),
             testOf = { error("route query failed") },
             listener = object : CorpusSink.Listener {
-                override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) { published += turn to utterance }
+                override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) { published += turn to utterance }
             },
         )
         s.closed(u(0, 500), pcm(500))
         assertEquals(null, published.single().first.test)
         assertEquals(1, s.published)
+    }
+
+    // --- "scratch that" (#13) ---
+
+    private var at = 0L
+
+    /** Closes the next utterance with [text] as its transcript (null: none) and returns the Turn published. */
+    private fun say(text: String?): Turn {
+        val start = at
+        at += 1000
+        sink.closed(u(start, start + 500), pcm(500), text?.let(::transcribed))
+        return published.last().first
+    }
+
+    private val Turn.tombstones: String? get() = classification?.command?.tombstones
+
+    @Test
+    fun `scratch that tombstones the previous Turn by directory name and says dropped`() {
+        val note = say("ERRANDS BUY MILK")
+        val scratch = say("SCRATCH THAT")
+        assertEquals(TurnKind.COMMAND, scratch.kind)
+        assertEquals(CommandInvocation(Command.SCRATCH_THAT, "scratch that", note.directoryName), scratch.classification!!.command)
+        assertEquals(listOf("ERRANDS BUY MILK", "dropped."), said)
+    }
+
+    @Test
+    fun `an undeclared Turn is tombstoned just the same`() {
+        val plain = say("I NEED TO WORK ON THE ROOF")
+        assertEquals(plain.directoryName, say("DISCARD THAT").tombstones)
+    }
+
+    @Test
+    fun `with no previous Turn in the Session there is nothing to drop`() {
+        val scratch = say("SCRATCH THAT")
+        assertEquals(TurnKind.COMMAND, scratch.kind)
+        assertNull(scratch.tombstones)
+        assertEquals(listOf("nothing to drop."), said)
+    }
+
+    @Test
+    fun `a second scratch that does not reach further back`() {
+        say("ERRANDS BUY MILK")
+        val first = say("ERRANDS BUY BREAD")
+        assertEquals(first.directoryName, say("SCRATCH THAT").tombstones)
+        assertNull(say("SCRATCH THAT").tombstones)
+        assertEquals("nothing to drop.", said.last())
+    }
+
+    @Test
+    fun `after a scratch the next Turn can be scratched`() {
+        say("ERRANDS BUY MILK")
+        say("SCRATCH THAT")
+        val again = say("ERRANDS BUY OAT MILK")
+        assertEquals(again.directoryName, say("SCRATCH THAT").tombstones)
+    }
+
+    @Test
+    fun `a Turn with nothing to echo is skipped, so scratch that drops what was last read back`() {
+        val note = say("ERRANDS BUY MILK")
+        say("") // road noise the recognizer heard nothing in
+        say(null) // no transcript at all
+        say("  ")
+        assertEquals(note.directoryName, say("SCRATCH THAT").tombstones)
+    }
+
+    @Test
+    fun `a Note containing the phrase is stored, echoed, and can itself be scratched`() {
+        val note = say("SCRATCH THAT IDEA ABOUT THE ROOF")
+        assertEquals(TurnKind.UNCLASSIFIED, note.kind)
+        assertEquals("SCRATCH THAT IDEA ABOUT THE ROOF", said.single())
+        assertEquals(note.directoryName, say("SCRATCH THAT").tombstones)
+    }
+
+    @Test
+    fun `a scratch that which fails to write tombstones nothing and says nothing`() {
+        val note = say("ERRANDS BUY MILK")
+        writer.failFinishOn = 2
+        sink.closed(u(5000, 5500), pcm(500), transcribed("SCRATCH THAT"))
+        assertEquals(1, sink.failed)
+        assertEquals(listOf("ERRANDS BUY MILK"), said)
+        // The retry still finds the Turn: nothing was tombstoned.
+        assertEquals(note.directoryName, say("SCRATCH THAT").tombstones)
+    }
+
+    @Test
+    fun `a Turn that failed to write is never a target`() {
+        val note = say("ERRANDS BUY MILK")
+        writer.failFinishOn = 2
+        sink.closed(u(5000, 5500), pcm(500), transcribed("ERRANDS BUY BREAD"))
+        assertEquals(note.directoryName, say("SCRATCH THAT").tombstones)
+    }
+
+    @Test
+    fun `each Session starts with nothing to drop`() {
+        say("ERRANDS BUY MILK")
+        val next = CorpusSink(
+            writer, "5e5511", 2_000_000, 1000, "t", PhraseGrammar(BucketConfig.DEFAULT), newId = { "id${++ids}" },
+            listener = object : CorpusSink.Listener {
+                override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) {
+                    published += turn to utterance
+                }
+            },
+        )
+        next.closed(u(0, 500), pcm(500), transcribed("SCRATCH THAT"))
+        assertNull(published.last().first.tombstones)
     }
 }

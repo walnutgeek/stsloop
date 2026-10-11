@@ -200,6 +200,16 @@ as a warning, and the Session end logs the counts.
 mise exec -- adb logcat -s stsloop.Echo stsloop.TurnCapture stsloop.Session
 ```
 
+### Scratch that
+
+Saying just "scratch that" (or "discard that") tombstones the last Turn the
+loop read back to you in this Session, and the loop says "dropped." (or
+"nothing to drop."). The dropped Turn stays in the Corpus, audio and all; the
+command is a Turn of its own, `kind: "command"`, whose `tombstones` names the
+dropped Turn's directory. The transcript list strikes the dropped Turn
+through. A Note that only contains the phrase is stored, not obeyed. The
+rules in full are in `docs/mvp.md`, "Commands".
+
 ### Bluetooth test mode (debug builds)
 
 For the in-car experiment (#8, checklist in

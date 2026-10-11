@@ -70,9 +70,10 @@ class TurnCapture(
         writer, sessionId, sessionStartedAtMs, SAMPLE_RATE_HZ, appVersion, PhraseGrammar(buckets),
         testOf = testOf,
         listener = object : CorpusSink.Listener {
-            override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) {
-                // Persist, then speak (mvp.md's loop): a Turn that failed to write is not echoed.
-                loop.echo(turn.transcript?.text)
+            override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) {
+                // Persist, then speak (mvp.md's loop): a Turn that failed to write is not echoed. A command
+                // Turn says its reply ("dropped.") instead of its transcript.
+                loop.echo(say)
                 onTurn(turn, utterance, timing)
             }
 

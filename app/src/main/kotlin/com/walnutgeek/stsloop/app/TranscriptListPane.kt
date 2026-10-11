@@ -13,6 +13,7 @@ import android.widget.BaseAdapter
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
+import com.walnutgeek.stsloop.core.Command
 import com.walnutgeek.stsloop.core.TURN_FILE
 import com.walnutgeek.stsloop.core.corpus.ListedTurn
 import com.walnutgeek.stsloop.core.corpus.TranscriptList
@@ -135,7 +136,9 @@ class TranscriptListPane(context: Context, private val corpusDir: File) {
                 buildString {
                     append("Bucket: ").append(t.bucket ?: "none")
                     append(" · kind: ").append(t.kind ?: "none")
-                    t.tombstonedBy?.let { append(" · TOMBSTONED by ").append(it) }
+                    t.command?.let { append(" (").append(it).append(")") }
+                    if (t.command == Command.SCRATCH_THAT.json) append(t.tombstones?.let { " · dropped the Turn of ${dirTime(it)}" } ?: " · nothing to drop")
+                    t.tombstonedBy?.let { append(" · DROPPED by scratch that at ").append(dirTime(it)) }
                 }
             }
         }
@@ -147,6 +150,9 @@ class TranscriptListPane(context: Context, private val corpusDir: File) {
         // One reader thread for the process, so a recreated activity does not leak one.
         private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "stsloop-transcripts").apply { isDaemon = true } }
         private val TIME = DateTimeFormatter.ofPattern("EEE d MMM HH:mm:ss").withZone(ZoneId.systemDefault())
+
+        /** The local time of a Turn directory name (`<started_at>-<id>`), or the name itself. */
+        private fun dirTime(directoryName: String): String = localTime(TranscriptList.startedAtOf(directoryName))
 
         private fun localTime(utc: String): String =
             try {
@@ -161,7 +167,7 @@ class TranscriptListPane(context: Context, private val corpusDir: File) {
          */
         fun readCorpus(corpusDir: File): List<ListedTurn> {
             val dirs = corpusDir.listFiles { f -> f.isDirectory && TranscriptList.isTurnEntry(f.name) }.orEmpty()
-            // No tombstone mapping yet: #13 defines the tombstone record and supplies it here.
+            // Tombstones are derived from the command Turns read here (TranscriptList.tombstonedBy).
             return TranscriptList.of(dirs.map(::readTurn))
         }
 

@@ -310,7 +310,7 @@ class PhraseGrammarTest {
     fun `with no Buckets every transcript is unclassified`() = undeclared("errands buy milk", PhraseGrammar(BucketConfig(emptyList())))
 
     @Test
-    fun `scratch that is not a Note`() = undeclared("SCRATCH THAT")
+    fun `scratch that is a command, not a Note`() = assertEquals(TurnKind.COMMAND, grammar.classify("SCRATCH THAT").kind)
 
     // --- the parser on its own ---
 

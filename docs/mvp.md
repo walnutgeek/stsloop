@@ -386,7 +386,7 @@ Four, chosen because the loop is unusable in a car without them:
 
 | Said | Effect |
 | --- | --- |
-| "scratch that" / "discard that" | Delete the previous Turn, audio and all. Echo "dropped." |
+| "scratch that" / "discard that" | Tombstone the previous Turn (its audio is kept, see Corpus format). Say "dropped." |
 | "repeat" / "say that again" | Re-speak the previous transcript |
 | "stop listening" / "end session" | End the Session cleanly |
 | "what bucket" / "which bucket" | Speak the Bucket assigned to the previous Turn |
@@ -400,11 +400,43 @@ Every command invocation is itself persisted as a Turn with `kind: "command"`,
 because command phrasing is also something the eventual classifier must learn,
 and these are labelled examples too.
 
+The rules in full (`:core` `PhraseGrammar`, `Command`, `SessionCommands`):
+
+- A command is its phrase read as words (as for Declarations: case,
+  punctuation and dashes ignored), with nothing else around it but the
+  Declaration fillers (`um`, `okay`, `so`, ...). "Okay, scratch that." is a
+  command; "scratch that idea about the roof" is a Note, and so is
+  "errands, scratch that". Commands are matched before Declarations, so a
+  Bucket alias that is also a command phrase cannot shadow the command.
+- A command is persisted first and carried out after: its Turn records what
+  it did. If the command Turn fails to write, it did nothing and the loop says
+  nothing, so saying it again is safe.
+- Its reply goes through the echo path (`HalfDuplex`), so it is Half-duplex
+  like any echo: spoken into the next Silence, with the mic closed. The
+  command's own transcript is not echoed.
+
+What "scratch that" drops — **what the loop last read back to you** (or is
+about to: an echo still waiting for Silence counts, and so does every Turn
+when there is no echo, as in test mode): the most recent Turn of the current
+Session that is not a command and has a transcript worth echoing. At the
+edges:
+
+| Situation | Effect |
+| --- | --- |
+| Turns with no or an empty transcript since (noise, a recognizer failure) | Skipped: never echoed, so not what "that" means |
+| Command Turns since (e.g. "repeat") | Skipped |
+| That Turn is already tombstoned (a second "scratch that") | Nothing to drop. It never reaches a Turn further back |
+| No such Turn in this Session (including the very first Turn) | Nothing to drop. Never reaches into an earlier Session |
+| Nothing to drop | The command Turn is still written, with `tombstones: null`. Say "nothing to drop." |
+| A Turn cut at max duration and continued | Only the last piece is the previous Turn |
+
 ## Corpus format
 
 Immutable, append-only, one directory per Turn. Nothing is ever edited;
 "scratch that" writes a tombstone rather than deleting in place, so the Corpus
-stays append-only and the deletion itself is data.
+stays append-only and the tombstone itself is data. The tombstone **is** the
+command Turn: it names its target by directory name in its own `turn.json`
+(`tombstones`, below), and the target's directory is never touched.
 
 ```
 corpus/
@@ -434,8 +466,26 @@ corpus/
   "bucket": "errands",
   "bucket_source": "declaration",
   "content": "order roofing screws",
-  "app_version": "0.1.0",
-  "tombstoned_by": null
+  "app_version": "0.1.0"
+}
+```
+
+A "scratch that" Turn (#13), naming the Turn it tombstones:
+
+```json
+{
+  "schema": 1,
+  "id": "b4e2d0",
+  …
+  "transcript": { "text": "SCRATCH THAT", … },
+  "kind": "command",
+  "declaration": null,
+  "bucket": null,
+  "bucket_source": null,
+  "content": null,
+  "command": { "name": "scratch_that", "matched": "scratch that" },
+  "tombstones": "2026-10-06T14:22:07.431Z-a3f1c9",
+  "app_version": "0.1.0"
 }
 ```
 
@@ -448,7 +498,8 @@ Design notes worth keeping:
 - `kind` is one of `note`, `command`, `unclassified`. Until the phrase
   grammar exists, every Turn is `unclassified`. With it, only a Declared Turn is
   a `note`; an undeclared one stays `unclassified` (unlabelled test data), with
-  `declaration`, `bucket`, `bucket_source` and `content` written as `null`.
+  `declaration`, `bucket`, `bucket_source` and `content` written as `null`. A
+  whole-utterance command is `command`, with those four fields `null` too.
 - `transcript.text` is exactly what the engine produced. The current model
   emits upper case with no punctuation. A
   future cased or punctuated model must not be flattened, so normalisation is
@@ -478,6 +529,22 @@ Design notes worth keeping:
   mode writes there, and readers of Turns skip `sessions/`.
 - A tombstoned Turn keeps its audio. "Scratch that" usually means *I misspoke*,
   and the misspeaking is training data.
+- **Tombstones are derived on read.** A Turn can only be tombstoned after it
+  is published, so it can never say so in its own `turn.json`. Instead the
+  command Turn's `tombstones` holds the target's **directory name**
+  (`<started_at>-<id>`: unique, where a 6-hex id is not), and a reader builds
+  `target directory → command directory` from every `kind: "command"` Turn's
+  `tombstones` (`:core` `TranscriptList.tombstonedBy`; with `jq`:
+  `select(.kind == "command" and .tombstones)`). Should two name the same
+  Turn, the earlier one tombstoned it.
+- `tombstoned_by` is no longer written. Turns written before #13 carry
+  `"tombstoned_by": null`; that never meant more than "not known here", and a
+  reader that finds a non-null one still honours it. No schema bump: the field
+  was always null, and `jq` reads a missing key as null too.
+- `command` is present only on a command Turn: `name` is permanent once
+  written (`scratch_that`; #14 adds the rest), `matched` the phrase as heard,
+  normalised. `tombstones` is present only on a `scratch_that` Turn, `null`
+  when there was nothing to drop.
 
 ## Modules
 

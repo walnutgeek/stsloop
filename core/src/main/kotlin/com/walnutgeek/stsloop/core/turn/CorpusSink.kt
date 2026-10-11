@@ -13,8 +13,10 @@ import com.walnutgeek.stsloop.core.testmode.TurnTest
  * write is abandoned and reported to the [Listener]; it never takes the rest
  * of the Session down with it.
  *
- * Each Turn is classified by [grammar] from its transcript: a Note (with its
- * Bucket when Declared), or unclassified when nothing was heard.
+ * Each Turn is classified by [grammar] from its transcript: a whole-utterance
+ * command, a Note in its Bucket when Declared, or unclassified. A command is
+ * carried out by this Session's [SessionCommands], and its Turn records what
+ * it did (for "scratch that", the Turn it tombstones).
  */
 class CorpusSink(
     private val writer: CorpusWriter,
@@ -32,11 +34,17 @@ class CorpusSink(
     private val listener: Listener,
 ) {
     interface Listener {
-        /** [timing] is null when the Turn has no transcript. */
-        fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) {}
+        /**
+         * [turn] is in the Corpus. [timing] is null when it has no transcript.
+         * [say] is what the loop says back: a command's reply, otherwise the
+         * transcript to echo (null when there is none).
+         */
+        fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) {}
         fun failed(utterance: Utterance, error: Exception) {}
         fun discarded(event: TurnEvent.Discarded) {}
     }
+
+    private val commands = SessionCommands()
 
     /** Turns published so far. */
     var published = 0
@@ -48,13 +56,15 @@ class CorpusSink(
 
     /** Publishes [pcm] (exactly the [utterance]'s samples) with its [transcription], if the recognizer gave one. */
     fun closed(utterance: Utterance, pcm: ShortArray, transcription: Transcription? = null) {
+        val transcript = transcription?.transcript
+        val classification = grammar.classify(transcript?.text)
+        val command = classification.command?.let(commands::plan)
         val turn = try {
             val inProgress = writer.begin(newId(), sessionId, utterance.startedAtMs(sessionStartedAtMs, sampleRate), sampleRate)
             try {
                 inProgress.append(pcm, pcm.size)
-                val transcript = transcription?.transcript
                 val test = testOf?.let { f -> runCatching { f(utterance) }.getOrNull() }
-                inProgress.finish(appVersion, utterance.vad(sampleRate), transcript, grammar.classify(transcript?.text), test)
+                inProgress.finish(appVersion, utterance.vad(sampleRate), transcript, command?.classification ?: classification, test)
             } catch (e: Exception) {
                 runCatching { inProgress.abandon() }
                 throw e
@@ -65,7 +75,8 @@ class CorpusSink(
             return
         }
         published++
-        listener.published(turn, utterance, transcription?.timing)
+        commands.published(turn)
+        listener.published(turn, utterance, transcription?.timing, command?.say ?: transcript?.text)
     }
 
     fun discarded(event: TurnEvent.Discarded) = listener.discarded(event)
