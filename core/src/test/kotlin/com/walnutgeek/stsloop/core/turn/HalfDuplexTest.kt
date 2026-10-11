@@ -418,6 +418,23 @@ class HalfDuplexTest {
     }
 
     @Test
+    fun `an announcement and a reply share one queue, and then waits for both`() {
+        val log = mutableListOf<String>()
+        speech(200)
+        loop.announce("The microphone is silenced by another app.")
+        loop.echo("STOPPED LISTENING") { log += "then" }
+        quiet(100) // Silence: the announcement starts
+        quiet(10)
+        done()
+        tts(10) // the reply follows, back to back
+        assertEquals(listOf("The microphone is silenced by another app.", "stopped listening"), speaker.said.map { it.second })
+        assertEquals(emptyList<String>(), log)
+        done()
+        tts(10)
+        assertEquals(listOf("then"), log)
+    }
+
+    @Test
     fun `then waits for the echoes queued before it and its own`() {
         val log = mutableListOf<String>()
         speech(200)
