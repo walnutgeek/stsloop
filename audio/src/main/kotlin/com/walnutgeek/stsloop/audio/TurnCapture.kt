@@ -11,7 +11,9 @@ import com.walnutgeek.stsloop.core.speech.StreamingRecognizer
 import com.walnutgeek.stsloop.core.testmode.TestConfig
 import com.walnutgeek.stsloop.core.testmode.TurnTest
 import com.walnutgeek.stsloop.core.turn.CorpusSink
+import com.walnutgeek.stsloop.core.turn.HalfDuplex
 import com.walnutgeek.stsloop.core.turn.Segmenter
+import com.walnutgeek.stsloop.core.turn.Speaker
 import com.walnutgeek.stsloop.core.turn.SpeechProbability
 import com.walnutgeek.stsloop.core.turn.SttTiming
 import com.walnutgeek.stsloop.core.turn.Timings
@@ -28,7 +30,9 @@ import java.util.concurrent.TimeUnit
  * utterance the VAD finds comes out as its own transcribed Turn in the Corpus
  * ([Segmenter] cuts, [Transcriber] streams it into the recognizer while it is
  * captured, [CorpusSink] classifies it with the [PhraseGrammar] over
- * [buckets] and writes it). Sample 0 of the stream is wall time
+ * [buckets] and writes it), and each published Turn's transcript is echoed
+ * through [speaker], strictly Half-duplex ([HalfDuplex]: the mic is closed
+ * while the echo plays and for `guard_ms` after). Sample 0 of the stream is wall time
  * [sessionStartedAtMs]. A Turn that fails to write is logged and counted in
  * [failedTurns]; the Session carries on.
  *
@@ -39,7 +43,7 @@ import java.util.concurrent.TimeUnit
  * being fed and is written without a transcript; its audio is always kept.
  *
  * Not thread-safe: call [accept] and [finish] from the capture thread;
- * [hurry] may be called from any thread.
+ * [hurry] and [spoken] may be called from any thread.
  */
 class TurnCapture(
     writer: CorpusWriter,
@@ -56,15 +60,21 @@ class TurnCapture(
     buckets: BucketConfig = BucketConfig.DEFAULT,
     /** Test mode (#27): each Turn's `test` block, computed on the STT thread; null outside test mode. */
     testOf: ((Utterance) -> TurnTest?)? = null,
+    /** Speaks each Turn's echo, reporting its end through [spoken]; null means no echo, and the mic never closes. */
+    speaker: Speaker? = null,
     /** Called on the STT thread after each Turn is published, with the stream range it holds. */
     private val onTurn: (Turn, Utterance, SttTiming?) -> Unit = { _, _, _ -> },
 ) {
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "stt-$sessionId") }
-    private val sink = CorpusSink(
+    private val sink: CorpusSink = CorpusSink(
         writer, sessionId, sessionStartedAtMs, SAMPLE_RATE_HZ, appVersion, PhraseGrammar(buckets),
         testOf = testOf,
         listener = object : CorpusSink.Listener {
-            override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) = onTurn(turn, utterance, timing)
+            override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?) {
+                // Persist, then speak (mvp.md's loop): a Turn that failed to write is not echoed.
+                loop.echo(turn.transcript?.text)
+                onTurn(turn, utterance, timing)
+            }
 
             override fun failed(utterance: Utterance, error: Exception) {
                 Log.e(TAG, "Session $sessionId lost the Turn at samples ${utterance.startSample}..${utterance.endSample}", error)
@@ -104,6 +114,26 @@ class TurnCapture(
         },
     ).apply { start() }
     private val segmenter = Segmenter(timings, SAMPLE_RATE_HZ, windowSamples, vad, transcriber)
+    private val loop: HalfDuplex = HalfDuplex(
+        segmenter, timings, SAMPLE_RATE_HZ, speaker,
+        object : HalfDuplex.Listener {
+            override fun speaking(id: Long, text: String, atSample: Long) {
+                Log.i(TAG, "Session $sessionId echo $id: mic closed at sample $atSample")
+            }
+
+            override fun reopened(atSample: Long, closedSamples: Long) {
+                Log.i(TAG, "Session $sessionId: mic open again at sample $atSample after ${closedSamples * 1000 / SAMPLE_RATE_HZ} ms closed")
+            }
+
+            override fun lost(id: Long) {
+                Log.w(TAG, "Session $sessionId echo $id never reported an end; reopening the mic after the guard")
+            }
+
+            override fun unspoken(count: Int) {
+                Log.i(TAG, "Session $sessionId ended with $count echoes never spoken")
+            }
+        },
+    )
     private var finished = false
 
     /** Published so far; final once [finish] returns. */
@@ -120,7 +150,10 @@ class TurnCapture(
      * decoding or writing.
      */
     fun accept(samples: ShortArray, count: Int, capturedAtNs: Long = SystemClock.elapsedRealtimeNanos()) =
-        segmenter.accept(samples, count, capturedAtNs)
+        loop.accept(samples, count, capturedAtNs)
+
+    /** Any thread: the echo [id] ended at [atNs] (`elapsedRealtimeNanos`); the guard interval starts there. */
+    fun spoken(id: Long, atNs: Long) = loop.spoken(id, atNs)
 
     /**
      * Skip all remaining recognition: every queued Turn is written at once,
@@ -139,7 +172,7 @@ class TurnCapture(
      */
     fun finish() {
         try {
-            segmenter.finish()
+            loop.finish()
         } finally {
             if (!finished) {
                 finished = true

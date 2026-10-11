@@ -158,7 +158,8 @@ are logged under `stsloop.Session` when a Session starts.
 `speech_threshold` is the Silero probability that starts an utterance;
 once one is being captured, `release_threshold` is enough to keep it going.
 `pre_roll_ms` of audio before the first speech window is kept in the Turn.
-`guard_ms` is parsed but unused until the machine speaks.
+`guard_ms` is how long the mic stays closed after an echo ends (see "The
+spoken echo" below); 0 reopens it as soon as the engine reports the end.
 
 ```sh
 # write (the app must be a debug build; takes effect at the next Session)
@@ -168,6 +169,33 @@ mise exec -- adb exec-out run-as com.walnutgeek.stsloop cat files/timings.json
 mise exec -- adb shell run-as com.walnutgeek.stsloop rm files/timings.json
 ```
 
+### The spoken echo
+
+Every Turn is spoken back once it is written to the Corpus, with Android's
+offline `TextToSpeech` (`USAGE_ASSISTANT`), from the Session's `microphone`
+foreground service. An all-caps transcript is lower-cased first, so the
+engine reads words rather than spelling letters; an empty transcript is not
+echoed. The loop is strictly Half-duplex: from the moment an echo starts
+until `guard_ms` after the engine reports its end, the recording keeps
+running but its samples are dropped before the VAD, so nothing the phone
+says can become a Turn. An echo is spoken only into Silence: if you are
+already speaking when a transcript is ready, it waits until your Turn ends,
+and echoes that waited are spoken back to back.
+
+When a Bluetooth hands-free headset (the car) is connected, a Session uses
+it, per the #8 spike: it becomes the communication device in normal mode, so
+the car's mic records (`voice_recognition`) and the echo plays over the
+hands-free link. Without one, the phone mic records and the echo plays over
+A2DP or the speaker. The route is put back when the Session ends, however
+it ends. The route and each echo are logged under `stsloop.Session`,
+`stsloop.TurnCapture` and `stsloop.Echo`; an echo the engine reports done
+while nothing plausibly played (no start, no player, or volume 0) is logged
+as a warning, and the Session end logs the counts.
+
+```sh
+mise exec -- adb logcat -s stsloop.Echo stsloop.TurnCapture stsloop.Session
+```
+
 ### Bluetooth test mode (debug builds)
 
 For the in-car experiment (#8, checklist in
@@ -175,13 +203,13 @@ For the in-car experiment (#8, checklist in
 buttons under Start/Stop. With test mode on, a Session speaks a fixed phrase
 every N seconds through Android's offline `TextToSpeech` **while it keeps
 recording** (deliberately not Half-duplex), records with the chosen microphone
-path, and logs every routing fact. Each Turn gets a `test` block in
+path, and logs every routing fact. A test Session does not echo its Turns:
+the echo and its mic gating would defeat the experiment. Each Turn gets a `test` block in
 `turn.json`, and each Session a route-event log in
 `corpus/sessions/<started_at>-<session_id>.jsonl` (one JSON object per line,
 append-only; the transcript list skips that directory).
 
-A release (non-debuggable) build ignores the file, and its manifest has none
-of test mode's extra permissions (they are in `audio/src/debug/`). The buttons
+A release (non-debuggable) build ignores the file. The buttons
 write `files/testmode.json`, read at every Session start. Every key
 is optional and falls back per key like `timings.json`; a missing file means
 test mode is off:

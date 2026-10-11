@@ -12,6 +12,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Handler
@@ -41,7 +42,11 @@ import java.io.File
 /**
  * A Session: a `microphone`-typed foreground service that owns the mic from
  * Start until Stop. Each utterance the VAD finds becomes its own transcribed
- * Turn in the Corpus ([TurnCapture]). Speech recognition is sherpa-onnx only:
+ * Turn in the Corpus ([TurnCapture]), and its transcript is spoken back
+ * ([EchoSpeaker]) with the mic closed while it plays (Half-duplex). Outside
+ * test mode the Session uses the car's hands-free route when a Bluetooth
+ * headset is connected ([AudioRoute]) and puts the route back when it ends,
+ * however it ends. Speech recognition is sherpa-onnx only:
  * the system SpeechRecognizer is never started, because it would capture
  * the same mic and one of the two would silently get silence.
  *
@@ -251,6 +256,8 @@ class SessionService : Service() {
         var vad: Vad? = null
         var capture: TurnCapture? = null
         var test: TestModeSession? = null
+        var route: AudioRoute? = null
+        var echo: EchoSpeaker? = null
         try {
             val timings = TurnCapture.loadTimings(filesDir)
             Log.i(TAG, "Session $sessionId timings: ${timings.toJson().replace(Regex("\\s+"), " ")}")
@@ -267,6 +274,29 @@ class SessionService : Service() {
                 test = t
                 t.prepare()
             }
+            var handsFree: AudioRoute.HandsFree? = null
+            if (test == null) {
+                // Test mode picks its own route and speaks its own phrases while recording, so the echo
+                // (and the Half-duplex gate) is off in a test Session; otherwise every Turn is echoed.
+                val r = AudioRoute(getSystemService(AudioManager::class.java), sessionId)
+                route = r // assigned first, so the finally below always puts the route back
+                handsFree = try {
+                    r.useHandsFree()
+                } catch (e: RuntimeException) {
+                    Log.e(TAG, "Session $sessionId: cannot use the hands-free route; recording from the phone mic", e)
+                    r.restore()
+                    null
+                }
+                Log.i(
+                    TAG,
+                    "Session $sessionId route: " + when {
+                        handsFree == null -> "phone mic (no Bluetooth hands-free headset)"
+                        !handsFree.ok -> "phone mic (the platform refused ${AudioRoute.describe(handsFree.device)})"
+                        else -> "hands-free ${AudioRoute.describe(handsFree.device)}, its mic ${handsFree.input?.let(AudioRoute::describe)}"
+                    },
+                )
+                echo = EchoSpeaker(this, sessionId) { id, atNs -> turnCapture?.spoken(id, atNs) }.also { it.start() }
+            }
             val minBytes = AudioRecord.getMinBufferSize(
                 SAMPLE_RATE_HZ, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
             )
@@ -277,6 +307,9 @@ class SessionService : Service() {
             )
             check(record.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord failed to initialise" }
             test?.attach(record)
+            handsFree?.takeIf { it.ok }?.input?.let { mic ->
+                if (!record.setPreferredDevice(mic)) Log.w(TAG, "Session $sessionId: could not prefer ${AudioRoute.describe(mic)}")
+            }
             record.startRecording()
             val startedAt = System.currentTimeMillis()
             test?.started()
@@ -287,6 +320,7 @@ class SessionService : Service() {
                 recognizer = { SttRecognizer.load(assets) },
                 buckets = buckets,
                 testOf = testMode?.let { t -> t::turnTest },
+                speaker = echo,
             ) { turn, u, timing ->
                 testMode?.turnWritten(turn, u)
                 Log.i(
@@ -332,6 +366,8 @@ class SessionService : Service() {
         } finally {
             turnCapture = null
             test?.let { t -> runCatching { t.close() }.onFailure { Log.e(TAG, "Session $sessionId: test mode did not close cleanly", it) } }
+            echo?.let { e -> runCatching { e.close() }.onFailure { Log.e(TAG, "Session $sessionId: the echo did not close cleanly", it) } }
+            route?.restore()
             record?.release()
             vad?.release()
             main.post(::onCaptureEnded)

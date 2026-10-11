@@ -487,6 +487,62 @@ class TurnStateMachineTest {
         assertEquals(52_000, Utterance(48_000, 100_000, 0, 0, SILENCE).lengthSamples)
     }
 
+    // --- closed mic (Half-duplex) ---
+
+    @Test
+    fun `a closed-mic gap advances the position without judging it`() {
+        silence(100)
+        sm.skip(to = 600)
+        assertEquals(LISTENING, sm.state)
+        assertEquals(600, sm.position)
+        assertEquals(emptyList<TurnEvent>(), events)
+    }
+
+    @Test
+    fun `pre-roll never reaches back into a closed-mic gap`() {
+        silence(100)
+        sm.skip(to = 600)
+        speech(50)
+        silence(100)
+        assertEquals(600L, closed().single().startSample)
+    }
+
+    @Test
+    fun `pre-roll after a gap still covers audio heard since it reopened`() {
+        sm.skip(to = 600)
+        silence(50)
+        speech(50)
+        silence(100)
+        assertEquals(630L, closed().single().startSample) // 650 - 20 ms pre-roll
+    }
+
+    @Test
+    fun `a gap at the current position changes nothing`() {
+        silence(100)
+        sm.skip(to = 100)
+        assertEquals(100, sm.position)
+        assertEquals(LISTENING, sm.state)
+    }
+
+    @Test
+    fun `the mic cannot close on a Turn being captured`() {
+        speech(50)
+        assertThrows<IllegalStateException> { sm.skip(to = 500) }
+    }
+
+    @Test
+    fun `a gap cannot go backwards`() {
+        silence(100)
+        assertThrows<IllegalArgumentException> { sm.skip(to = 50) }
+    }
+
+    @Test
+    fun `while listening after a gap nothing before it is retained`() {
+        silence(100)
+        sm.skip(to = 600)
+        assertEquals(600, sm.retainFrom)
+    }
+
     // --- guards ---
 
     @Test

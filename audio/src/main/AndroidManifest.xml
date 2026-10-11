@@ -4,12 +4,23 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Bluetooth test mode's permissions live in src/debug/AndroidManifest.xml only. -->
+    <!-- The car's hands-free route (AudioRoute): setCommunicationDevice on a Bluetooth SCO / LE headset,
+         and the in_communication audio mode test mode can hold. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- The echo speaks through the system TextToSpeech engine (package visibility, API 30+). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
 
     <application>
         <!-- A Session. Typed `microphone` (a while-in-use type), never shortService.
              shortService is declared only for the moment a refused Start must
-             still call startForeground() before stopping; no Session runs as it. -->
+             still call startForeground() before stopping; no Session runs as it,
+             and the echo always plays from the microphone-typed service. -->
         <service
             android:name=".SessionService"
             android:exported="false"

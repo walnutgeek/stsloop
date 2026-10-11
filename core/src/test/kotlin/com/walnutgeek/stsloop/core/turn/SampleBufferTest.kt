@@ -90,4 +90,16 @@ class SampleBufferTest {
         assertEquals(16_000_000, b.end)
         assert(b.capacity < 20_000) { "capacity grew to ${b.capacity}" }
     }
+
+    @Test
+    fun `a skip drops what is retained and moves the stream on`() {
+        val b = SampleBuffer()
+        b.append(shorts(0..99), 100)
+        b.skip(500)
+        assertEquals(0, b.size)
+        assertEquals(600, b.start)
+        b.append(shorts(600..609), 10)
+        assertEquals(610, b.end)
+        assertArrayEquals(shorts(600..609), b.copy(600, 610))
+    }
 }
