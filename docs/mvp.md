@@ -575,6 +575,10 @@ reconcile, no conflicts, and order does not matter.
 On the Linux side it is a directory of files that `jq` and a Python script can
 read directly. That is the entire Phase 1 toolchain.
 
+Step by step, and what works today (the Corpus is in app-private storage, so
+only `adb` reaches it until the app exports it): `docs/corpus-sync.md`. The
+loader, with sha256 checks, tombstones and stats: `scripts/corpus_load.py`.
+
 ## Done when
 
 The MVP is finished when it has answered its two questions, not when a feature
