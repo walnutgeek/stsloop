@@ -436,7 +436,6 @@ class TestModeSession(
             if (key == lastRecording) return
             lastRecording = key
             log("recording", mapOf("ours" to described, "others" to configs.size - (if (ours == null) 0 else 1), "sample" to nowSample()))
-            if (ours?.isClientSilenced == true) Log.w(TAG, "Session $sessionId: our recording is silenced")
         }
     }
 

@@ -54,6 +54,27 @@ class TurnJsonTest {
     }
 
     @Test
+    fun `a measured Recording says whether it is silent, at the end of the audio block`() {
+        val silent = TurnJson.encode(turn.copy(audio = turn.audio.copy(silent = true)))
+        assertTrue(silent.contains("\"sample_rate\": 16000, \"duration_ms\": 4471, \"silent\": true },\n"), silent)
+        val heard = TurnJson.encode(turn.copy(audio = turn.audio.copy(silent = false)))
+        assertTrue(heard.contains("\"duration_ms\": 4471, \"silent\": false },\n"), heard)
+        assertEquals(true, (Json.parseObject(silent)["audio"] as Map<*, *>)["silent"])
+    }
+
+    @Test
+    fun `an unmeasured Recording has no silent key`() {
+        assertFalse(TurnJson.encode(turn).contains("silent"))
+    }
+
+    @Test
+    fun `a recovered Turn says so just before app_version, and others do not`() {
+        val json = TurnJson.encode(turn.copy(recovered = true))
+        assertTrue(json.contains("  \"recovered\": true,\n  \"app_version\": \"0.1.0\",\n"), json)
+        assertFalse(TurnJson.encode(turn).contains("recovered"))
+    }
+
+    @Test
     fun `a tombstoned Turn names the Turn that tombstoned it`() {
         val json = TurnJson.encode(turn.copy(tombstonedBy = "b4e2d0"))
         assertTrue(json.contains("\"tombstoned_by\": \"b4e2d0\""), json)

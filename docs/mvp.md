@@ -311,6 +311,46 @@ if a Turn produces an all-zero Recording, or TTS reports success with no audible
 output, the loop should notice and say so rather than quietly filling the Corpus
 with silence.
 
+How the loop does it (#15; `:core` `failure`, `:audio` `TurnCapture`):
+
+- **Effectively silent** means a 100 ms window below 1.5 RMS (about
+  -90 dBFS): exact zeros, which is what a silenced client gets, or one LSB of
+  dither. A working mic never gets there. The owner's drive Corpus (#8, 270
+  Recordings, phone mic and the car's Bluetooth SCO mic, parked and driving)
+  has noise floors of 3–90 RMS, and its quietest 100 ms window anywhere is
+  2.1 RMS, so a quiet but working SCO mic is never flagged.
+- **A silent mic stream.** The whole stream is watched, closed spans
+  included: 3 s of effectively silent windows back to back is a failure (long
+  enough for an SCO link to come up at Session start). This is the detector
+  that matters, because a mic delivering zeros never wakes the VAD, so it
+  produces no Turns at all.
+- **A silent Recording.** Each Recording is measured as it is written, and
+  `audio.silent` in `turn.json` says whether its loudest window is
+  effectively silent (see Corpus format).
+- **A silenced client.** An `AudioRecordingCallback` watches the Session's
+  own recording (matched by audio session id) for `isClientSilenced()`, in
+  every Session, test mode included.
+- **TTS success without output.** Where feasible means a heuristic, checked
+  per echo: the engine reported done, yet it never reported a start, or no
+  player with the echo's usage was ever active while it played, or the
+  stream volume was 0. It cannot hear the speaker, so it catches a playback
+  the platform refused, not a car stereo turned down; and announcing it goes
+  through the same TTS, so it is heard only if the failure was partial.
+- **Saying it.** Each failure is spoken as a machine Turn through the echo
+  path, under the same Half-duplex rules (into Silence, mic closed). It is
+  said once when it starts, never again while it lasts, and not again within
+  a minute however it flaps. A failure another one already explains is not
+  said (a silenced client is also a silent stream and a silent Recording).
+  Its end is logged, not said: the next echo is the proof the loop hears you
+  again. Test mode has no echo, so there it is only logged.
+- **A crash mid-Turn.** Turns are staged under their Session
+  (`corpus-staging/<session_id>/<turn>`). Before the first Session of each
+  process, whatever a dead process left there is recovered, not discarded:
+  a complete Turn is published as it is; one without `turn.json` has its WAV
+  header rewritten from the samples on disk and is published with
+  `"recovered": true` and no transcript (the Recording is what matters, and
+  it can be transcribed again later); one with no samples is deleted.
+
 ## Phrase grammar
 
 Pure string matching against the transcript. No inference, no model, no
@@ -420,7 +460,7 @@ corpus/
   "session_id": "0f22ab",
   "started_at": "2026-10-06T14:22:07.431Z",
   "ended_at": "2026-10-06T14:22:12.411Z",
-  "audio": { "file": "audio.wav", "sha256": "…", "sample_rate": 16000, "duration_ms": 4980 },
+  "audio": { "file": "audio.wav", "sha256": "…", "sample_rate": 16000, "duration_ms": 4980, "silent": false },
   "vad": { "speech_ms": 3180, "trailing_silence_ms": 1500 },
   "transcript": {
     "text": "ERRANDS ORDER ROOFING SCREWS",
@@ -476,6 +516,15 @@ Design notes worth keeping:
   flushed JSON line per event), so a sync can see it grow and a reader must
   drop an incomplete last line. It is never rewritten. Nothing outside test
   mode writes there, and readers of Turns skip `sessions/`.
+- `audio.silent` (#15) is `true` when the Recording is effectively silent:
+  none of its 100 ms windows (a partial last one included) reaches 1.5 RMS,
+  which a working mic never fails to (see "Platform constraints on the
+  loop"). It is written on every Turn from #15 on; a Turn without it was not
+  measured. It is a flag for readers, not a filter: the Turn is kept.
+- `recovered: true` (#15) marks a Turn published after a crash from what
+  its Session had staged. It has no `vad`, `transcript` or classification,
+  `app_version` is the version that recovered it, and a Turn staged before
+  #15 has `session_id` `"unknown"`. The key is absent on every other Turn.
 - A tombstoned Turn keeps its audio. "Scratch that" usually means *I misspoke*,
   and the misspeaking is training data.
 

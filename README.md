@@ -196,6 +196,15 @@ it ends. The route and each echo are logged under `stsloop.Session`,
 while nothing plausibly played (no start, no player, or volume 0) is logged
 as a warning, and the Session end logs the counts.
 
+The loop also says when it notices a failure Android does not report (#15,
+`docs/mvp.md`, "Platform constraints on the loop"): "The microphone is
+silenced by another app", "The microphone is recording only silence" (3 s
+of digital zeros), "That recording was silent", "My speech may not be
+playing". Each is spoken like an echo, once when it starts, and at most once
+a minute; its end is only logged. Every `turn.json` says whether its
+Recording is silent (`audio.silent`), and Turns a crash left in
+`corpus-staging/` are published at the next Session with `"recovered": true`.
+
 ```sh
 mise exec -- adb logcat -s stsloop.Echo stsloop.TurnCapture stsloop.Session
 ```

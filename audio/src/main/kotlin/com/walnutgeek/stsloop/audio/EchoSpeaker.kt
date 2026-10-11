@@ -30,10 +30,12 @@ import java.util.concurrent.atomic.AtomicInteger
  * failed, was never started because the engine is unavailable, or was cut off
  * by [close]: the Half-duplex gate reopens the mic on that report.
  *
- * Playback can fail silently, so each one is checked: if the engine reports
+ * Playback can fail silently (Android 17's background playback hardening
+ * fails without throwing), so each one is checked: if the engine reports
  * done but it never reported a start, no player with our usage was ever
  * active, or the stream volume was 0, the Turn is logged as
- * `nothing plausibly played` and counted in [unobserved].
+ * `nothing plausibly played` and counted in [unobserved]. Every done
+ * report is passed to [played], `false` for those, so the loop can say so.
  *
  * [speak] may be called from any thread; all TTS work runs on this Session's
  * own handler thread.
@@ -41,6 +43,8 @@ import java.util.concurrent.atomic.AtomicInteger
 class EchoSpeaker(
     private val context: Context,
     private val sessionId: String,
+    /** The engine reported a machine Turn done; [heard] is false when nothing plausibly played. */
+    private val played: (heard: Boolean) -> Unit = {},
     private val ended: (id: Long, atNs: Long) -> Unit,
 ) : Speaker {
     private val am = context.getSystemService(AudioManager::class.java)
@@ -210,6 +214,7 @@ class EchoSpeaker(
                     Log.w(TAG, "Session $sessionId echo ${p.id}: TTS reported done but nothing plausibly played (${why.joinToString("; ")})")
                 }
                 ended(p.id, ns)
+                played(why.isEmpty())
             }
         }
     }

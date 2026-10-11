@@ -17,7 +17,9 @@ object TurnJson {
         append("  \"audio\": { \"file\": ").str(a.file)
         append(", \"sha256\": ").str(a.sha256)
         append(", \"sample_rate\": ").append(a.sampleRate)
-        append(", \"duration_ms\": ").append(a.durationMs).append(" },\n")
+        append(", \"duration_ms\": ").append(a.durationMs)
+        a.silent?.let { append(", \"silent\": ").append(it) }
+        append(" },\n")
         turn.vad?.let { v ->
             append("  \"vad\": { \"speech_ms\": ").append(v.speechMs)
             append(", \"trailing_silence_ms\": ").append(v.trailingSilenceMs).append(" },\n")
@@ -62,6 +64,7 @@ object TurnJson {
             append("    \"tts_phrases\": ").strList(t.ttsPhrases).append("\n")
             append("  },\n")
         }
+        if (turn.recovered) append("  \"recovered\": true,\n")
         append("  \"app_version\": ").str(turn.appVersion).append(",\n")
         append("  \"tombstoned_by\": ").strOrNull(turn.tombstonedBy).append("\n")
         append("}\n")

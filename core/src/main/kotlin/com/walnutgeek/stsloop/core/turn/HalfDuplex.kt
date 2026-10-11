@@ -113,7 +113,20 @@ class HalfDuplex(
     /** Any thread: echo a published Turn's transcript. Nothing to say ([EchoText]) or no speaker: ignored. */
     fun echo(transcript: String?) {
         if (speaker == null) return
-        val text = EchoText.of(transcript) ?: return
+        say(EchoText.of(transcript) ?: return)
+    }
+
+    /**
+     * Any thread: say [text] as it is written, as a machine Turn under the same
+     * rules as an echo (into Silence, mic closed). For what the loop has to say
+     * on its own account, such as a failure it noticed. No speaker: ignored.
+     */
+    fun announce(text: String) {
+        if (speaker == null || text.isBlank()) return
+        say(text)
+    }
+
+    private fun say(text: String) {
         synchronized(lock) {
             if (!finished) return run { pending.add(text) }
         }
