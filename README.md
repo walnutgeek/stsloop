@@ -201,15 +201,25 @@ as a warning, and the Session end logs the counts.
 mise exec -- adb logcat -s stsloop.Echo stsloop.TurnCapture stsloop.Session
 ```
 
-### Scratch that
+### Commands
 
-Saying just "scratch that" (or "discard that") tombstones the last Turn the
-loop read back to you in this Session, and the loop says "dropped." (or
-"nothing to drop."). The dropped Turn stays in the Corpus, audio and all; the
-command is a Turn of its own, `kind: "command"`, whose `tombstones` names the
-dropped Turn's directory. The transcript list strikes the dropped Turn
-through. A Note that only contains the phrase is stored, not obeyed. The
-rules in full are in `docs/mvp.md`, "Commands".
+Each is obeyed only when it is the whole utterance ("um" and "okay" at
+either end aside), and each is stored as a Turn of its own,
+`kind: "command"`. A Note that only contains the phrase is stored, not
+obeyed. They act on the last Turn the loop read back to you in this
+Session:
+
+- **"Scratch that"** (or "discard that") tombstones it, and the loop says
+  "dropped." (or "nothing to drop."). The dropped Turn stays in the Corpus,
+  audio and all; the command's `tombstones` names the dropped Turn's
+  directory, and the transcript list strikes the dropped Turn through.
+- **"Repeat"** (or "say that again") reads its transcript back again.
+- **"What bucket"** (or "which bucket") says its Bucket, or "no bucket.".
+- **"Stop listening"** (or "end session") says "stopped listening." and ends
+  the Session, as the Stop button does. The current model may hear "end
+  session" as "in session", which is stored as a Turn instead.
+
+The rules in full are in `docs/mvp.md`, "Commands".
 
 ### Reading the Corpus on Linux
 

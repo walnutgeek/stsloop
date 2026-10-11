@@ -62,6 +62,12 @@ class TurnCapture(
     testOf: ((Utterance) -> TurnTest?)? = null,
     /** Speaks each Turn's echo, reporting its end through [spoken]; null means no echo, and the mic never closes. */
     speaker: Speaker? = null,
+    /**
+     * "Stop listening" (#14): [turn] is in the Corpus and its reply has been
+     * said (or never will be: no speaker, or the Session ended first). End the
+     * Session. Called on the capture or the STT thread.
+     */
+    private val endSession: (turn: Turn) -> Unit = {},
     /** Called on the STT thread after each Turn is published, with the stream range it holds. */
     private val onTurn: (Turn, Utterance, SttTiming?) -> Unit = { _, _, _ -> },
 ) {
@@ -75,6 +81,11 @@ class TurnCapture(
                 // Turn says its reply ("dropped.") instead of its transcript.
                 loop.echo(say)
                 onTurn(turn, utterance, timing)
+            }
+
+            override fun endSession(turn: Turn, say: String) {
+                // Persisted, then said, then ended: the Session ends only once the reply is over.
+                loop.echo(say) { endSession(turn) }
             }
 
             override fun failed(utterance: Utterance, error: Exception) {

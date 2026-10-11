@@ -77,4 +77,53 @@ class CommandGrammarTest {
         // Mid-utterance it is an ordinary Declaration again.
         assertEquals("scratch", g.classify("scratch that buy screws").bucket)
     }
+
+    // --- repeat, what bucket, stop listening (#14) ---
+
+    @Test
+    fun `each phrase of each command is that command`() {
+        command("REPEAT", Command.REPEAT, "repeat")
+        command("SAY THAT AGAIN", Command.REPEAT, "say that again")
+        command("WHAT BUCKET", Command.WHAT_BUCKET, "what bucket")
+        command("WHICH BUCKET", Command.WHAT_BUCKET, "which bucket")
+        command("STOP LISTENING", Command.STOP_LISTENING, "stop listening")
+        command("END SESSION", Command.STOP_LISTENING, "end session")
+    }
+
+    @Test
+    fun `fillers around them are allowed as for scratch that`() {
+        command("okay, repeat", Command.REPEAT, "repeat")
+        command("um which bucket", Command.WHAT_BUCKET, "which bucket")
+        command("OK STOP LISTENING", Command.STOP_LISTENING, "stop listening")
+    }
+
+    @Test
+    fun `a Note merely containing repeat is stored, not obeyed`() {
+        notACommand("repeat the prescription order")
+        notACommand("call mom and repeat the question")
+        notACommand("REPEAT REPEAT")
+        notACommand("please say that again")
+        notACommand("what bucket is the roof in")
+        notACommand("stop listening to that podcast")
+        notACommand("end session notes for the meeting")
+        // A Declared Note whose content is a command phrase stays a Note.
+        assertEquals(TurnKind.NOTE, grammar.classify("errands, repeat").kind)
+        assertEquals(TurnKind.NOTE, grammar.classify("work end session").kind)
+    }
+
+    @Test
+    fun `near misses the recognizer may produce are Notes, not fuzzy commands`() {
+        // No fuzzy matching: ambiguity resolves toward storing.
+        notACommand("REPEAT IT")
+        notACommand("WHAT BUCKETS")
+        notACommand("STOP LISTEN")
+        notACommand("STOPPED LISTENING")
+        notACommand("AND SESSION")
+    }
+
+    @Test
+    fun `no phrase belongs to two commands`() {
+        val phrases = Command.entries.flatMap { it.phrases }
+        assertEquals(phrases.size, phrases.toSet().size)
+    }
 }

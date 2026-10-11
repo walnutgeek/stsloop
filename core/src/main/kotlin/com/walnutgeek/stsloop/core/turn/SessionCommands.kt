@@ -16,36 +16,68 @@ import com.walnutgeek.stsloop.core.Turn
  * account only once that Turn is in the Corpus. A command Turn that fails
  * to write has done nothing, and the loop says nothing for it.
  *
- * "Scratch that" ([Command.SCRATCH_THAT]) drops **what the loop last read
- * back to you**, or is about to: the most recent Turn of this Session that
- * is not a command and has a transcript worth echoing ([EchoText]), whether
- * or not its echo has played yet (it may still be waiting for Silence, and a
- * test Session echoes nothing). So:
+ * Every command but "stop listening" acts on the **previous Turn**: what the
+ * loop last read back to you, or is about to. That is the most recent Turn
+ * of this Session that is not a command and has a transcript worth echoing
+ * ([EchoText]), whether or not its echo has played yet (it may still be
+ * waiting for Silence, and a test Session echoes nothing). So:
  * - Turns with no transcript, or an empty one (noise the recognizer heard
  *   nothing in), are skipped: the person never heard them, and they are not
  *   what "that" means.
- * - Command Turns are skipped too.
- * - If that Turn is already tombstoned, there is nothing to drop: a repeated
- *   "scratch that" (say, because "dropped." went unheard) never reaches a
- *   second Turn further back.
+ * - Command Turns are skipped too, so "repeat" twice repeats the same Turn.
+ * - If that Turn is tombstoned, no command reaches a Turn further back:
+ *   "scratch that" says [NOTHING_TO_DROP] (a repeated "scratch that", say
+ *   because "dropped." went unheard, never drops a second Turn), and
+ *   "repeat" and "what bucket" say [WAS_DROPPED].
  * - Only this Session: a Session is started and ended deliberately, so a
- *   new one starts with nothing to drop.
+ *   new one starts with no previous Turn.
  *
- * When there is nothing to drop, the command Turn is still written (with
- * `tombstones: null`) and the loop says [NOTHING_TO_DROP].
+ * The replies:
+ * - [Command.SCRATCH_THAT]: tombstones the previous Turn and says [DROPPED];
+ *   with none, the command Turn is still written (`tombstones: null`) and
+ *   says [NOTHING_TO_DROP].
+ * - [Command.REPEAT]: says its transcript again, or [NOTHING_TO_REPEAT].
+ * - [Command.WHAT_BUCKET]: says its Bucket's name ([spoken]), [NO_BUCKET]
+ *   when it has none (an undeclared Turn), or [NOTHING_SAID_YET].
+ * - [Command.STOP_LISTENING]: says [STOPPED_LISTENING] and [Outcome.endsSession].
  */
 class SessionCommands {
-    /** What a command does: the [classification] its Turn is written with, and what the loop says back. */
-    data class Outcome(val classification: Classification, val say: String)
+    /**
+     * What a command does: the [classification] its Turn is written with, what
+     * the loop says back, and whether the Session ends once that is said.
+     */
+    data class Outcome(val classification: Classification, val say: String, val endsSession: Boolean = false)
 
-    /** Directory name of the Turn "scratch that" would drop now, or null. */
-    private var dropTarget: String? = null
+    /** The previous Turn, or null. */
+    private var previous: Turn? = null
+
+    /** Whether [previous] has been tombstoned. */
+    private var dropped = false
 
     /** The effect of [invocation], given the Turns published so far. Changes nothing until [published]. */
-    fun plan(invocation: CommandInvocation): Outcome = when (invocation.command) {
-        Command.SCRATCH_THAT -> {
-            val target = dropTarget
-            Outcome(Classification.command(invocation.copy(tombstones = target)), if (target != null) DROPPED else NOTHING_TO_DROP)
+    fun plan(invocation: CommandInvocation): Outcome {
+        val turn = previous?.takeUnless { dropped }
+        val plain = Classification.command(invocation)
+        return when (invocation.command) {
+            Command.SCRATCH_THAT ->
+                Outcome(Classification.command(invocation.copy(tombstones = turn?.directoryName)), if (turn != null) DROPPED else NOTHING_TO_DROP)
+            Command.REPEAT -> Outcome(
+                plain,
+                when {
+                    previous == null -> NOTHING_TO_REPEAT
+                    turn == null -> WAS_DROPPED
+                    else -> turn.transcript!!.text
+                },
+            )
+            Command.WHAT_BUCKET -> Outcome(
+                plain,
+                when {
+                    previous == null -> NOTHING_SAID_YET
+                    turn == null -> WAS_DROPPED
+                    else -> turn.classification?.bucket?.let(::spoken) ?: NO_BUCKET
+                },
+            )
+            Command.STOP_LISTENING -> Outcome(plain, STOPPED_LISTENING, endsSession = true)
         }
     }
 
@@ -53,8 +85,11 @@ class SessionCommands {
     fun published(turn: Turn) {
         val command = turn.classification?.command
         when {
-            command != null -> if (command.tombstones != null) dropTarget = null
-            EchoText.of(turn.transcript?.text) != null -> dropTarget = turn.directoryName
+            command != null -> if (command.tombstones != null) dropped = true
+            EchoText.of(turn.transcript?.text) != null -> {
+                previous = turn
+                dropped = false
+            }
         }
     }
 
@@ -64,5 +99,23 @@ class SessionCommands {
 
         /** Said when "scratch that" finds nothing to drop. */
         const val NOTHING_TO_DROP = "nothing to drop."
+
+        /** Said when "repeat" or "what bucket" finds the previous Turn tombstoned. */
+        const val WAS_DROPPED = "that was dropped."
+
+        /** Said when "repeat" finds no previous Turn. */
+        const val NOTHING_TO_REPEAT = "nothing to repeat."
+
+        /** Said when "what bucket" finds no previous Turn. */
+        const val NOTHING_SAID_YET = "nothing said yet."
+
+        /** Said when "what bucket" finds the previous Turn in no Bucket. */
+        const val NO_BUCKET = "no bucket."
+
+        /** Said before "stop listening" ends the Session. */
+        const val STOPPED_LISTENING = "stopped listening."
+
+        /** A Bucket's name as words a TTS engine reads: `house-project` → "house project.". */
+        fun spoken(bucket: String): String = bucket.replace('-', ' ').replace('_', ' ').trim() + "."
     }
 }

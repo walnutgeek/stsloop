@@ -137,12 +137,21 @@ data class Classification(
  * `command.name` in `turn.json`, [phrases] what may be said for it. The
  * phrase grammar obeys a phrase only when it is the whole utterance.
  *
- * To add one (#14): an entry here, and its effect in
+ * To add one: an entry here, and its effect in
  * [com.walnutgeek.stsloop.core.turn.SessionCommands.plan]. The grammar needs no change.
  */
 enum class Command(val json: String, val phrases: List<String>) {
     /** Tombstones the previous Turn (see [com.walnutgeek.stsloop.core.turn.SessionCommands]). */
     SCRATCH_THAT("scratch_that", listOf("scratch that", "discard that")),
+
+    /** Says the previous Turn's transcript again. */
+    REPEAT("repeat", listOf("repeat", "say that again")),
+
+    /** Says the Bucket the previous Turn was assigned to. */
+    WHAT_BUCKET("what_bucket", listOf("what bucket", "which bucket")),
+
+    /** Ends the Session, once its reply has been said. */
+    STOP_LISTENING("stop_listening", listOf("stop listening", "end session")),
 }
 
 /**

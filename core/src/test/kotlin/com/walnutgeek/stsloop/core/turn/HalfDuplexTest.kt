@@ -368,4 +368,76 @@ class HalfDuplexTest {
         loop.finish()
         assertEquals(CloseReason.SESSION_END, sink.closed.single().first.closedBy)
     }
+
+    // --- then: what happens once a reply is over ("stop listening", #14) ---
+
+    @Test
+    fun `then runs once its machine Turn reports its end, not before`() {
+        var ran = 0
+        quiet(100)
+        loop.echo("STOPPED LISTENING") { ran++ }
+        quiet(10)
+        tts(200)
+        assertEquals(0, ran)
+        done()
+        assertEquals(0, ran) // the end is taken on the capture thread, at the next chunk
+        tts(10)
+        assertEquals(1, ran)
+        tts(500)
+        assertEquals(1, ran)
+    }
+
+    @Test
+    fun `then waits for the echoes queued before it and its own`() {
+        val log = mutableListOf<String>()
+        speech(200)
+        loop.echo("ONE")
+        loop.echo("TWO") { log += "then" }
+        quiet(100) // Silence: ONE starts
+        quiet(10)
+        done()
+        tts(10) // TWO starts, back to back
+        assertEquals(listOf("one", "two"), speaker.said.map { it.second })
+        assertEquals(emptyList<String>(), log)
+        done()
+        tts(10)
+        assertEquals(listOf("then"), log)
+    }
+
+    @Test
+    fun `then runs when its machine Turn is lost`() {
+        var ran = 0
+        quiet(100)
+        loop.echo("HI") { ran++ }
+        quiet(10)
+        tts(HalfDuplex.speakingLimitMs("hi").toInt() + 10)
+        assertEquals(1, ran)
+        assertTrue("lost 1" in events.log)
+    }
+
+    @Test
+    fun `with no speaker or nothing to say then runs at once`() {
+        var ran = 0
+        HalfDuplex(segmenter, timings, 1000, speaker = null, listener = events).echo("BYE") { ran++ }
+        assertEquals(1, ran)
+        loop.echo("  ") { ran++ }
+        assertEquals(2, ran)
+    }
+
+    @Test
+    fun `then still runs exactly once when the Session ends first`() {
+        var queued = 0
+        var speaking = 0
+        var late = 0
+        quiet(100)
+        loop.echo("ONE") { speaking++ }
+        loop.echo("TWO") { queued++ }
+        quiet(10)
+        loop.finish()
+        loop.echo("THREE") { late++ }
+        assertEquals(listOf(1, 1, 1), listOf(speaking, queued, late))
+        done()
+        loop.finish()
+        assertEquals(listOf(1, 1, 1), listOf(speaking, queued, late))
+    }
 }

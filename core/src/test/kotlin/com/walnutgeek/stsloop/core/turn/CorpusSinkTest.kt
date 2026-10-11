@@ -71,6 +71,7 @@ class CorpusSinkTest {
     private val timings = mutableListOf<SttTiming?>()
     private val failures = mutableListOf<Pair<Utterance, Exception>>()
     private val said = mutableListOf<String?>()
+    private val ends = mutableListOf<Turn>()
     private var ids = 0
     private val sink = CorpusSink(
         writer, sessionId = "5e5510", sessionStartedAtMs = 1_000_000, sampleRate = 1000, appVersion = "t",
@@ -83,6 +84,11 @@ class CorpusSinkTest {
                 said += say
             }
             override fun failed(utterance: Utterance, error: Exception) { failures += utterance to error }
+            override fun endSession(turn: Turn, say: String) {
+                assertEquals(turn, published.last().first) // only once it is in the Corpus
+                ends += turn
+                said += say
+            }
         },
     )
 
@@ -352,5 +358,122 @@ class CorpusSinkTest {
         )
         next.closed(u(0, 500), pcm(500), transcribed("SCRATCH THAT"))
         assertNull(published.last().first.tombstones)
+    }
+
+    // --- repeat, what bucket, stop listening (#14) ---
+
+    private val Turn.command: CommandInvocation? get() = classification?.command
+
+    @Test
+    fun `repeat re-speaks the previous transcript as the engine wrote it`() {
+        say("ERRANDS BUY MILK")
+        val repeat = say("REPEAT")
+        assertEquals(TurnKind.COMMAND, repeat.kind)
+        assertEquals(CommandInvocation(Command.REPEAT, "repeat"), repeat.command)
+        assertEquals(listOf("ERRANDS BUY MILK", "ERRANDS BUY MILK"), said)
+    }
+
+    @Test
+    fun `repeat again repeats the same Turn, skipping commands and Turns with nothing to echo`() {
+        say("I NEED TO WORK ON THE ROOF")
+        say("")
+        say(null)
+        say("SAY THAT AGAIN")
+        say("WHAT BUCKET")
+        say("REPEAT")
+        assertEquals(
+            listOf("I NEED TO WORK ON THE ROOF", "", null, "I NEED TO WORK ON THE ROOF", "no bucket.", "I NEED TO WORK ON THE ROOF"),
+            said,
+        )
+    }
+
+    @Test
+    fun `with nothing before it repeat says so`() {
+        say("REPEAT")
+        assertEquals(listOf("nothing to repeat."), said)
+    }
+
+    @Test
+    fun `a scratched Turn is neither repeated nor asked about, and nothing further back is reached`() {
+        say("ERRANDS BUY BREAD")
+        say("ERRANDS BUY MILK")
+        say("SCRATCH THAT")
+        say("REPEAT")
+        say("WHICH BUCKET")
+        assertEquals(listOf("that was dropped.", "that was dropped."), said.takeLast(2))
+    }
+
+    @Test
+    fun `what bucket says the previous Turn's Bucket, as words`() {
+        say("ERRANDS BUY MILK")
+        val ask = say("WHAT BUCKET")
+        assertEquals(CommandInvocation(Command.WHAT_BUCKET, "what bucket"), ask.command)
+        assertEquals("errands.", said.last())
+        say("HOUSE PROJECT CHECK THE JOISTS")
+        say("WHICH BUCKET")
+        assertEquals("house project.", said.last())
+    }
+
+    @Test
+    fun `what bucket for an undeclared Turn says it has none`() {
+        say("ORDER ROOFING SCREWS")
+        say("WHAT BUCKET")
+        assertEquals("no bucket.", said.last())
+    }
+
+    @Test
+    fun `with nothing before it what bucket says so`() {
+        say("WHAT BUCKET")
+        assertEquals(listOf("nothing said yet."), said)
+    }
+
+    @Test
+    fun `stop listening is persisted, acknowledged, then ends the Session`() {
+        say("ERRANDS BUY MILK")
+        val stop = say("STOP LISTENING")
+        assertEquals(TurnKind.COMMAND, stop.kind)
+        assertEquals(CommandInvocation(Command.STOP_LISTENING, "stop listening"), stop.command)
+        // The reply goes with the end, not the echo, so the Session ends only once it is said.
+        assertEquals(listOf("ERRANDS BUY MILK", null, "stopped listening."), said)
+        assertEquals(listOf(stop), ends)
+        say("END SESSION")
+        assertEquals(2, ends.size)
+    }
+
+    @Test
+    fun `only stop listening ends the Session`() {
+        for (text in listOf("ERRANDS BUY MILK", "REPEAT", "WHAT BUCKET", "SCRATCH THAT", "STOP LISTENING TO THAT PODCAST")) say(text)
+        assertEquals(emptyList<Turn>(), ends)
+    }
+
+    @Test
+    fun `a stop listening that fails to write ends nothing and says nothing`() {
+        writer.failFinishOn = 1
+        sink.closed(u(0, 500), pcm(500), transcribed("STOP LISTENING"))
+        assertEquals(emptyList<Turn>(), ends)
+        assertEquals(emptyList<String?>(), said)
+    }
+
+    @Test
+    fun `a Note merely containing repeat is stored and echoed`() {
+        val note = say("ERRANDS REPEAT THE PRESCRIPTION ORDER")
+        assertEquals(TurnKind.NOTE, note.kind)
+        assertEquals("repeat the prescription order", note.classification!!.content)
+        assertEquals(listOf("ERRANDS REPEAT THE PRESCRIPTION ORDER"), said)
+    }
+
+    @Test
+    fun `each Session starts with nothing to repeat`() {
+        say("ERRANDS BUY MILK")
+        val heard = mutableListOf<String?>()
+        val next = CorpusSink(
+            writer, "5e5511", 2_000_000, 1000, "t", PhraseGrammar(BucketConfig.DEFAULT), newId = { "id${++ids}" },
+            listener = object : CorpusSink.Listener {
+                override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) { heard += say }
+            },
+        )
+        next.closed(u(0, 500), pcm(500), transcribed("REPEAT"))
+        next.closed(u(1000, 1500), pcm(500), transcribed("WHAT BUCKET"))
+        assertEquals(listOf("nothing to repeat.", "nothing said yet."), heard)
     }
 }
