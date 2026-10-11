@@ -12,7 +12,12 @@ import com.walnutgeek.stsloop.core.speech.modelId
  * through the chokepoint without hotwords (no Bucket Word lists yet). Every
  * call must come from one thread.
  */
-class SttRecognizer(private val stt: Stt) : StreamingRecognizer {
+class SttRecognizer(
+    private val stt: Stt,
+    /** Zeros fed before `inputFinished`, so the encoder's last chunk is complete. */
+    tailPaddingMs: Int = TAIL_PADDING_MS,
+) : StreamingRecognizer {
+    private val tailPadding = FloatArray(SAMPLE_RATE_HZ / 1000 * tailPaddingMs)
     override val engine = ENGINE
     override val model = stt.spec.modelId
 
@@ -26,10 +31,10 @@ class SttRecognizer(private val stt: Stt) : StreamingRecognizer {
             drain()
         }
 
-        /** The engine's raw text, unaltered: this model emits upper case without punctuation. */
+        /** The engine's raw text, unaltered: this model emits mixed case with some punctuation. */
         override fun finish(): String {
-            // Zeros past the end push the last frames through the encoder's chunk.
-            stream.acceptWaveform(TAIL_PADDING, SAMPLE_RATE_HZ)
+            // Zeros past the end push the last frames into an encoder chunk.
+            stream.acceptWaveform(tailPadding, SAMPLE_RATE_HZ)
             stream.inputFinished()
             drain()
             return stt.text(stream)
@@ -45,8 +50,15 @@ class SttRecognizer(private val stt: Stt) : StreamingRecognizer {
     companion object {
         const val ENGINE = "sherpa-onnx"
 
-        /** 300 ms, as in the #6 benchmark; a silence-closed Turn already ends in 1.5 s of room tone. */
-        private val TAIL_PADDING = FloatArray(SAMPLE_RATE_HZ * 3 / 10)
+        /**
+         * 1.2 s, as in the #8 offline A/B. The shipped model decodes in 560 ms
+         * chunks, drops an incomplete last one, and emits a word only well
+         * after it is spoken: with 300 ms, TTS "scratch that" followed by
+         * 0.5 s of silence came out as "Scratch", and one of 20 drive
+         * Recordings lost its last word even after 1.5 s of Silence. It costs
+         * about 100 ms of median latency (325 ms against 219 ms, #30).
+         */
+        const val TAIL_PADDING_MS = 1200
 
         /** Loads the shipped model. A missing native library throws a [LinkageError]. */
         fun load(assets: AssetManager): SttRecognizer = SttRecognizer(Stt(assets))

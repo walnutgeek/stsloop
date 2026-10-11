@@ -81,6 +81,15 @@ class HotwordsGateTest {
         assertRefused(hotwordCapable.copy(modelType = type))
     }
 
+    @Test
+    fun `hotwords are refused on the shipped NeMo transducer config (nemotron, greedy_search, no bpe vocab)`() {
+        // sherpa-onnx v1.13.8's NeMo streaming impl has no hotwords override: it would _Exit.
+        val nemotron = hotwordCapable.copy(modelType = "", decodingMethod = "greedy_search", modelingUnit = "", bpeVocab = "")
+        assertRefused(nemotron)
+        assertEquals(HotwordsDecision.NoHotwords, HotwordsGate.decide(nemotron, ""))
+        assertNull(HotwordsGate.configRefusal(nemotron))
+    }
+
     @ParameterizedTest
     @ValueSource(strings = ["zipformer", "zipformer2", "lstm", "conformer"])
     fun `known zipformer-family model types pass`(type: String) {

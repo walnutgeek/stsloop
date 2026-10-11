@@ -1,8 +1,13 @@
 ---
-status: accepted
+status: superseded by ADR-0004
 ---
 
 # Streaming Zipformer *transducer* with modified_beam_search, because hotwords are transducer-only
+
+> Superseded by [ADR-0004](./0004-nemotron-streaming-stt.md): the zipformer's
+> recognition was too poor to keep, so the app now ships a streaming NeMo
+> transducer without hotwords until a sherpa-onnx bump. Hotwords are still
+> how Refinement is meant to work, and the chokepoint still guards them.
 
 The STT model is `sherpa-onnx-streaming-zipformer-en-2023-06-26` (int8,
 `chunk-16-left-128`), configured with `decodingMethod = "modified_beam_search"`,
