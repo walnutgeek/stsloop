@@ -38,6 +38,7 @@ import com.walnutgeek.stsloop.core.turn.SttTiming
 import com.walnutgeek.stsloop.core.Wav
 import com.walnutgeek.stsloop.core.testmode.TestConfig
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * A Session: a `microphone`-typed foreground service that owns the mic from
@@ -49,6 +50,12 @@ import java.io.File
  * however it ends. Speech recognition is sherpa-onnx only:
  * the system SpeechRecognizer is never started, because it would capture
  * the same mic and one of the two would silently get silence.
+ *
+ * Failures Android does not report by throwing are noticed and said aloud
+ * (#15, [TurnCapture]): a silenced recording ([SilencedWatch]), a mic stream
+ * of zeros, a silent Recording, an echo that nothing played. Before the first
+ * Session of each process, Turns a dead process left staged are published
+ * ([FileCorpusWriter.recover]).
  *
  * Its notification is the Session's eyes-free control surface: Stop while a
  * Session runs and, once it ends, a detached plain notification that keeps
@@ -72,6 +79,9 @@ class SessionService : Service() {
         // A teardown hurries the capture first (no more decoding), so all that is
         // left is at most one in-flight native call (~0.2 s) and the Turn writes.
         private const val DESTROY_JOIN_MS = 5_000L
+
+        /** Staged Turns are recovered once per process: before its first Session, no Turn of ours is staged. */
+        private val recoveryDone = AtomicBoolean()
 
         /** Owned by the main thread; readable anywhere for display. */
         @Volatile
@@ -272,7 +282,9 @@ class SessionService : Service() {
         var test: TestModeSession? = null
         var route: AudioRoute? = null
         var echo: EchoSpeaker? = null
+        var silencedWatch: SilencedWatch? = null
         try {
+            if (recoveryDone.compareAndSet(false, true)) recoverStaged(writer)
             val timings = TurnCapture.loadTimings(filesDir)
             Log.i(TAG, "Session $sessionId timings: ${timings.toJson().replace(Regex("\\s+"), " ")}")
             val buckets = TurnCapture.loadBuckets(filesDir)
@@ -309,7 +321,11 @@ class SessionService : Service() {
                         else -> "hands-free ${AudioRoute.describe(handsFree.device)}, its mic ${handsFree.input?.let(AudioRoute::describe)}"
                     },
                 )
-                echo = EchoSpeaker(this, sessionId) { id, atNs -> turnCapture?.spoken(id, atNs) }.also { it.start() }
+                echo = EchoSpeaker(
+                    this, sessionId,
+                    ended = { id, atNs -> turnCapture?.spoken(id, atNs) },
+                    played = { heard -> turnCapture?.played(heard) },
+                ).also { it.start() }
             }
             val minBytes = AudioRecord.getMinBufferSize(
                 SAMPLE_RATE_HZ, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
@@ -350,6 +366,10 @@ class SessionService : Service() {
             }
             capture = turns
             turnCapture = turns
+            silencedWatch = SilencedWatch(getSystemService(AudioManager::class.java), record, main) { silenced ->
+                Log.w(TAG, "Session $sessionId: recording ${if (silenced) "silenced by another capture client" else "no longer silenced"}")
+                turns.clientSilenced(silenced)
+            }.also { it.start() }
 
             val buf = ShortArray(CHUNK_SAMPLES)
             var peak = 0
@@ -363,14 +383,14 @@ class SessionService : Service() {
                 testMode?.captured(samples, readAtNs, buf, n)
                 turns.accept(buf, n, readAtNs)
             }
+            silencedWatch.close()
             record.stop()
             turns.finish()
-            if (peak == 0) Log.w(TAG, "Session $sessionId captured only zeros: the mic was silenced")
             Log.i(
                 TAG,
                 "Session $sessionId ended: ${Wav.durationMs(samples, SAMPLE_RATE_HZ)} ms captured, " +
                     "${turns.publishedTurns} Turns (${turns.untranscribedTurns} without a transcript), " +
-                    "${turns.failedTurns} failed to write, peak $peak",
+                    "${turns.failedTurns} failed to write, peak $peak, ${turns.announced} silent failures said",
             )
         } catch (e: Throwable) {
             // Errors too: a native library missing or broken mid-Session must not lose the open Turn.
@@ -383,6 +403,7 @@ class SessionService : Service() {
             capture?.let { c -> runCatching { c.finish() }.onFailure { Log.e(TAG, "Session $sessionId lost its open Turn", it) } }
         } finally {
             turnCapture = null
+            silencedWatch?.let { w -> runCatching { w.close() } }
             test?.let { t -> runCatching { t.close() }.onFailure { Log.e(TAG, "Session $sessionId: test mode did not close cleanly", it) } }
             echo?.let { e -> runCatching { e.close() }.onFailure { Log.e(TAG, "Session $sessionId: the echo did not close cleanly", it) } }
             record?.release()
@@ -405,6 +426,22 @@ class SessionService : Service() {
             postControls()
         }
         super.onDestroy()
+    }
+
+    /** Publishes the Turns a dead process left staged, and says in the log what became of each. */
+    private fun recoverStaged(writer: FileCorpusWriter) {
+        val results = try {
+            writer.recover(appVersion(), SAMPLE_RATE_HZ)
+        } catch (e: Exception) {
+            Log.e(TAG, "cannot recover staged Turns", e)
+            return
+        }
+        for (r in results) when (r.outcome) {
+            FileCorpusWriter.Outcome.FAILED -> Log.e(TAG, "staged Turn ${r.name} could not be recovered; left staged", r.error)
+            FileCorpusWriter.Outcome.LEFT -> Log.w(TAG, "staged ${r.name} is not a Turn that can be published; left staged")
+            else -> Log.w(TAG, "staged Turn ${r.name} from an earlier process: ${r.outcome.name.lowercase()}" +
+                (r.turn?.let { " (${it.audio.durationMs} ms, session ${it.sessionId})" } ?: ""))
+        }
     }
 
     private fun appVersion(): String =

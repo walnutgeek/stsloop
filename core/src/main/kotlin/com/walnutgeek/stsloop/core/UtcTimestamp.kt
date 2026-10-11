@@ -19,6 +19,27 @@ object UtcTimestamp {
         return "${pad(y, 4)}-${pad(m, 2)}-${pad(d, 2)}T${pad(h, 2)}:${pad(min, 2)}:${pad(s, 2)}.${pad(ms, 3)}Z"
     }
 
+    private val FORMAT = Regex("""(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z""")
+
+    /** The inverse of [format]: epoch milliseconds, or null unless [s] is exactly what [format] writes. */
+    fun parse(s: String): Long? {
+        val g = FORMAT.matchEntire(s)?.groupValues?.drop(1)?.map(String::toLong) ?: return null
+        val (y, m, d) = g
+        if (m !in 1..12 || d !in 1..31) return null
+        val ms = daysFromCivil(y, m, d) * MS_PER_DAY + g[3] * 3_600_000 + g[4] * 60_000 + g[5] * 1000 + g[6]
+        return ms.takeIf { format(it) == s } // rejects 2026-02-30, 24:00 and the like
+    }
+
+    /** Howard Hinnant's days-from-civil (proleptic Gregorian). */
+    private fun daysFromCivil(year: Long, m: Long, d: Long): Long {
+        val y = if (m <= 2) year - 1 else year
+        val era = y.floorDiv(400L)
+        val yoe = y - era * 400
+        val doy = (153 * (if (m > 2) m - 3 else m + 9) + 2) / 5 + d - 1
+        val doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+        return era * 146_097 + doe - 719_468
+    }
+
     private fun pad(v: Long, width: Int) = v.toString().padStart(width, '0')
 
     /** Howard Hinnant's days-from-civil inverse (proleptic Gregorian). */

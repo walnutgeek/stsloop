@@ -127,6 +127,20 @@ class HalfDuplex(
     fun echo(said: String?, then: (() -> Unit)? = null) {
         val text = EchoText.of(said)
         if (speaker == null || text == null) return run { then?.invoke() }
+        say(text, then)
+    }
+
+    /**
+     * Any thread: say [text] as it is written, as a machine Turn under the same
+     * rules as an echo (into Silence, mic closed). For what the loop has to say
+     * on its own account, such as a failure it noticed. No speaker: ignored.
+     */
+    fun announce(text: String) {
+        if (speaker == null || text.isBlank()) return
+        say(text, null)
+    }
+
+    private fun say(text: String, then: (() -> Unit)?) {
         synchronized(lock) {
             if (!finished) return run { pending.add(Reply(text, then)) }
         }
