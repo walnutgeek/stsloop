@@ -35,6 +35,11 @@ object Wav {
         }
     }
 
+    /** The inverse of [pcm16ToLittleEndian]: reads [count] samples from [bytes] into [out]. */
+    fun littleEndianToPcm16(bytes: ByteArray, count: Int, out: ShortArray) {
+        for (i in 0 until count) out[i] = ((bytes[2 * i].toInt() and 0xff) or (bytes[2 * i + 1].toInt() shl 8)).toShort()
+    }
+
     fun durationMs(samples: Long, sampleRate: Int): Long = samples * 1000 / sampleRate
 
     private fun ascii(b: ByteArray, at: Int, s: String) = s.forEachIndexed { i, c -> b[at + i] = c.code.toByte() }

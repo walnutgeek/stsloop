@@ -199,6 +199,36 @@ class HalfDuplexTest {
     // --- the floor: a transcript arriving while a human Turn is being captured ---
 
     @Test
+    fun `an announcement is said as written, into Silence, with the mic closed`() {
+        quiet(100)
+        loop.announce("The microphone is silenced by another app.")
+        quiet(10)
+        assertEquals(SPEAKING, loop.state)
+        assertEquals(listOf(1L to "The microphone is silenced by another app."), speaker.said)
+        val judged = vadSeen.size
+        tts(500)
+        assertEquals(judged, vadSeen.size)
+    }
+
+    @Test
+    fun `an announcement waits for the human Turn being captured, like an echo`() {
+        speech(100)
+        loop.announce("That recording was silent.")
+        speech(100)
+        assertEquals(emptyList<Pair<Long, String>>(), speaker.said)
+        quiet(100)
+        assertEquals(listOf(1L to "That recording was silent."), speaker.said)
+    }
+
+    @Test
+    fun `nothing is announced without a speaker`() {
+        val off = HalfDuplex(Segmenter(timings, 1000, 10, vad, Sink()), timings, 1000, speaker = null)
+        off.announce("anything")
+        off.accept(ShortArray(10), 10, 10 * MS)
+        assertEquals(emptyList<Pair<Long, String>>(), speaker.said)
+    }
+
+    @Test
     fun `a transcript arriving while a new Turn is captured waits for its Silence`() {
         speech(200)
         quiet(100) // Turn 1 closes at 300

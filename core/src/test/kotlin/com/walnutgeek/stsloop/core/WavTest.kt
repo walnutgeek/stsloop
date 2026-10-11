@@ -47,4 +47,14 @@ class WavTest {
         assertEquals(4471, Wav.durationMs(samples = 71_536, sampleRate = 16_000))
         assertEquals(0, Wav.durationMs(samples = 0, sampleRate = 16_000))
     }
+
+    @Test
+    fun `little-endian bytes read back as the samples they were written from`() {
+        val pcm = shortArrayOf(0, 1, -1, 255, -256, Short.MAX_VALUE, Short.MIN_VALUE, 12_345)
+        val bytes = ByteArray(pcm.size * 2)
+        Wav.pcm16ToLittleEndian(pcm, pcm.size, bytes)
+        val back = ShortArray(pcm.size)
+        Wav.littleEndianToPcm16(bytes, pcm.size, back)
+        assertArrayEquals(pcm, back)
+    }
 }

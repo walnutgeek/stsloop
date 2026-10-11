@@ -19,7 +19,8 @@ const val TURN_FILE = "turn.json"
  * classified Turn always writes `kind`, `declaration`, `bucket`,
  * `bucket_source` and `content`, as `null` where unset; a command Turn also
  * writes `command` (and, for "scratch that", `tombstones`). `test` is present
- * only for Turns recorded in Bluetooth test mode (#27).
+ * only for Turns recorded in Bluetooth test mode (#27). [recovered] marks a
+ * Turn published after a crash from what its Session had staged (#15).
  *
  * There is no `tombstoned_by`: a Turn directory never changes once
  * published, so a Turn cannot record that it was tombstoned later. Readers
@@ -36,6 +37,7 @@ data class Turn(
     val transcript: Transcript? = null,
     val classification: Classification? = null,
     val test: TurnTest? = null,
+    val recovered: Boolean = false,
 ) {
     val kind: TurnKind? get() = classification?.kind
 
@@ -45,12 +47,18 @@ data class Turn(
     val directoryName: String get() = turnDirectoryName(startedAtMs, id)
 }
 
-/** The Recording of a Turn: a 16-bit mono PCM WAV file in the Turn directory. */
+/**
+ * The Recording of a Turn: a 16-bit mono PCM WAV file in the Turn directory.
+ * [silent] says whether it is effectively silent
+ * ([com.walnutgeek.stsloop.core.failure.RecordingLevel]); null when it was
+ * not measured, and absent from the JSON then.
+ */
 data class TurnAudio(
     val file: String,
     val sha256: String,
     val sampleRate: Int,
     val durationMs: Long,
+    val silent: Boolean? = null,
 )
 
 /**
@@ -188,6 +196,15 @@ enum class BucketSource(val json: String) {
 }
 
 fun turnDirectoryName(startedAtMs: Long, id: String): String = "${UtcTimestamp.format(startedAtMs)}-$id"
+
+/** The `started_at` and id a [turnDirectoryName] was made from, or null if [name] is not one. */
+fun parseTurnDirectoryName(name: String): Pair<Long, String>? {
+    val dash = name.lastIndexOf('-')
+    if (dash <= 0) return null
+    val id = name.substring(dash + 1)
+    if (id.isEmpty() || !id.all { it in '0'..'9' || it in 'a'..'f' }) return null
+    return UtcTimestamp.parse(name.substring(0, dash))?.let { it to id }
+}
 
 /**
  * Appends Turns to the Corpus. The Corpus is append-only and a Turn directory

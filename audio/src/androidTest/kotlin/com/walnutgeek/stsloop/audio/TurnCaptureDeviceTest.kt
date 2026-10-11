@@ -210,7 +210,8 @@ class TurnCaptureDeviceTest {
         // Turns are in stream order and never overlap.
         turns.zipWithNext { (_, a), (_, b) -> assertTrue(a.endSample <= b.startSample) }
         assertEquals(3, File(root, "corpus").list()!!.size)
-        assertEquals(0, File(root, "staging").list()?.size ?: 0)
+        // Nothing is left staged: at most the Session's own, empty, staging directory.
+        assertEquals(emptyList<File>(), File(root, "staging").walk().filter { it.isFile }.toList())
     }
 
     @Test

@@ -5,6 +5,9 @@ import android.util.Log
 import com.k2fsa.sherpa.onnx.Vad
 import com.walnutgeek.stsloop.core.CorpusWriter
 import com.walnutgeek.stsloop.core.Turn
+import com.walnutgeek.stsloop.core.failure.FailureAnnouncer
+import com.walnutgeek.stsloop.core.failure.DeadMic
+import com.walnutgeek.stsloop.core.failure.SilentFailure
 import com.walnutgeek.stsloop.core.grammar.BucketConfig
 import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
 import com.walnutgeek.stsloop.core.speech.StreamingRecognizer
@@ -12,6 +15,7 @@ import com.walnutgeek.stsloop.core.testmode.TestConfig
 import com.walnutgeek.stsloop.core.testmode.TurnTest
 import com.walnutgeek.stsloop.core.turn.CorpusSink
 import com.walnutgeek.stsloop.core.turn.HalfDuplex
+import com.walnutgeek.stsloop.core.turn.LoopState
 import com.walnutgeek.stsloop.core.turn.Segmenter
 import com.walnutgeek.stsloop.core.turn.Speaker
 import com.walnutgeek.stsloop.core.turn.SpeechProbability
@@ -32,7 +36,13 @@ import java.util.concurrent.TimeUnit
  * captured, [CorpusSink] classifies it with the [PhraseGrammar] over
  * [buckets] and writes it), and each published Turn's transcript is echoed
  * through [speaker], strictly Half-duplex ([HalfDuplex]: the mic is closed
- * while the echo plays and for `guard_ms` after). Sample 0 of the stream is wall time
+ * while the echo plays and for `guard_ms` after).
+ *
+ * It also notices the loop's silent failures (#15) and says them the same
+ * way, once each ([FailureAnnouncer]): a mic stream that stays digitally
+ * silent ([DeadMic]), a Turn whose Recording is silent (`audio.silent`),
+ * and what the platform reports through [clientSilenced] and [played].
+ * Sample 0 of the stream is wall time
  * [sessionStartedAtMs]. A Turn that fails to write is logged and counted in
  * [failedTurns]; the Session carries on.
  *
@@ -43,7 +53,7 @@ import java.util.concurrent.TimeUnit
  * being fed and is written without a transcript; its audio is always kept.
  *
  * Not thread-safe: call [accept] and [finish] from the capture thread;
- * [hurry] and [spoken] may be called from any thread.
+ * [hurry], [spoken], [clientSilenced] and [played] may be called from any thread.
  */
 class TurnCapture(
     writer: CorpusWriter,
@@ -80,11 +90,13 @@ class TurnCapture(
                 // Persist, then speak (mvp.md's loop): a Turn that failed to write is not echoed. A command
                 // Turn says its reply ("dropped.") instead of its transcript.
                 loop.echo(say)
+                turn.audio.silent?.let { failures.set(SilentFailure.SILENT_RECORDING, it) }
                 onTurn(turn, utterance, timing)
             }
 
             override fun endSession(turn: Turn, say: String) {
                 // Persisted, then said, then ended: the Session ends only once the reply is over.
+                ending = true // and no failure is said after "stopped listening."
                 loop.echo(say) { endSession(turn) }
             }
 
@@ -146,7 +158,43 @@ class TurnCapture(
             }
         },
     )
+    private val failures = FailureAnnouncer(
+        clockMs = SystemClock::elapsedRealtime,
+        say = { f -> if (!ending) loop.announce(f.spoken) },
+        listener = object : FailureAnnouncer.Listener {
+            override fun announced(failure: SilentFailure) {
+                announced++
+                val how = if (speaker == null) "not spoken: no echo in this Session" else "saying \"${failure.spoken}\""
+                Log.w(TAG, "Session $sessionId: $failure ($how)")
+            }
+
+            override fun suppressed(failure: SilentFailure, because: String) {
+                Log.w(TAG, "Session $sessionId: $failure, not said: $because")
+            }
+
+            override fun cleared(failure: SilentFailure) {
+                Log.i(TAG, "Session $sessionId: $failure is over")
+            }
+        },
+    )
+    private val deadMic = DeadMic(SAMPLE_RATE_HZ) { silent, atSample ->
+        Log.w(TAG, "Session $sessionId: the mic stream is ${if (silent) "effectively silent" else "live again"} at sample $atSample")
+        failures.set(SilentFailure.MIC_SILENT, silent)
+    }
     private var finished = false
+
+    /**
+     * Set once the Session is ending ("stop listening" asked to end it, or
+     * [finish] started): a failure reported after that (a late platform
+     * callback) is not said, so nothing follows the last reply.
+     */
+    @Volatile
+    private var ending = false
+
+    /** Silent failures said (or, with no echo, that would have been); final once [finish] returns. */
+    @Volatile
+    var announced = 0
+        private set
 
     /** Published so far; final once [finish] returns. */
     val publishedTurns: Int get() = sink.published
@@ -161,8 +209,22 @@ class TurnCapture(
      * call this straight after `AudioRecord.read`. Returns without waiting for
      * decoding or writing.
      */
-    fun accept(samples: ShortArray, count: Int, capturedAtNs: Long = SystemClock.elapsedRealtimeNanos()) =
+    fun accept(samples: ShortArray, count: Int, capturedAtNs: Long = SystemClock.elapsedRealtimeNanos()) {
+        // Only what the loop listens to: while the mic is closed some routes may zero it during our own speech.
+        val open = loop.state.let { it == LoopState.LISTENING || it == LoopState.CAPTURING }
+        if (open) deadMic.accept(samples, count)
         loop.accept(samples, count, capturedAtNs)
+    }
+
+    /** Any thread: Android has (or no longer has) silenced this Session's recording for another capture client. */
+    fun clientSilenced(silenced: Boolean) = failures.set(SilentFailure.MIC_SILENCED, silenced)
+
+    /**
+     * Any thread: a machine Turn the engine reported done was [heard] (it
+     * plausibly played) or not ([EchoSpeaker]'s checks). Not heard is a
+     * failure until one is heard again.
+     */
+    fun played(heard: Boolean) = failures.set(SilentFailure.SPEECH_UNHEARD, !heard)
 
     /** Any thread: the echo [id] ended at [atNs] (`elapsedRealtimeNanos`); the guard interval starts there. */
     fun spoken(id: Long, atNs: Long) = loop.spoken(id, atNs)
@@ -183,6 +245,7 @@ class TurnCapture(
      * returns. Safe to call twice.
      */
     fun finish() {
+        ending = true
         try {
             loop.finish()
         } finally {
