@@ -388,7 +388,7 @@ Four, chosen because the loop is unusable in a car without them:
 | --- | --- |
 | "scratch that" / "discard that" | Tombstone the previous Turn (its audio is kept, see Corpus format). Say "dropped." |
 | "repeat" / "say that again" | Re-speak the previous transcript |
-| "stop listening" / "end session" | End the Session cleanly |
+| "stop listening" / "end session" | Say "stopped listening.", then end the Session cleanly |
 | "what bucket" / "which bucket" | Speak the Bucket assigned to the previous Turn |
 
 Commands are recognised only as a **whole utterance**, not as a substring. A
@@ -415,20 +415,39 @@ The rules in full (`:core` `PhraseGrammar`, `Command`, `SessionCommands`):
   like any echo: spoken into the next Silence, with the mic closed. The
   command's own transcript is not echoed.
 
-What "scratch that" drops — **what the loop last read back to you** (or is
-about to: an echo still waiting for Silence counts, and so does every Turn
-when there is no echo, as in test mode): the most recent Turn of the current
-Session that is not a command and has a transcript worth echoing. At the
-edges:
+"Scratch that", "repeat" and "what bucket" act on the **previous Turn**: **what
+the loop last read back to you** (or is about to: an echo still waiting for
+Silence counts, and so does every Turn when there is no echo, as in test
+mode), the most recent Turn of the current Session that is not a command and
+has a transcript worth echoing. At the edges:
 
 | Situation | Effect |
 | --- | --- |
 | Turns with no or an empty transcript since (noise, a recognizer failure) | Skipped: never echoed, so not what "that" means |
-| Command Turns since (e.g. "repeat") | Skipped |
-| That Turn is already tombstoned (a second "scratch that") | Nothing to drop. It never reaches a Turn further back |
-| No such Turn in this Session (including the very first Turn) | Nothing to drop. Never reaches into an earlier Session |
-| Nothing to drop | The command Turn is still written, with `tombstones: null`. Say "nothing to drop." |
+| Command Turns since (e.g. "repeat") | Skipped, so "repeat" twice repeats the same Turn |
+| That Turn is already tombstoned | No command reaches a Turn further back. "Scratch that" says "nothing to drop."; "repeat" and "what bucket" say "that was dropped." |
+| No such Turn in this Session (including the very first Turn) | Never reaches into an earlier Session. "Scratch that" says "nothing to drop.", "repeat" "nothing to repeat.", "what bucket" "nothing said yet." |
+| Nothing to drop | The command Turn is still written, with `tombstones: null` |
 | A Turn cut at max duration and continued | Only the last piece is the previous Turn |
+
+What each one says (#14):
+
+- **"Repeat"** says the previous Turn's transcript again, as it was echoed.
+- **"What bucket"** says the previous Turn's Bucket by its name, read as
+  words (`house-project` → "house project."), or "no bucket." for a Turn
+  that was not Declared.
+- **"Stop listening"** says "stopped listening." and then ends the Session
+  as the Stop button does: the foreground service leaves, the mic and the
+  route are released, and anything still being transcribed is written. The
+  acknowledgement comes first because the loop is eyes-free: without it, a
+  misheard "stop listening" and a Session that ended look the same. The
+  Session ends once the engine reports the reply's end (or the reply is
+  lost); with no echo (test mode) it ends as soon as the command Turn is
+  written. If you are already speaking again, the reply, and so the end,
+  waits for your Silence like any echo, and what you said is still a Turn;
+  noise the VAD keeps hearing as speech holds it off too, as it does every
+  echo (the Stop button still works). A "stop listening" that fails to write
+  ends nothing and says nothing, like any command.
 
 ## Corpus format
 
@@ -542,9 +561,11 @@ Design notes worth keeping:
   reader that finds a non-null one still honours it. No schema bump: the field
   was always null, and `jq` reads a missing key as null too.
 - `command` is present only on a command Turn: `name` is permanent once
-  written (`scratch_that`; #14 adds the rest), `matched` the phrase as heard,
-  normalised. `tombstones` is present only on a `scratch_that` Turn, `null`
-  when there was nothing to drop.
+  written (`scratch_that`, `repeat`, `what_bucket`, `stop_listening`),
+  `matched` the phrase as heard, normalised. `tombstones` is present only on
+  a `scratch_that` Turn, `null` when there was nothing to drop. The other
+  command Turns record nothing more: what "repeat" and "what bucket" said
+  follows from the Turns before them in the Session.
 
 ## Modules
 
@@ -614,6 +635,12 @@ These cannot be designed away and are the reason Phase 0 exists:
 - **Declaration rate.** If, in practice, you rarely remember to declare, the
   Corpus starves and Q7's bootstrap fails. The fallback is confirmation-driven
   labelling — the loop guessing aloud and learning from the correction.
+- **Whether the model hears the command phrases.** Fed the system TTS
+  voice (`CommandsDeviceTest`), the bundled model heard every phrase except
+  "end session", which came out as "IN SESSION" and is stored as an
+  undeclared Turn. Commands are not fuzzy-matched (ambiguity resolves toward
+  storing), so if that holds for a real voice in the car, "stop listening"
+  is the phrase to use, or "end session" is replaced.
 - **Whether road noise defeats the VAD**, and whether the min-utterance filter
   is enough to keep the Corpus clean.
 - **Real-time factor of `modified_beam_search` on the actual phone.** No figure

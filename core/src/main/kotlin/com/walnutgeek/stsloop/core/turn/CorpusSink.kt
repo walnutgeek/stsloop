@@ -16,7 +16,8 @@ import com.walnutgeek.stsloop.core.testmode.TurnTest
  * Each Turn is classified by [grammar] from its transcript: a whole-utterance
  * command, a Note in its Bucket when Declared, or unclassified. A command is
  * carried out by this Session's [SessionCommands], and its Turn records what
- * it did (for "scratch that", the Turn it tombstones).
+ * it did (for "scratch that", the Turn it tombstones); "stop listening"
+ * asks the [Listener] to end the Session.
  */
 class CorpusSink(
     private val writer: CorpusWriter,
@@ -41,6 +42,13 @@ class CorpusSink(
          */
         fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) {}
         fun failed(utterance: Utterance, error: Exception) {}
+
+        /**
+         * [turn], a "stop listening" command, is in the Corpus (and went to
+         * [published] just before, with nothing to say): say [say], then end
+         * the Session. Not called when the command Turn failed to write.
+         */
+        fun endSession(turn: Turn, say: String) {}
         fun discarded(event: TurnEvent.Discarded) {}
     }
 
@@ -76,7 +84,12 @@ class CorpusSink(
         }
         published++
         commands.published(turn)
-        listener.published(turn, utterance, transcription?.timing, command?.say ?: transcript?.text)
+        if (command?.endsSession == true) {
+            listener.published(turn, utterance, transcription?.timing, null)
+            listener.endSession(turn, command.say)
+        } else {
+            listener.published(turn, utterance, transcription?.timing, command?.say ?: transcript?.text)
+        }
     }
 
     fun discarded(event: TurnEvent.Discarded) = listener.discarded(event)

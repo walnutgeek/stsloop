@@ -58,6 +58,11 @@ object EchoText {
  * it is told to [Speaker.abandon] that machine Turn, the [Listener] hears it
  * was lost, and the mic reopens a guard interval later.
  *
+ * A reply may carry a `then` ([echo]): it runs once that machine Turn is
+ * over (its end reported, or lost), so "stop listening" can end the Session
+ * only after "stopped listening." has been said. It runs exactly once, also
+ * when there is nothing to say, no speaker, or the Session ends first.
+ *
  * [accept], [finish] and [state] belong to the capture thread; [echo] and
  * [spoken] may be called from any thread. With no [speaker] (echo off) it is
  * a pass-through and the mic never closes.
@@ -87,8 +92,11 @@ class HalfDuplex(
 
     private class Ended(val id: Long, val atNs: Long)
 
+    /** A machine Turn waiting for Silence, and what runs once it is over. */
+    private class Reply(val text: String, val then: (() -> Unit)?)
+
     private val guardNs = timings.guardMs * NS_PER_MS
-    private val pending = ConcurrentLinkedQueue<String>()
+    private val pending = ConcurrentLinkedQueue<Reply>()
     private val lock = Any()
     private var finished = false // guarded by lock
     private val ended = ConcurrentLinkedQueue<Ended>()
@@ -96,6 +104,7 @@ class HalfDuplex(
     // Capture thread only.
     private var phase = Phase.OPEN
     private var lastId = 0L
+    private var current: (() -> Unit)? = null // the speaking machine Turn's then
     private var speakingSinceNs = 0L
     private var speakingLimitNs = 0L
     private var guardUntilNs = 0L
@@ -110,14 +119,19 @@ class HalfDuplex(
             Phase.OPEN -> if (segmenter.state == TurnState.CAPTURING) LoopState.CAPTURING else LoopState.LISTENING
         }
 
-    /** Any thread: echo a published Turn's transcript, or say a command's reply. Nothing to say ([EchoText]) or no speaker: ignored. */
-    fun echo(said: String?) {
-        if (speaker == null) return
-        val text = EchoText.of(said) ?: return
+    /**
+     * Any thread: echo a published Turn's transcript, or say a command's
+     * reply; [then] runs once it has been said (see the class comment). Nothing
+     * to say ([EchoText]) or no speaker: nothing is said, and [then] runs now.
+     */
+    fun echo(said: String?, then: (() -> Unit)? = null) {
+        val text = EchoText.of(said)
+        if (speaker == null || text == null) return run { then?.invoke() }
         synchronized(lock) {
-            if (!finished) return run { pending.add(text) }
+            if (!finished) return run { pending.add(Reply(text, then)) }
         }
         listener.unspoken(1) // a transcript finished decoding after the Session ended
+        then?.invoke()
     }
 
     /** Any thread: machine Turn [id] ended (done, error or stopped) at [atNs], on the capture clock. */
@@ -139,10 +153,14 @@ class HalfDuplex(
                 Phase.SPEAKING -> {
                     val end = takeEnd()
                     when {
-                        end != null -> if (!speakNext(capturedAtNs, chunkStart + from)) guard(end)
+                        end != null -> {
+                            over()
+                            if (!speakNext(capturedAtNs, chunkStart + from)) guard(end)
+                        }
                         capturedAtNs - speakingSinceNs > speakingLimitNs -> {
                             speaker?.abandon(lastId)
                             listener.lost(lastId)
+                            over()
                             guard(capturedAtNs)
                         }
                         else -> {
@@ -180,17 +198,29 @@ class HalfDuplex(
      */
     fun finish() {
         segmenter.finish()
-        val unspoken = synchronized(lock) {
+        val unspoken = mutableListOf<Reply>()
+        synchronized(lock) {
             finished = true
-            pending.size.also { pending.clear() }
+            while (true) unspoken += pending.poll() ?: break
         }
-        if (unspoken > 0) listener.unspoken(unspoken)
+        if (unspoken.isNotEmpty()) listener.unspoken(unspoken.size)
+        over()
+        for (r in unspoken) r.then?.invoke()
+    }
+
+    /** The speaking machine Turn is over (or never will be): run its then, once. */
+    private fun over() {
+        val then = current ?: return
+        current = null
+        then()
     }
 
     /** Starts the next queued machine Turn, closing the mic at stream sample [atSample]; false if none is queued. */
     private fun speakNext(nowNs: Long, atSample: Long): Boolean {
         val s = speaker ?: return false
-        val text = pending.poll() ?: return false
+        val reply = pending.poll() ?: return false
+        val text = reply.text
+        current = reply.then
         val id = ++lastId
         if (phase == Phase.OPEN) closedAt = atSample
         phase = Phase.SPEAKING

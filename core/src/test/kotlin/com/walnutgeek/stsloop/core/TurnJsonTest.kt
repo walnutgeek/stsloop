@@ -98,7 +98,25 @@ class TurnJsonTest {
 
     @Test
     fun `command names are permanent`() {
-        assertEquals(listOf("scratch_that"), Command.entries.map { it.json })
+        assertEquals(listOf("scratch_that", "repeat", "what_bucket", "stop_listening"), Command.entries.map { it.json })
+    }
+
+    @Test
+    fun `the other commands write their name and no tombstones`() {
+        for (c in listOf(Command.REPEAT, Command.WHAT_BUCKET, Command.STOP_LISTENING)) {
+            val inv = Classification.command(CommandInvocation(c, c.phrases.first()))
+            val json = TurnJson.encode(turn.copy(transcript = transcript, classification = inv))
+            val parsed = Json.parseObject(json)
+            assertEquals("command", parsed["kind"])
+            assertEquals(mapOf("name" to c.json, "matched" to c.phrases.first()), parsed["command"])
+            assertFalse(parsed.containsKey("tombstones"), json)
+            for (k in listOf("declaration", "bucket", "bucket_source", "content")) assertEquals(null, parsed[k], k)
+        }
+    }
+
+    @Test
+    fun `only scratch that tombstones`() {
+        assertThrows<IllegalArgumentException> { CommandInvocation(Command.REPEAT, "repeat", tombstones = "x") }
     }
 
     @Test
