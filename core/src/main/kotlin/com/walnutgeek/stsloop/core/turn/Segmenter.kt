@@ -83,6 +83,21 @@ class Segmenter(
     }
 
     /**
+     * The mic is closed (Half-duplex) for the next [count] samples of the
+     * stream: they are never buffered, judged or streamed, but the stream's
+     * sample offsets still count them, so every Turn's `started_at` stays
+     * true. Samples already accepted but not yet judged (less than a window)
+     * are dropped with them. Only while LISTENING. [capturedAtNs] is when the
+     * last skipped sample was captured.
+     */
+    fun skip(count: Int, capturedAtNs: Long) {
+        check(machine.state == TurnState.LISTENING) { "the mic cannot close while a Turn is being captured" }
+        buffer.skip(count.toLong())
+        machine.skip(to = buffer.end)
+        endCapturedAtNs = capturedAtNs
+    }
+
+    /**
      * The Session is ending: an utterance still being captured closes at the
      * end of the stream, including the last partial window the VAD never judged.
      * Calling it again does nothing.

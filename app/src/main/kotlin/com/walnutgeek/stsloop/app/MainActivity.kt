@@ -15,7 +15,6 @@ import android.widget.TextView
 import com.walnutgeek.stsloop.audio.SessionService
 import com.walnutgeek.stsloop.core.StartGate
 import com.walnutgeek.stsloop.core.StartRefusal
-import com.walnutgeek.stsloop.core.testmode.MicInput
 import com.walnutgeek.stsloop.core.testmode.TestConfig
 import com.walnutgeek.stsloop.core.testmode.TtsUsage
 import com.walnutgeek.stsloop.core.testmode.next
@@ -83,10 +82,9 @@ class MainActivity : Activity() {
         val wanted = buildList {
             add(Manifest.permission.RECORD_AUDIO)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
-            // Optional: test mode works without it, but logs Bluetooth devices with less detail.
-            if (testMode?.config?.let { it.enabled && it.micInput == MicInput.BLUETOOTH } == true) {
-                add(Manifest.permission.BLUETOOTH_CONNECT)
-            }
+            // Optional ("Nearby devices"): asked for so the car's hands-free route can be used. A Session
+            // starts without it and falls back to the phone mic if the platform then refuses the route.
+            add(Manifest.permission.BLUETOOTH_CONNECT)
         }
         val missing = wanted
             .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }

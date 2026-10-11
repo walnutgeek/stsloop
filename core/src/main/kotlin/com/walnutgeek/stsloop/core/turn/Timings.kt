@@ -10,7 +10,7 @@ import kotlin.math.floor
  * without a rebuild; every key is optional and falls back to the default here.
  *
  * - [trailingSilenceMs]: Silence that closes a human Turn.
- * - [guardMs]: guard interval after a machine Turn (no machine Turns yet; parsed so the file is complete).
+ * - [guardMs]: the mic stays closed this long after a machine Turn ends (Half-duplex), for speaker bleed and output latency.
  * - [maxUtteranceMs]: a Turn's Recording is cut at this length; speech that runs on continues in the next Turn.
  * - [minUtteranceMs]: a Turn with less speech than this (coughs, door slams) is discarded.
  * - [preRollMs]: audio kept before the first speech window, so the VAD's onset latency does not clip the first syllable.

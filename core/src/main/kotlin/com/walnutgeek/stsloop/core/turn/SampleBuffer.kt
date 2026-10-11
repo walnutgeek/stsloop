@@ -36,6 +36,18 @@ class SampleBuffer {
         size += count
     }
 
+    /**
+     * The stream moves on by [count] samples that are never kept (the mic was
+     * closed): everything retained is dropped, and the next sample appended is
+     * sample [end] + [count].
+     */
+    fun skip(count: Long) {
+        require(count >= 0) { "count must be >= 0, was $count" }
+        start = end + count
+        head = 0
+        size = 0
+    }
+
     /** Forgets every sample before [sample]. Earlier indices are a no-op. */
     fun dropBefore(sample: Long) {
         require(sample <= end) { "cannot drop to $sample past the end $end" }

@@ -58,6 +58,9 @@ sealed interface TurnEvent {
  *   starts exactly at the cut and stays CAPTURING, so no sample is lost, and
  *   that continuation is kept however little speech it holds.
  * - Otherwise an utterance with less than `min_utterance_ms` of speech is discarded.
+ * - While the mic is closed (Half-duplex: the machine is speaking, then the
+ *   guard interval), no window is judged at all: [skip] jumps the position
+ *   over the gap, and pre-roll never reaches back into it.
  */
 class TurnStateMachine(private val timings: Timings, private val sampleRate: Int) {
     init {
@@ -76,14 +79,15 @@ class TurnStateMachine(private val timings: Timings, private val sampleRate: Int
     var position: Long = 0
         private set
 
-    private var lastTurnEnd = 0L
+    /** No Recording may start before this: the end of the previous Turn, or of a closed-mic gap. */
+    private var recordableFrom = 0L
     private var start = 0L
     private var onset = 0L
     private var lastSpeechEnd = 0L
     private var continuation = false
 
     /** Where a Recording would start if the window at [position] were an onset. */
-    private val earliestStart: Long get() = maxOf(position - preRollSamples, lastTurnEnd, 0)
+    private val earliestStart: Long get() = maxOf(position - preRollSamples, recordableFrom, 0)
 
     /** The earliest sample a Turn may still need; audio before it can be dropped. */
     val retainFrom: Long get() = if (state == TurnState.CAPTURING) start else earliestStart
@@ -134,6 +138,18 @@ class TurnStateMachine(private val timings: Timings, private val sampleRate: Int
         return close(at, CloseReason.SESSION_END)
     }
 
+    /**
+     * The mic was closed from [position] until [to] (Half-duplex): those
+     * samples are never judged, and no Recording may include them. Only while
+     * LISTENING: the loop never takes the floor from a Turn being captured.
+     */
+    fun skip(to: Long) {
+        check(state == TurnState.LISTENING) { "the mic cannot close while a Turn is being captured" }
+        require(to >= position) { "cannot skip back to $to from $position" }
+        position = to
+        recordableFrom = to
+    }
+
     private fun continueFrom(cut: Long) {
         state = TurnState.CAPTURING
         start = cut
@@ -146,7 +162,7 @@ class TurnStateMachine(private val timings: Timings, private val sampleRate: Int
         val speechEnd = minOf(lastSpeechEnd, end)
         val speech = speechEnd - onset
         if (speech < minSpeechSamples && !continuation) return TurnEvent.Discarded(start, end, speech)
-        lastTurnEnd = end
+        recordableFrom = end
         return TurnEvent.Closed(Utterance(start, end, speech, end - speechEnd, reason))
     }
 

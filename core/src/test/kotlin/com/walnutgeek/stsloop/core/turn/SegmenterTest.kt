@@ -339,6 +339,60 @@ class SegmenterTest {
         assertEquals(listOf(9_000 * MS), sink.endedAtNs)
     }
 
+    // --- closed mic (Half-duplex) ---
+
+    @Test
+    fun `samples skipped while the mic is closed never reach the vad or a Turn`() {
+        val pcm = stream(quiet(105), speech(500), quiet(100), speech(200), quiet(150))
+        val seen = mutableListOf<Float>()
+        val vad = SpeechProbability { w -> seen += w.toList(); loudVad.of(w) }
+        val sink = Sink()
+        val seg = Segmenter(timings, 1000, 10, vad, sink)
+        seg.accept(pcm, 105, capturedAtNs = 105 * MS)
+        seg.skip(500, capturedAtNs = 605 * MS) // the loud 500 ms is the machine speaking
+        val rest = pcm.copyOfRange(605, pcm.size)
+        seg.accept(rest, rest.size, capturedAtNs = pcm.size * MS)
+        seg.finish()
+        // The VAD saw the first 100 judged samples (the 5-sample tail was dropped with the gap) and everything after it.
+        assertEquals(100 + rest.size / 10 * 10, seen.size)
+        val (u, audio) = sink.closed.single()
+        assertEquals(685L, u.startSample) // speech at 705, 20 ms pre-roll; the stream's offsets survive the gap
+        assertArrayEquals(pcm.copyOfRange(685, u.endSample.toInt()), audio)
+        assertEquals(TurnState.LISTENING, seg.state)
+    }
+
+    @Test
+    fun `an onset right after the gap has no pre-roll from inside it`() {
+        val pcm = stream(quiet(100), speech(300), quiet(150))
+        val sink = Sink()
+        val seg = Segmenter(timings, 1000, 10, loudVad, sink)
+        seg.skip(100, capturedAtNs = 100 * MS)
+        val rest = pcm.copyOfRange(100, pcm.size)
+        seg.accept(rest, rest.size, capturedAtNs = pcm.size * MS)
+        seg.finish()
+        val (u, audio) = sink.closed.single()
+        assertEquals(100L, u.startSample)
+        assertArrayEquals(pcm.copyOfRange(100, u.endSample.toInt()), audio)
+        assertEquals(0, sink.discarded.size)
+    }
+
+    @Test
+    fun `nothing is retained across a gap`() {
+        val seg = Segmenter(timings, 1000, 10, loudVad, Sink())
+        val pcm = stream(quiet(200))
+        seg.accept(pcm, pcm.size, 200 * MS)
+        seg.skip(300, 500 * MS)
+        assertEquals(0, seg.retainedSamples)
+    }
+
+    @Test
+    fun `the mic cannot close while a Turn is being captured`() {
+        val seg = Segmenter(timings, 1000, 10, loudVad, Sink())
+        val pcm = stream(speech(100))
+        seg.accept(pcm, pcm.size, 100 * MS)
+        org.junit.jupiter.api.assertThrows<IllegalStateException> { seg.skip(100, 200 * MS) }
+    }
+
     @Test
     fun `window size must be positive`() {
         org.junit.jupiter.api.assertThrows<IllegalArgumentException> { Segmenter(timings, 1000, 0, loudVad, Sink()) }

@@ -69,6 +69,34 @@ The microphone is open in `LISTENING` and `CAPTURING`, and closed from the
 moment `SPEAKING` begins until the guard interval after it ends. This is what
 makes self-transcription structurally impossible rather than merely unlikely.
 
+How the echo keeps that promise (#11; `:core` `HalfDuplex`):
+
+- **Closed means dropped, not stopped.** `AudioRecord` keeps running for the
+  whole Session; while the mic is closed its samples are dropped before the
+  Segmenter, so the VAD, the recognizer and the Corpus never see them. The
+  stream's sample offsets still count them, so `started_at` stays true and
+  pre-roll never reaches back into the closed span. Stopping and restarting
+  the recording instead would mean starting capture again from the
+  background, which while-in-use rules make risky.
+- **Persist, then speak.** A Turn is echoed once it is written, so a Turn that
+  failed to write is not echoed. An empty transcript is not echoed either.
+  Between the cut and the transcript (about 300 ms of TRANSCRIBE) the mic
+  stays open, so speech that starts then is not lost.
+- **Silence is the only scheduler, in both directions.** A transcript that is
+  ready while the next human Turn is already being captured (including the
+  continuation of a Turn cut at max duration) waits for that Turn's Silence;
+  the machine never cuts the human off, just as the human cannot barge in.
+  Echoes that waited are spoken back to back, in order, in one closed span,
+  with one guard interval after the last.
+- **The guard runs from the engine's end report**, on the capture clock, to
+  the exact sample. The end report comes slightly before the audio has left
+  the speaker, so the guard also covers output latency. If the engine never
+  reports an end, that echo is stopped (or dropped, if it has not started)
+  and the mic reopens a guard interval after 10 s plus 150 ms per character,
+  and that is logged.
+- **Test mode does not echo.** It deliberately records while it speaks, and
+  gating would defeat that experiment.
+
 ### Timings — all tunable, none final
 
 These are starting points to be tuned in the car, and they are the most

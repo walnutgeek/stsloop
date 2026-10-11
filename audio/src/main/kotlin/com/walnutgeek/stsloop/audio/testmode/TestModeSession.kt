@@ -19,6 +19,10 @@ import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import com.walnutgeek.stsloop.audio.AudioRoute
+import com.walnutgeek.stsloop.audio.AudioRoute.Companion.describe
+import com.walnutgeek.stsloop.audio.AudioRoute.Companion.modeName
+import com.walnutgeek.stsloop.audio.AudioRoute.Companion.typeName
 import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.corpus.Json
 import com.walnutgeek.stsloop.core.testmode.Announcement
@@ -70,8 +74,7 @@ class TestModeSession(
         .build()
 
     private var record: AudioRecord? = null
-    private var previousMode: Int? = null
-    private var communicationSet = false
+    private val route = AudioRoute(am, sessionId)
     private var bluetoothUnavailable = false
 
     /** Test seam: called once the audio mode and communication device are set, to force a failure. */
@@ -112,7 +115,7 @@ class TestModeSession(
         } catch (t: Throwable) {
             Log.e(TAG, "Session $sessionId: test mode setup failed; restoring the audio route", t)
             log("prepare_failed", mapOf("error" to t.toString()))
-            restoreAudio()
+            route.restore()
             throw t
         }
     }
@@ -134,21 +137,18 @@ class TestModeSession(
             "tts_output_devices" to ttsOutputs(),
         ))
         if (config.audioMode == AudioMode.IN_COMMUNICATION) {
-            previousMode = am.mode
-            am.mode = AudioManager.MODE_IN_COMMUNICATION
+            route.holdMode(AudioManager.MODE_IN_COMMUNICATION)
             log("mode_set", mapOf("requested" to "in_communication", "mode" to modeName(am.mode)))
         }
         when (config.micInput) {
             MicInput.BLUETOOTH -> {
-                val comm = am.availableCommunicationDevices.firstOrNull { it.type in BLUETOOTH_COMM_TYPES }
-                if (comm == null) {
+                val handsFree = route.useHandsFree()
+                if (handsFree == null) {
                     bluetoothUnavailable = true
                     log("bluetooth_unavailable", mapOf("communication_devices" to am.availableCommunicationDevices.map(::describe)))
                 } else {
-                    val ok = am.setCommunicationDevice(comm)
-                    communicationSet = ok
-                    log("communication_device_set", mapOf("device" to describe(comm), "ok" to ok))
-                    preferredInput = am.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull { it.type == comm.type }
+                    log("communication_device_set", mapOf("device" to describe(handsFree.device), "ok" to handsFree.ok))
+                    preferredInput = handsFree.input
                 }
             }
             MicInput.BUILTIN -> preferredInput = am.getDevices(AudioManager.GET_DEVICES_INPUTS)
@@ -219,8 +219,8 @@ class TestModeSession(
             step("unregister recording callback") { am.unregisterAudioRecordingCallback(recordingCallback) }
             step("unregister playback callback") { am.unregisterAudioPlaybackCallback(playbackCallback) }
             step("unregister routing listener") { record?.removeOnRoutingChangedListener(routingListener) }
-            val cleared = communicationSet
-            restoreAudio()
+            val cleared = route.communicationSet
+            route.restore()
             step("log the end") {
                 log("session_end", linkedMapOf(
                     "phrases" to counts,
@@ -235,20 +235,6 @@ class TestModeSession(
         }
     }
 
-    /**
-     * Puts back what [prepare] changed: the communication device, then the
-     * audio mode, each attempted even if the other throws. Idempotent.
-     */
-    private fun restoreAudio() {
-        if (communicationSet) {
-            step("clear the communication device") { am.clearCommunicationDevice() }
-            communicationSet = false
-        }
-        previousMode?.let { mode ->
-            step("restore the audio mode") { am.mode = mode }
-            previousMode = null
-        }
-    }
 
     private inline fun step(what: String, block: () -> Unit) {
         try {
@@ -519,8 +505,6 @@ class TestModeSession(
         private const val TAG = "stsloop.TestMode"
         private const val LOST_MS = 30_000L
 
-        private val BLUETOOTH_COMM_TYPES = setOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET)
-
         fun usageOf(u: TtsUsage): Int = when (u) {
             TtsUsage.ASSISTANT -> AudioAttributes.USAGE_ASSISTANT
             TtsUsage.MEDIA -> AudioAttributes.USAGE_MEDIA
@@ -529,40 +513,6 @@ class TestModeSession(
         }
 
         private fun Double.round1() = (this * 10).roundToInt() / 10.0
-
-        fun modeName(mode: Int) = when (mode) {
-            AudioManager.MODE_NORMAL -> "normal"
-            AudioManager.MODE_RINGTONE -> "ringtone"
-            AudioManager.MODE_IN_CALL -> "in_call"
-            AudioManager.MODE_IN_COMMUNICATION -> "in_communication"
-            AudioManager.MODE_CALL_SCREENING -> "call_screening"
-            else -> "mode_$mode"
-        }
-
-        /** A stable short name for an `AudioDeviceInfo` type, as written to `turn.json`. */
-        fun typeName(type: Int) = when (type) {
-            AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "builtin_earpiece"
-            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "builtin_speaker"
-            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER_SAFE -> "builtin_speaker_safe"
-            AudioDeviceInfo.TYPE_BUILTIN_MIC -> "builtin_mic"
-            AudioDeviceInfo.TYPE_WIRED_HEADSET -> "wired_headset"
-            AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "wired_headphones"
-            AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "bluetooth_sco"
-            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "bluetooth_a2dp"
-            AudioDeviceInfo.TYPE_BLE_HEADSET -> "ble_headset"
-            AudioDeviceInfo.TYPE_BLE_SPEAKER -> "ble_speaker"
-            AudioDeviceInfo.TYPE_BLE_BROADCAST -> "ble_broadcast"
-            AudioDeviceInfo.TYPE_HEARING_AID -> "hearing_aid"
-            AudioDeviceInfo.TYPE_USB_DEVICE -> "usb_device"
-            AudioDeviceInfo.TYPE_USB_HEADSET -> "usb_headset"
-            AudioDeviceInfo.TYPE_TELEPHONY -> "telephony"
-            AudioDeviceInfo.TYPE_REMOTE_SUBMIX -> "remote_submix"
-            AudioDeviceInfo.TYPE_BUS -> "bus"
-            else -> "type_$type"
-        }
-
-        fun describe(d: AudioDeviceInfo): Map<String, Any?> =
-            linkedMapOf("type" to typeName(d.type), "name" to d.productName?.toString(), "id" to d.id)
 
         @Suppress("DEPRECATION") // getAudioDeviceInfo: the only public per-player device on API 31+
         fun describePlayer(p: AudioPlaybackConfiguration): Map<String, Any?> = linkedMapOf(
