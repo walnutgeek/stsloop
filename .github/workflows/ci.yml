@@ -15,3 +15,11 @@ jobs:
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v5
       - run: ./gradlew build
+
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - run: uv run scripts/test_drive_report_test.py
+      - run: uv run scripts/corpus_load_test.py

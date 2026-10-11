@@ -11,6 +11,7 @@ Nothing is built yet. These are the design documents; see [Development setup](#d
 | [`CONTEXT.md`](./CONTEXT.md) | Glossary. The project's vocabulary, and the words it deliberately avoids |
 | [`docs/vision.md`](./docs/vision.md) | Long-term vision: the spine, lanes, the control-surface ladder, six phases |
 | [`docs/mvp.md`](./docs/mvp.md) | Phase 0 spec: the loop, phrase grammar, corpus format, done-criteria |
+| [`docs/corpus-sync.md`](./docs/corpus-sync.md) | Getting the Corpus onto the Linux box, and loading it with `scripts/corpus_load.py` |
 | [`docs/adr/`](./docs/adr/) | Architectural decisions and the alternatives rejected |
 | [`docs/research/`](./docs/research/) | Primary-source verification of load-bearing technical claims |
 | [`docs/brainstorm/`](./docs/brainstorm/) | The original exploratory session. **Inputs, not requirements** |
@@ -209,6 +210,19 @@ command is a Turn of its own, `kind: "command"`, whose `tombstones` names the
 dropped Turn's directory. The transcript list strikes the dropped Turn
 through. A Note that only contains the phrase is stored, not obeyed. The
 rules in full are in `docs/mvp.md`, "Commands".
+
+### Reading the Corpus on Linux
+
+Pull the Corpus (debug build) and print its stats: Turn counts by kind and
+Bucket, the Declaration rate, tombstones, and any sha256 mismatch. Syncthing
+and rsync need an app-side export that does not exist yet; the full story is
+in [`docs/corpus-sync.md`](./docs/corpus-sync.md).
+
+```sh
+mise exec -- adb exec-out run-as com.walnutgeek.stsloop sh -c 'cd files && tar cf - corpus' | tar xf -
+uv run scripts/corpus_load.py corpus          # add --tombstoned mark to count tombstoned Turns
+uv run scripts/corpus_load_test.py            # the loader's own tests
+```
 
 ### Bluetooth test mode (debug builds)
 
