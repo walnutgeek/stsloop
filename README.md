@@ -4,7 +4,20 @@ An audio-first personal context hub: a continuous speech-to-speech loop that
 mediates between you and the streams of information, attention demands, and
 capture surfaces in your life — hands-free and eyes-free.
 
-Nothing is built yet. These are the design documents; see [Development setup](#development-setup) for the toolchain.
+**Status: Phase 0 (the MVP) is built and in driving trials.** The Android app
+runs the whole loop on the phone, offline. It records each Turn, transcribes it
+on-device (sherpa-onnx, Nemotron 0.6B streaming), reads it back, and stores
+audio and transcript in an append-only Corpus. Naming a Bucket at the start or
+end of a Turn files it there. Four spoken commands work: "scratch that",
+"repeat", "what bucket" and "stop listening". In the car it uses the hands-free
+mic and speaker. The loop says aloud when the mic or its speech fails silently.
+A script loads the pulled Corpus on Linux.
+
+What Phase 0 still has to prove is in [`docs/mvp.md`, "Done when"](./docs/mvp.md#done-when):
+weeks of real driving use, a tuned trailing silence, the battery cost, and a
+first classifier experiment on the Corpus. A release build has no way to export
+the Corpus yet ([`docs/corpus-sync.md`](./docs/corpus-sync.md)).
+To build and install it, see [Development setup](#development-setup).
 
 | Document | What it is |
 | --- | --- |
@@ -80,6 +93,11 @@ The `.so` files and models are git-ignored, so the repo stays small. CI builds
 without them: it checks that everything compiles and the JVM tests pass, and
 its APK has no speech. The on-device test needs both scripts run first:
 `mise exec -- ./gradlew :audio:connectedDebugAndroidTest`.
+
+5. With both scripts run and the phone attached, build and install the app:
+   `mise exec -- ./gradlew :app:installDebug`. Installing over an earlier
+   debug build keeps the Corpus. A reinstall removes the Session
+   notification, so start the first Session from the app.
 
 `mise.toml` puts `adb` on the PATH only in shells where mise is activated; in
 any other shell use `mise exec -- adb …`.
@@ -229,8 +247,7 @@ Session:
 - **"Repeat"** (or "say that again") reads its transcript back again.
 - **"What bucket"** (or "which bucket") says its Bucket, or "no bucket.".
 - **"Stop listening"** (or "end session") says "stopped listening." and ends
-  the Session, as the Stop button does. The current model may hear "end
-  session" as "in session", which is stored as a Turn instead.
+  the Session, as the Stop button does.
 
 The rules in full are in `docs/mvp.md`, "Commands".
 
