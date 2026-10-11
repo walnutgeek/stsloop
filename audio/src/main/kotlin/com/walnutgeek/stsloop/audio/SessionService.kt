@@ -38,6 +38,7 @@ import com.walnutgeek.stsloop.core.turn.SttTiming
 import com.walnutgeek.stsloop.core.Wav
 import com.walnutgeek.stsloop.core.testmode.TestConfig
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * A Session: a `microphone`-typed foreground service that owns the mic from
@@ -80,7 +81,7 @@ class SessionService : Service() {
         private const val DESTROY_JOIN_MS = 5_000L
 
         /** Staged Turns are recovered once per process: before its first Session, no Turn of ours is staged. */
-        private val recoveryDone = java.util.concurrent.atomic.AtomicBoolean()
+        private val recoveryDone = AtomicBoolean()
 
         /** Owned by the main thread; readable anywhere for display. */
         @Volatile
@@ -364,6 +365,7 @@ class SessionService : Service() {
                 testMode?.captured(samples, readAtNs, buf, n)
                 turns.accept(buf, n, readAtNs)
             }
+            silencedWatch.close()
             record.stop()
             turns.finish()
             Log.i(

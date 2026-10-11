@@ -22,6 +22,9 @@ class SilencedWatch(
 ) {
     private var last: Boolean? = null // handler thread only
 
+    @Volatile
+    private var closed = false
+
     private val callback = object : AudioManager.AudioRecordingCallback() {
         override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) = check(configs)
     }
@@ -32,11 +35,14 @@ class SilencedWatch(
         handler.post { check(am.activeRecordingConfigurations) }
     }
 
+    /** Before the recording stops: nothing is reported after this, even a check already posted. */
     fun close() {
+        closed = true
         am.unregisterAudioRecordingCallback(callback)
     }
 
     private fun check(configs: List<AudioRecordingConfiguration>) {
+        if (closed) return
         val session = record.audioSessionId
         val ours = configs.firstOrNull { it.clientAudioSessionId == session } ?: return
         val silenced = ours.isClientSilenced

@@ -208,6 +208,22 @@ class SilentFailureDeviceTest {
     }
 
     @Test
+    fun aTurnWithATornTurnJsonIsSealedAgainRatherThanPublishedTorn() {
+        val writer = FileCorpusWriter(corpus, staging)
+        val name = turnDirectoryName(1_791_296_527_431, "e0e0e0")
+        writer.begin("e0e0e0", "c0ffee", 1_791_296_527_431, RATE).apply { append(ShortArray(3200) { 50 }, 3200) }.finish("1.0")
+        val staged = File(staging, "c0ffee/$name")
+        assertTrue(File(corpus, name).renameTo(staged))
+        File(staged, TURN_FILE).writeText("{\n  \"schema\": 1,\n  \"id\": \"e0") // the crash hit mid-write
+
+        val r = writer.recover("9.9.9", RATE).single()
+        assertEquals(FileCorpusWriter.Outcome.RECOVERED, r.outcome)
+        val turn = json(File(corpus, name))
+        assertEquals(true, turn["recovered"])
+        assertEquals(200L, (audioBlock(File(corpus, name))["duration_ms"] as Number).toLong())
+    }
+
+    @Test
     fun theEchoReportsWhetherEachDoneEchoPlausiblyPlayed() {
         val played = Collections.synchronizedList(mutableListOf<Boolean>())
         val done = CountDownLatch(1)

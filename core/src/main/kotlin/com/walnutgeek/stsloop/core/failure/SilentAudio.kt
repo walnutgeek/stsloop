@@ -81,7 +81,7 @@ class RecordingLevel(sampleRate: Int) {
  * back to back, and `false` at the first window after that which is not
  * silent, each with the stream sample the window ended at. Capture thread only.
  */
-class MicSilence(
+class DeadMic(
     sampleRate: Int,
     silentAfterMs: Int = SilentAudio.MIC_SILENT_AFTER_MS,
     private val onChange: (silent: Boolean, atSample: Long) -> Unit,

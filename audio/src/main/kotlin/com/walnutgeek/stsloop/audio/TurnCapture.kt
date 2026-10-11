@@ -6,7 +6,7 @@ import com.k2fsa.sherpa.onnx.Vad
 import com.walnutgeek.stsloop.core.CorpusWriter
 import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.failure.FailureAnnouncer
-import com.walnutgeek.stsloop.core.failure.MicSilence
+import com.walnutgeek.stsloop.core.failure.DeadMic
 import com.walnutgeek.stsloop.core.failure.SilentFailure
 import com.walnutgeek.stsloop.core.grammar.BucketConfig
 import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
@@ -15,6 +15,7 @@ import com.walnutgeek.stsloop.core.testmode.TestConfig
 import com.walnutgeek.stsloop.core.testmode.TurnTest
 import com.walnutgeek.stsloop.core.turn.CorpusSink
 import com.walnutgeek.stsloop.core.turn.HalfDuplex
+import com.walnutgeek.stsloop.core.turn.LoopState
 import com.walnutgeek.stsloop.core.turn.Segmenter
 import com.walnutgeek.stsloop.core.turn.Speaker
 import com.walnutgeek.stsloop.core.turn.SpeechProbability
@@ -39,7 +40,7 @@ import java.util.concurrent.TimeUnit
  *
  * It also notices the loop's silent failures (#15) and says them the same
  * way, once each ([FailureAnnouncer]): a mic stream that stays digitally
- * silent ([MicSilence]), a Turn whose Recording is silent (`audio.silent`),
+ * silent ([DeadMic]), a Turn whose Recording is silent (`audio.silent`),
  * and what the platform reports through [clientSilenced] and [played].
  * Sample 0 of the stream is wall time
  * [sessionStartedAtMs]. A Turn that fails to write is logged and counted in
@@ -146,7 +147,7 @@ class TurnCapture(
     )
     private val failures = FailureAnnouncer(
         clockMs = SystemClock::elapsedRealtime,
-        say = { f -> loop.announce(f.spoken) },
+        say = { f -> if (!ending) loop.announce(f.spoken) },
         listener = object : FailureAnnouncer.Listener {
             override fun announced(failure: SilentFailure) {
                 announced++
@@ -163,11 +164,15 @@ class TurnCapture(
             }
         },
     )
-    private val micSilence = MicSilence(SAMPLE_RATE_HZ) { silent, atSample ->
+    private val deadMic = DeadMic(SAMPLE_RATE_HZ) { silent, atSample ->
         Log.w(TAG, "Session $sessionId: the mic stream is ${if (silent) "effectively silent" else "live again"} at sample $atSample")
         failures.set(SilentFailure.MIC_SILENT, silent)
     }
     private var finished = false
+
+    /** Set as [finish] starts: a failure reported after that (a late platform callback) is not said. */
+    @Volatile
+    private var ending = false
 
     /** Silent failures said (or, with no echo, that would have been); final once [finish] returns. */
     @Volatile
@@ -188,7 +193,9 @@ class TurnCapture(
      * decoding or writing.
      */
     fun accept(samples: ShortArray, count: Int, capturedAtNs: Long = SystemClock.elapsedRealtimeNanos()) {
-        micSilence.accept(samples, count) // the whole stream, closed spans included: silencing is not Half-duplex
+        // Only what the loop listens to: while the mic is closed some routes may zero it during our own speech.
+        val open = loop.state.let { it == LoopState.LISTENING || it == LoopState.CAPTURING }
+        if (open) deadMic.accept(samples, count)
         loop.accept(samples, count, capturedAtNs)
     }
 
@@ -221,6 +228,7 @@ class TurnCapture(
      * returns. Safe to call twice.
      */
     fun finish() {
+        ending = true
         try {
             loop.finish()
         } finally {

@@ -319,8 +319,9 @@ How the loop does it (#15; `:core` `failure`, `:audio` `TurnCapture`):
   Recordings, phone mic and the car's Bluetooth SCO mic, parked and driving)
   has noise floors of 3–90 RMS, and its quietest 100 ms window anywhere is
   2.1 RMS, so a quiet but working SCO mic is never flagged.
-- **A silent mic stream.** The whole stream is watched, closed spans
-  included: 3 s of effectively silent windows back to back is a failure (long
+- **A silent mic stream.** What the loop listens to is watched (not the
+  Half-duplex closed spans, where a route may zero the mic during our own
+  speech): 3 s of effectively silent windows back to back is a failure (long
   enough for an SCO link to come up at Session start). This is the detector
   that matters, because a mic delivering zeros never wakes the VAD, so it
   produces no Turns at all.

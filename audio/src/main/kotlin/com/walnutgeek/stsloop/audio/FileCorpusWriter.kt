@@ -11,6 +11,7 @@ import com.walnutgeek.stsloop.core.TurnInProgress
 import com.walnutgeek.stsloop.core.TurnJson
 import com.walnutgeek.stsloop.core.TurnVad
 import com.walnutgeek.stsloop.core.Wav
+import com.walnutgeek.stsloop.core.corpus.Json
 import com.walnutgeek.stsloop.core.failure.RecordingLevel
 import com.walnutgeek.stsloop.core.parseTurnDirectoryName
 import com.walnutgeek.stsloop.core.testmode.TurnTest
@@ -57,10 +58,10 @@ class FileCorpusWriter(
         /** Its Recording was sealed and published with a `turn.json` marked `recovered`. */
         RECOVERED,
 
-        /** No audio worth keeping (no samples): deleted. */
+        /** No samples at all: deleted. */
         DISCARDED,
 
-        /** Not a Turn directory, or its name is already in the Corpus: left where it is. */
+        /** Not a Turn directory, its name is already in the Corpus, or too long to seal: left where it is. */
         LEFT,
 
         /** Reading or publishing it failed ([Recovered.error]): left where it is, tried again next time. */
@@ -71,7 +72,8 @@ class FileCorpusWriter(
      * Publishes every Turn a dead process left in [stagingDir] (#15): the loss
      * of a Turn to a crash should not be silent, and its Recording is the part
      * that matters (`CONTEXT.md`, Recording). A staged Turn with its
-     * `turn.json` is published as it is. One without is sealed: its WAV header
+     * whole `turn.json` is published as it is. One without (or with a torn
+     * one) is sealed: its WAV header
      * is rewritten from the samples on disk (a torn last sample dropped), and it
      * is published with a `turn.json` that has no `vad`, `transcript` or `kind`,
      * `"recovered": true`, and this [appVersion]. A Turn staged by an older
@@ -109,45 +111,43 @@ class FileCorpusWriter(
         val (startedAtMs, id) = parseTurnDirectoryName(name) ?: return Recovered(name, Outcome.LEFT)
         if (File(corpusDir, name).exists()) return Recovered(name, Outcome.LEFT)
         val wavFile = File(staged, AUDIO_FILE)
-        if (File(staged, TURN_FILE).isFile && wavFile.isFile) {
-            publish(staged, name)
-            return Recovered(name, Outcome.PUBLISHED)
+        val json = File(staged, TURN_FILE)
+        if (json.isFile && wavFile.isFile) {
+            // turn.json is written after the WAV is sealed and synced: a whole one means a whole Turn.
+            if (isWholeTurnJson(json)) {
+                publish(staged, name)
+                return Recovered(name, Outcome.PUBLISHED)
+            }
+            if (!json.delete()) throw IOException("cannot replace the torn $json")
         }
         val dataBytes = if (wavFile.isFile) (wavFile.length() - Wav.HEADER_BYTES).coerceAtLeast(0) and 1L.inv() else 0L
-        if (dataBytes == 0L || dataBytes > Int.MAX_VALUE - Wav.HEADER_BYTES) {
+        if (dataBytes == 0L) {
             staged.deleteRecursively()
             return Recovered(name, Outcome.DISCARDED)
         }
+        if (dataBytes > Int.MAX_VALUE - Wav.HEADER_BYTES) return Recovered(name, Outcome.LEFT) // too long for a WAV header
         val level = RecordingLevel(sampleRate)
         RandomAccessFile(wavFile, "rw").use { wav ->
             wav.setLength(Wav.HEADER_BYTES + dataBytes)
             wav.seek(Wav.HEADER_BYTES.toLong())
-            val bytes = ByteArray(64 * 1024)
+            val bytes = ByteArray(64 * 1024) // even, and dataBytes is even: every read is whole samples
             val samples = ShortArray(bytes.size / Wav.BYTES_PER_SAMPLE)
             var left = dataBytes
             while (left > 0) {
-                val n = wav.read(bytes, 0, minOf(bytes.size.toLong(), left).toInt())
-                if (n <= 0) break
+                val n = minOf(bytes.size.toLong(), left).toInt()
+                wav.readFully(bytes, 0, n)
                 val count = n / Wav.BYTES_PER_SAMPLE
-                for (i in 0 until count) samples[i] = ((bytes[2 * i].toInt() and 0xff) or (bytes[2 * i + 1].toInt() shl 8)).toShort()
+                Wav.littleEndianToPcm16(bytes, count, samples)
                 level.add(samples, count)
                 left -= n
             }
-            wav.seek(0)
-            wav.write(Wav.header(sampleRate, dataBytes.toInt()))
-            wav.fd.sync()
+            seal(wav, sampleRate, dataBytes.toInt())
         }
         val turn = Turn(
             id = id,
             sessionId = sessionId,
             startedAtMs = startedAtMs,
-            audio = TurnAudio(
-                file = AUDIO_FILE,
-                sha256 = sha256(wavFile),
-                sampleRate = sampleRate,
-                durationMs = Wav.durationMs(dataBytes / Wav.BYTES_PER_SAMPLE, sampleRate),
-                silent = level.silent,
-            ),
+            audio = describe(wavFile, sampleRate, dataBytes / Wav.BYTES_PER_SAMPLE, level),
             appVersion = appVersion,
             recovered = true,
         )
@@ -188,22 +188,14 @@ class FileCorpusWriter(
         ): Turn {
             val dataBytes = samples * Wav.BYTES_PER_SAMPLE
             require(dataBytes <= Int.MAX_VALUE - Wav.HEADER_BYTES) { "Recording too long for a WAV file" }
-            wav.seek(0)
-            wav.write(Wav.header(sampleRate, dataBytes.toInt()))
-            wav.fd.sync()
+            seal(wav, sampleRate, dataBytes.toInt())
             wav.close()
 
             val turn = Turn(
                 id = id,
                 sessionId = sessionId,
                 startedAtMs = startedAtMs,
-                audio = TurnAudio(
-                    file = AUDIO_FILE,
-                    sha256 = sha256(wavFile),
-                    sampleRate = sampleRate,
-                    durationMs = Wav.durationMs(samples, sampleRate),
-                    silent = level.silent,
-                ),
+                audio = describe(wavFile, sampleRate, samples, level),
                 appVersion = appVersion,
                 vad = vad,
                 transcript = transcript,
@@ -220,6 +212,24 @@ class FileCorpusWriter(
             staged.deleteRecursively()
         }
     }
+
+    /** Writes the real WAV header over the placeholder and syncs the Recording to disk. */
+    private fun seal(wav: RandomAccessFile, sampleRate: Int, dataBytes: Int) {
+        wav.seek(0)
+        wav.write(Wav.header(sampleRate, dataBytes))
+        wav.fd.sync()
+    }
+
+    private fun describe(wavFile: File, sampleRate: Int, samples: Long, level: RecordingLevel) = TurnAudio(
+        file = AUDIO_FILE,
+        sha256 = sha256(wavFile),
+        sampleRate = sampleRate,
+        durationMs = Wav.durationMs(samples, sampleRate),
+        silent = level.silent,
+    )
+
+    private fun isWholeTurnJson(file: File): Boolean =
+        runCatching { Json.parseObject(file.readText())["schema"] != null }.getOrDefault(false)
 
     private fun writeTurnJson(staged: File, turn: Turn) {
         FileOutputStream(File(staged, TURN_FILE)).use {

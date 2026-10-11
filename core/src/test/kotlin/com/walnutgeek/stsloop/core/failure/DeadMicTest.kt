@@ -6,11 +6,11 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /** The live mic stream: sustained digital silence is a failure, a quiet room is not. */
-class MicSilenceTest {
+class DeadMicTest {
     private val rate = 16_000
     private val changes = mutableListOf<Pair<Boolean, Long>>()
     private var fed = 0L
-    private val mic = MicSilence(rate, silentAfterMs = 3000) { silent, atSample -> changes += silent to atSample }
+    private val mic = DeadMic(rate, silentAfterMs = 3000) { silent, atSample -> changes += silent to atSample }
 
     private fun feed(ms: Int, value: Short, chunk: Int = 1600) {
         var left = rate * ms / 1000
