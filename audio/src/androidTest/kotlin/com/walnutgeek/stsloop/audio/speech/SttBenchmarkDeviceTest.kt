@@ -46,12 +46,12 @@ class SttBenchmarkDeviceTest {
     private val args = InstrumentationRegistry.getArguments()
     private val assets = InstrumentationRegistry.getInstrumentation().context.assets
 
-    private class Result(val name: String, val audioMs: Long, val computeMs: Double, val latencyMs: Double, val finishMs: Double, val text: String)
+    private class WavRun(val name: String, val audioMs: Long, val computeMs: Double, val latencyMs: Double, val finishMs: Double, val text: String)
 
     @Test
     fun benchmark() {
         val models = args.getString("bench").orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
-        assumeTrue("pass -e bench <models> to run", models.isNotEmpty())
+        assumeTrue("pass the instrumentation argument bench=<models> to run", models.isNotEmpty())
         val threads = args.getString("threads")?.toInt() ?: 2
         val tailMs = args.getString("tailMs")?.toInt()
         val wavs = listOf("test_wavs/0.wav", "test_wavs/1.wav") +
@@ -94,7 +94,7 @@ class SttBenchmarkDeviceTest {
         )
     }
 
-    private fun transcribe(r: SttRecognizer, path: String, paced: Boolean): Result {
+    private fun transcribe(r: SttRecognizer, path: String, paced: Boolean): WavRun {
         val wave = WaveReader.readWave(assets, path)
         check(wave.sampleRate == SAMPLE_RATE_HZ) { "$path: ${wave.sampleRate} Hz" }
         val samples = wave.samples
@@ -118,7 +118,7 @@ class SttBenchmarkDeviceTest {
             val text = stream.finish().trim()
             val end = System.nanoTime()
             computeNs += end - f
-            return Result(
+            return WavRun(
                 path.substringAfterLast('/'), samples.size * 1000L / SAMPLE_RATE_HZ,
                 computeNs / 1e6, (end - lastSampleNs) / 1e6, (end - f) / 1e6, text,
             )

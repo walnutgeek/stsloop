@@ -51,14 +51,14 @@ class SttRecognizer(
         const val ENGINE = "sherpa-onnx"
 
         /**
-         * 300 ms, as in the #6 benchmark. The shipped model decodes in 560 ms
-         * chunks and drops an incomplete last one, so up to ~0.3 s at the very
-         * end of a Turn can go undecoded. A silence-closed Turn ends in 1.5 s
-         * of room tone, so only a Turn cut mid-speech (Stop, max duration)
-         * can lose a word there; a full chunk of padding would instead add
-         * one more chunk's decode to every Turn's latency (#30).
+         * 1.2 s, as in the #8 offline A/B. The shipped model decodes in 560 ms
+         * chunks, drops an incomplete last one, and emits a word only well
+         * after it is spoken: with 300 ms, TTS "scratch that" followed by
+         * 0.5 s of silence came out as "Scratch", and one of 20 drive
+         * Recordings lost its last word even after 1.5 s of Silence. It costs
+         * about 100 ms of median latency (325 ms against 219 ms, #30).
          */
-        const val TAIL_PADDING_MS = 300
+        const val TAIL_PADDING_MS = 1200
 
         /** Loads the shipped model. A missing native library throws a [LinkageError]. */
         fun load(assets: AssetManager): SttRecognizer = SttRecognizer(Stt(assets))

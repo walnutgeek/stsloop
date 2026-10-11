@@ -10,21 +10,28 @@ NeMo transducer under `greedy_search`. It replaces the zipformer of
 [ADR-0003](./0003-streaming-transducer-for-hotwords.md) (#30).
 
 The reason is recognition quality on the owner's voice. In the offline A/B on
-the drive recordings (#8), the zipformer's word error rate was 64–73%;
+the drive Recordings (#8), the zipformer's word error rate was 64–73%;
 nemotron's was 17–25% parked and 38–51% driving. It is still a streaming
 model, so the per-Session STT thread and one stream per Turn stay as they are.
 
 On the Pixel 10 Pro (#30, `SttBenchmarkDeviceTest`, the app's 2 threads, 20
 wavs, 141 s), it keeps up with the mic:
 
-| | zipformer (before) | nemotron |
-| --- | --- | --- |
-| RTF, unpaced | 0.08 | 0.21 |
-| RTF, paced at real time | 0.48 | 0.53–0.56 |
-| `transcript.latency_ms`, median (p90) | 152 ms (214) | 207–219 ms (279–439) |
-| Load | 1.3 s | 3.2–3.4 s |
-| Memory after load (PSS) | 170 MB | 757 MB |
-| App APK | ~102 MB | 692 MB |
+| | zipformer (before) | nemotron, 0.3 s flush | nemotron, 1.2 s flush (shipped) |
+| --- | --- | --- | --- |
+| RTF, unpaced | 0.08 | 0.21 | 0.23 |
+| RTF, paced at real time | 0.48 | 0.53–0.56 | 0.57 |
+| `transcript.latency_ms`, median (p90) | 152 ms (214) | 207–219 ms (279–439) | 325 ms (547) |
+| Load | 1.3 s | 3.2–3.4 s | 3.2 s |
+| Memory after load (PSS) | 170 MB | 757 MB | 757 MB |
+| App APK | ~102 MB | 692 MB | 692 MB |
+
+The bar set for #30 was "RTF comfortably under 0.5 and a median end-of-Turn
+latency under about 1 s". The RTF it was meant against is the unpaced one,
+comparable with the A/B's desktop 0.166: 0.23. Paced at real time, the CPU
+idles between 100 ms chunks and the clocks drop, so every model reads higher
+(the zipformer 0.08 → 0.48); a paced RTF under 1 still keeps up, and the
+latency, which includes any backlog, is the number that gates the echo.
 
 ## Considered options
 
@@ -52,11 +59,15 @@ wavs, 141 s), it keeps up with the mic:
 - **Mixed case, with punctuation.** The text is no longer upper case; the
   phrase grammar is case- and punctuation-insensitive already. Punctuation and
   some spellings ("blest", "forever") vary with the audio around a Turn.
-- **Up to ~0.3 s at the very end of a Turn can go undecoded.** The model drops
-  an incomplete last 560 ms chunk, and the flush pads only 300 ms. A Turn
-  closed by Silence ends in 1.5 s of room tone, so only a Turn cut mid-speech
-  (Stop, max duration) can lose a word there. Padding a full chunk would add
-  one more chunk's decode to every Turn's latency.
+- **The flush pads 1.2 s, not 300 ms**, as the A/B did. The model drops an
+  incomplete last 560 ms chunk and emits a word well after it is spoken: with
+  300 ms, the system TTS voice's "scratch that" came out as "Scratch", and one
+  of 20 drive Recordings lost its last word despite 1.5 s of Silence. This
+  costs about 100 ms of median latency.
+- **The command phrases are heard.** With the system TTS voice
+  (`CommandsDeviceTest`), all eight command phrases came out exactly, so
+  classified as their commands, including "end session", which the zipformer
+  heard as "IN SESSION" (#14).
 - **Size and memory.** About 660 MB of model against 73 MB, read whole into
   memory at Session start. The APK is about 690 MB and needs `adb install`
   rather than any store.

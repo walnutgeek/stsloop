@@ -80,7 +80,8 @@ if ((${#missing[@]})); then
   tarball="$CACHE/$STT_MODEL.tar.bz2"
   fetch "$STT_URL" "$tarball" "$STT_SHA256"
   say "Extracting ${#missing[@]} file(s) of $STT_MODEL"
-  tmp="$(mktemp -d)"
+  # On the cache's disk, not /tmp (often RAM): the encoder alone is 653 MB.
+  tmp="$(mktemp -d "$CACHE/extract.XXXXXX")"
   trap 'rm -rf "$tmp"' EXIT
   tar -xjf "$tarball" -C "$tmp" "${missing[@]}"
   mkdir -p "$dir"
@@ -92,6 +93,10 @@ if ((${#missing[@]})); then
       exit 1
     fi
     mv "$tmp/$STT_MODEL/$name" "$dir/$name"
+  done
+  for entry in "${STT_FILES[@]}"; do
+    read -r name sha <<<"$entry"
+    verified "$dir/$name" "$sha" || { echo "error: $name missing from $tarball" >&2; exit 1; }
   done
 fi
 

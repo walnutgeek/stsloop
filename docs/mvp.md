@@ -143,9 +143,10 @@ Each utterance gets its own recognizer stream, opened at its first sample
 (pre-roll included) and fed while it is still being captured. Samples go to
 it once the VAD has judged them, so a stream never receives audio past the
 cut. When trailing Silence closes the utterance, almost all of it is already
-decoded; the only work left is the final flush (300 ms of zero padding,
+decoded; the only work left is the final flush (1.2 s of zero padding,
 `inputFinished`, the last decode). That is what gates the echo, so it is kept
-as small as possible.
+as small as possible; the shipped model loses a Turn's last word with less
+padding (#30).
 
 ```
 capture thread                         STT thread (one per Session)
@@ -198,11 +199,11 @@ batch it is 0.08–0.12. That gap is probably CPU frequency scaling between chun
 is where any further latency would come from. Decoding only on close would
 cost about 0.6 s for a 7.5 s Turn even at the batch RTF, so streaming stays.
 
-Those figures are for the zipformer. With nemotron (#30, ADR-0004), the same
-pipeline gave 87–279 ms, and `SttBenchmarkDeviceTest` on 20 wavs (18 of them
-drive Recordings) gave a median of 207–219 ms (p90 279–439 ms) against the
-zipformer's 152 ms, an RTF of 0.21 in a batch and 0.53–0.56 paced, a 3.3 s
-load and 757 MB of memory.
+Those figures are for the zipformer. With nemotron (#30, ADR-0004) and its
+1.2 s flush, `SttBenchmarkDeviceTest` on 20 wavs (18 of them drive
+Recordings) gave a median `latency_ms` of 325 ms (p90 547 ms) against the
+zipformer's 152 ms, an RTF of 0.23 in a batch and 0.57 paced, a 3.3 s load
+and 757 MB of memory.
 
 ### Never run the system recognizer concurrently
 
