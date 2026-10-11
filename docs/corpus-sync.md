@@ -10,8 +10,9 @@ version, and it is honest about one obstacle.
 The app writes the Corpus to `files/corpus/` in its **private** storage
 (`/data/data/com.walnutgeek.stsloop/files/corpus/`, `Context.filesDir`).
 Android lets no other app read that directory: not Syncthing, not Termux,
-not a file manager. Since Android 11, even an app with "All files access"
-cannot read another app's `Android/data/` folder. So today:
+not a file manager, whatever permissions they hold. (An export would also
+have to avoid the app's external `Android/data/` folder, which since
+Android 11 other apps cannot read either.) So today:
 
 | Path | Works today? |
 | --- | --- |
@@ -79,9 +80,10 @@ On the Linux box:
 
 On the phone:
 
-3. Install the maintained Syncthing for Android fork (*Syncthing-Fork*, from
-   F-Droid or its GitHub releases). The original Syncthing Android app was
-   discontinued in 2024.
+3. Install a maintained Syncthing for Android build. The original Syncthing
+   Android app was discontinued in 2024; community forks continue it
+   (look for "Syncthing-Fork" on F-Droid, and check which fork is maintained
+   at the time).
 4. Add the Linux box as a remote device (its ID from step 2).
 5. Add a folder pointing at the export folder (e.g. `Documents/stsloop/corpus`),
    **Folder type: Send Only**, shared with the Linux box.
@@ -136,7 +138,9 @@ uv run scripts/corpus_load_test.py                               # the loader's 
 It verifies each `audio.sha256` against its WAV, applies tombstones as
 `docs/mvp.md` "Corpus format" defines them, and prints Turn counts by kind
 and by Bucket, the Declaration rate, the tombstone count, and every problem
-it found. A classifier experiment imports it:
+it found. Until a classifier assigns Buckets, a Turn has a Bucket only
+because it was declared, so each named Bucket reads 100% declared and the
+number that matters is the overall Declaration rate. A classifier experiment imports it:
 
 ```python
 import sys; sys.path.insert(0, "<repo>/scripts")

@@ -18,7 +18,10 @@ skipping `sessions/` (test-mode route logs), dot entries (Syncthing's
 
 Then it prints Turn counts by kind and by Bucket, the Declaration rate per
 Bucket and overall, the tombstone count, and every problem found (sha256
-mismatch, missing audio, missing or unparseable `turn.json`).
+mismatch, no sha256 recorded, missing audio, missing or unparseable
+`turn.json`). The Bucket table and the Declaration rate leave command Turns
+out. Until a classifier writes `bucket_source: "classifier"`, a Turn gets a
+Bucket only by Declaration, so every named Bucket reads 100% there.
 
     uv run scripts/corpus_load.py CORPUS_DIR [--tombstoned exclude|mark] [--no-verify]
 
@@ -57,7 +60,7 @@ class Turn:
     dir: Path
     raw: dict
     tombstoned_by: str | None = None  # the command Turn's directory name, or a legacy value
-    audio_problem: str | None = None  # "sha256_mismatch", "audio_missing", ...
+    audio_problem: str | None = None  # "audio_missing", "sha256_missing" or "sha256_mismatch"
 
     @property
     def name(self) -> str:
@@ -122,7 +125,7 @@ def corpus_dir(path: Path) -> Path:
     if not path.is_dir():
         raise FileNotFoundError(f"not a directory: {path}")
     inner = path / "corpus"
-    return inner if inner.is_dir() and not (path / TURN_FILE).exists() else path
+    return inner if inner.is_dir() else path
 
 
 def sha256_of(path: Path) -> str:
@@ -194,7 +197,8 @@ def _check_audio(turn: Turn, verify: bool) -> tuple[str | None, str]:
 
 
 def load_turns(path, include_tombstoned: bool = False, verify: bool = True) -> list[Turn]:
-    """The classifier's view: Turns whose audio is present (and verified), tombstoned ones dropped."""
+    """The classifier's view: Turns whose audio is present (and, with `verify`, matches its
+    sha256), tombstoned ones dropped."""
     return [
         t for t in load_corpus(path, verify).turns
         if t.audio_problem is None and (include_tombstoned or not t.tombstoned)
@@ -208,12 +212,14 @@ def stats(corpus: Corpus, tombstoned: str = "exclude") -> dict:
     if tombstoned not in MODES:
         raise ValueError(f"tombstoned must be one of {MODES}")
     counted = [t for t in corpus.turns if tombstoned == "mark" or not t.tombstoned]
+    # Command Turns are never in a Bucket, so they are left out of the Bucket
+    # table, as they are from the Declaration rate.
+    speech = [t for t in counted if t.kind != "command"]
     by_bucket: dict[str, list[int]] = {}
-    for t in counted:
+    for t in speech:
         row = by_bucket.setdefault(t.bucket or NONE, [0, 0])
         row[0] += 1
         row[1] += t.declared
-    speech = [t for t in counted if t.kind != "command"]
     heard = [t for t in speech if (t.text or "").strip()]
     return {
         "turns": len(corpus.turns),
@@ -247,7 +253,8 @@ def report(corpus: Corpus, tombstoned: str = "exclude") -> str:
     ]
     for kind, n in sorted(s["by_kind"].items(), key=lambda kv: (-kv[1], kv[0])):
         out.append(f"| {kind} | {n} | {s['tombstoned_by_kind'].get(kind, 0)} |" if mark else f"| {kind} | {n} |")
-    out += ["", "## By Bucket", "", "| Bucket | Turns | declared | Declaration rate |", "| --- | ---: | ---: | ---: |"]
+    out += ["", "## By Bucket (command Turns left out)", "",
+            "| Bucket | Turns | declared | Declaration rate |", "| --- | ---: | ---: | ---: |"]
     for b, (n, d) in sorted(s["by_bucket"].items(), key=lambda kv: (kv[0] == NONE, -kv[1][0], kv[0])):
         out.append(f"| {b} | {n} | {d} | {_pct(d, n)} |")
     (dn, dd), (hn, hd) = s["declared"], s["declared_heard"]
@@ -259,8 +266,8 @@ def report(corpus: Corpus, tombstoned: str = "exclude") -> str:
         f"Tombstones: {s['tombstoned']} Turn(s) tombstoned.",
     ]
     if corpus.dangling_tombstones:
-        out.append(f"{len(corpus.dangling_tombstones)} tombstone(s) name a Turn not in this Corpus "
-                   f"(not synced yet?): {', '.join(corpus.dangling_tombstones)}")
+        out.append(f"{len(corpus.dangling_tombstones)} tombstone(s) name a Turn not loaded "
+                   f"(not synced yet, or listed under Problems): {', '.join(corpus.dangling_tombstones)}")
     if corpus.problems:
         out += ["", "## Problems", ""]
         out += [f"- {p.name}: {p.problem}" + (f" ({p.detail})" if p.detail else "") for p in corpus.problems]

@@ -153,6 +153,15 @@ class CorpusLoadTest(unittest.TestCase):
         self.assertNotIn("sha256_mismatch", problems)
         self.assertIn("audio_missing", problems)
 
+    def test_a_turn_without_a_recorded_sha256_is_a_problem_only_when_verifying(self):
+        d = write_turn(self.corpus, T.format(20, "eeeee1"), **unclassified())
+        t = json.loads((d / "turn.json").read_text())
+        del t["audio"]["sha256"]
+        (d / "turn.json").write_text(json.dumps(t))
+        self.assertIn(("eeeee1", "sha256_missing"), {(p.name[-6:], p.problem) for p in cl.load_corpus(self.corpus).problems})
+        self.assertNotIn("eeeee1", self.names(cl.load_turns(self.corpus)))
+        self.assertIn("eeeee1", self.names(cl.load_turns(self.corpus, verify=False)))
+
     def test_tombstones_are_derived_from_command_turns_earliest_wins(self):
         corpus = cl.load_corpus(self.corpus)
         by_name = {t.name[-6:]: t for t in corpus.turns}
@@ -193,7 +202,7 @@ class CorpusLoadTest(unittest.TestCase):
         self.assertEqual(11, s["counted"])
         self.assertEqual(2, s["tombstoned"])
         self.assertEqual({"note": 3, "command": 4, "unclassified": 3, "(none)": 1}, s["by_kind"])
-        self.assertEqual({"errands": (1, 1), "ideas": (2, 2), "(none)": (8, 0)}, s["by_bucket"])
+        self.assertEqual({"errands": (1, 1), "ideas": (2, 2), "(none)": (4, 0)}, s["by_bucket"])
         # Non-command Turns: a0 a5 a6 a7 a8 a9 b0 -> 7, of which 3 declared.
         self.assertEqual((3, 7), s["declared"])
         # ... and of those with a non-empty transcript: a0 a5 a7 a8 a9 -> 5.
@@ -204,17 +213,17 @@ class CorpusLoadTest(unittest.TestCase):
         self.assertEqual(13, s["counted"])
         self.assertEqual({"note": 4, "command": 4, "unclassified": 4, "(none)": 1}, s["by_kind"])
         self.assertEqual({"note": 1, "unclassified": 1}, s["tombstoned_by_kind"])
-        self.assertEqual({"errands": (2, 2), "ideas": (2, 2), "(none)": (9, 0)}, s["by_bucket"])
+        self.assertEqual({"errands": (2, 2), "ideas": (2, 2), "(none)": (5, 0)}, s["by_bucket"])
 
     def test_report_prints_the_numbers(self):
         out = cl.report(cl.load_corpus(self.corpus))
         self.assertIn("13 Turn(s), 2 tombstoned (excluded below), 5 problem(s).", out)
         self.assertIn("| note | 3 |", out)
         self.assertIn("| ideas | 2 | 2 | 100% |", out)
-        self.assertIn("| (none) | 8 | 0 | 0% |", out)
+        self.assertIn("| (none) | 4 | 0 | 0% |", out)
         self.assertIn("Declared: 3 of 7 non-command Turn(s) (43%); 3 of 5 with a non-empty transcript (60%).", out)
         self.assertIn("2026-10-10T18:00:08.000Z-aaaaa8: sha256_mismatch", out)
-        self.assertIn("1 tombstone(s) name a Turn not in this Corpus", out)
+        self.assertIn("1 tombstone(s) name a Turn not loaded", out)
         marked = cl.report(cl.load_corpus(self.corpus), tombstoned="mark")
         self.assertIn("2 tombstoned (counted below, see column)", marked)
         self.assertIn("| note | 4 | 1 |", marked)
