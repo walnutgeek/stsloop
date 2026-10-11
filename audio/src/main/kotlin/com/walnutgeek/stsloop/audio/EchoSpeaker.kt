@@ -15,6 +15,7 @@ import com.walnutgeek.stsloop.core.turn.Speaker
 import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The loop's voice: speaks each machine Turn with the system's offline
@@ -51,7 +52,7 @@ class EchoSpeaker(
         .build()
 
     /** One machine Turn in flight, handler thread only. */
-    private class Phrase(val id: Long, val text: String) {
+    private class MachineTurn(val id: Long, val text: String) {
         var startedAtNs = -1L
         var playerSeen = false
         var volume = -1
@@ -60,8 +61,8 @@ class EchoSpeaker(
     // Handler thread only.
     private var tts: TextToSpeech? = null
     private var engine = Engine.STARTING
-    private val waiting = ArrayList<Phrase>() // asked for before the engine was ready
-    private val inFlight = LinkedHashMap<String, Phrase>()
+    private val waiting = ArrayList<MachineTurn>() // asked for before the engine was ready
+    private val inFlight = LinkedHashMap<String, MachineTurn>()
 
     private enum class Engine { STARTING, READY, FAILED, CLOSED }
 
@@ -74,9 +75,10 @@ class EchoSpeaker(
     var unobserved = 0
         private set
 
-    @Volatile
-    var failed = 0
-        private set
+    private val failures = AtomicInteger()
+
+    /** Never played through: the engine failed, refused, stopped it, or was unavailable. */
+    val failed: Int get() = failures.get()
 
     /** Binds the TTS engine in the background; a machine Turn asked for meanwhile waits for it. */
     fun start() {
@@ -87,8 +89,23 @@ class EchoSpeaker(
     }
 
     override fun speak(id: Long, text: String) {
-        val p = Phrase(id, text)
+        val p = MachineTurn(id, text)
         if (!handler.post { request(p) }) end(p, "not spoken: the Session's speaker is closed")
+    }
+
+    /**
+     * The mic is reopening without an end report for [id]: make sure it never
+     * plays. Dropped if still waiting for the engine; stopped if in flight.
+     */
+    override fun abandon(id: Long) {
+        handler.post {
+            waiting.removeAll { it.id == id }
+            if (inFlight.remove(key(id)) != null) {
+                failures.incrementAndGet()
+                Log.w(TAG, "Session $sessionId echo $id abandoned: no end report in time; stopping the engine")
+                runCatching { tts?.stop() }
+            }
+        }
     }
 
     /**
@@ -136,7 +153,7 @@ class EchoSpeaker(
         for (p in queued) request(p)
     }
 
-    private fun request(p: Phrase) {
+    private fun request(p: MachineTurn) {
         when (engine) {
             Engine.STARTING -> return run { waiting += p }
             Engine.FAILED, Engine.CLOSED -> return end(p, "not spoken: no TextToSpeech engine")
@@ -204,8 +221,8 @@ class EchoSpeaker(
     }
 
     /** Ends [p] without it having played through; counted in [failed] unless the Session is [closing]. */
-    private fun end(p: Phrase, why: String, atNs: Long = SystemClock.elapsedRealtimeNanos(), closing: Boolean = false) {
-        if (!closing) failed++
+    private fun end(p: MachineTurn, why: String, atNs: Long = SystemClock.elapsedRealtimeNanos(), closing: Boolean = false) {
+        if (!closing) failures.incrementAndGet()
         Log.w(TAG, "Session $sessionId echo ${p.id} $why")
         ended(p.id, atNs)
     }

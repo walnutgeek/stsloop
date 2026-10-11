@@ -37,7 +37,9 @@ class HalfDuplexTest {
 
     private class Spoken : Speaker {
         val said = mutableListOf<Pair<Long, String>>()
+        val abandoned = mutableListOf<Long>()
         override fun speak(id: Long, text: String) { said += id to text }
+        override fun abandon(id: Long) { abandoned += id }
     }
 
     private class Events : HalfDuplex.Listener {
@@ -324,6 +326,7 @@ class HalfDuplexTest {
         tts(20)
         assertEquals(GUARD, loop.state)
         assertTrue("lost 1" in events.log)
+        assertEquals(listOf(1L), speaker.abandoned) // it must never play into the reopened mic
         tts(300)
         quiet(10)
         assertEquals(LISTENING, loop.state)
@@ -348,6 +351,15 @@ class HalfDuplexTest {
         quiet(100)
         loop.finish()
         assertEquals("unspoken 1", events.log.last())
+    }
+
+    @Test
+    fun `a transcript that arrives after the end is reported, not queued`() {
+        quiet(100)
+        loop.finish()
+        loop.echo("LATE")
+        assertEquals("unspoken 1", events.log.last())
+        assertEquals(emptyList<Pair<Long, String>>(), speaker.said)
     }
 
     @Test

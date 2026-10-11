@@ -367,8 +367,8 @@ class SessionService : Service() {
             turnCapture = null
             test?.let { t -> runCatching { t.close() }.onFailure { Log.e(TAG, "Session $sessionId: test mode did not close cleanly", it) } }
             echo?.let { e -> runCatching { e.close() }.onFailure { Log.e(TAG, "Session $sessionId: the echo did not close cleanly", it) } }
-            route?.restore()
             record?.release()
+            route?.restore() // after the recording is released, so nothing is captured mid-switch
             vad?.release()
             main.post(::onCaptureEnded)
         }

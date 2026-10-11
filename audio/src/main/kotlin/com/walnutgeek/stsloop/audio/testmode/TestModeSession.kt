@@ -115,7 +115,7 @@ class TestModeSession(
         } catch (t: Throwable) {
             Log.e(TAG, "Session $sessionId: test mode setup failed; restoring the audio route", t)
             log("prepare_failed", mapOf("error" to t.toString()))
-            restoreAudio()
+            route.restore()
             throw t
         }
     }
@@ -220,7 +220,7 @@ class TestModeSession(
             step("unregister playback callback") { am.unregisterAudioPlaybackCallback(playbackCallback) }
             step("unregister routing listener") { record?.removeOnRoutingChangedListener(routingListener) }
             val cleared = route.communicationSet
-            restoreAudio()
+            route.restore()
             step("log the end") {
                 log("session_end", linkedMapOf(
                     "phrases" to counts,
@@ -235,8 +235,6 @@ class TestModeSession(
         }
     }
 
-    /** Puts back what [prepare] changed (see [AudioRoute.restore]). Idempotent. */
-    private fun restoreAudio() = route.restore()
 
     private inline fun step(what: String, block: () -> Unit) {
         try {

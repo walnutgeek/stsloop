@@ -89,8 +89,11 @@ How the echo keeps that promise (#11; `:core` `HalfDuplex`):
   Echoes that waited are spoken back to back, in order, in one closed span,
   with one guard interval after the last.
 - **The guard runs from the engine's end report**, on the capture clock, to
-  the exact sample. If the engine never reports an end, the mic reopens after
-  10 s plus 150 ms per character, and that is logged.
+  the exact sample. The end report comes slightly before the audio has left
+  the speaker, so the guard also covers output latency. If the engine never
+  reports an end, that echo is stopped (or dropped, if it has not started)
+  and the mic reopens a guard interval after 10 s plus 150 ms per character,
+  and that is logged.
 - **Test mode does not echo.** It deliberately records while it speaks, and
   gating would defeat that experiment.
 

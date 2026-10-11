@@ -13,6 +13,13 @@ enum class LoopState { LISTENING, CAPTURING, SPEAKING, GUARD }
  */
 fun interface Speaker {
     fun speak(id: Long, text: String)
+
+    /**
+     * Machine Turn [id] reported no end in time and the mic is about to
+     * reopen: it must never play from now on (stop it, or drop it if it has
+     * not started). No end report is needed for it any more.
+     */
+    fun abandon(id: Long) {}
 }
 
 /** What the loop says back for a transcript (`docs/mvp.md`, "Spoken echo of the transcript"). */
@@ -48,7 +55,8 @@ object EchoText {
  * Its clock is the capture clock: [accept] stamps each chunk with when its
  * last sample was captured, and [spoken] reports the end on the same clock,
  * so the guard ends at an exact sample. If the speaker never reports an end,
- * the mic reopens after [speakingLimitMs] and the [Listener] hears it was lost.
+ * it is told to [Speaker.abandon] that machine Turn, the [Listener] hears it
+ * was lost, and the mic reopens a guard interval later.
  *
  * [accept], [finish] and [state] belong to the capture thread; [echo] and
  * [spoken] may be called from any thread. With no [speaker] (echo off) it is
@@ -71,7 +79,7 @@ class HalfDuplex(
         /** Machine Turn [id] reported no end within its limit; the guard runs from now. */
         fun lost(id: Long) {}
 
-        /** The Session ended with [count] transcripts never spoken. */
+        /** [count] transcripts will never be spoken: the Session ended first. Any thread. */
         fun unspoken(count: Int) {}
     }
 
@@ -81,6 +89,8 @@ class HalfDuplex(
 
     private val guardNs = timings.guardMs * NS_PER_MS
     private val pending = ConcurrentLinkedQueue<String>()
+    private val lock = Any()
+    private var finished = false // guarded by lock
     private val ended = ConcurrentLinkedQueue<Ended>()
 
     // Capture thread only.
@@ -103,7 +113,11 @@ class HalfDuplex(
     /** Any thread: echo a published Turn's transcript. Nothing to say ([EchoText]) or no speaker: ignored. */
     fun echo(transcript: String?) {
         if (speaker == null) return
-        EchoText.of(transcript)?.let(pending::add)
+        val text = EchoText.of(transcript) ?: return
+        synchronized(lock) {
+            if (!finished) return run { pending.add(text) }
+        }
+        listener.unspoken(1) // a transcript finished decoding after the Session ended
     }
 
     /** Any thread: machine Turn [id] ended (done, error or stopped) at [atNs], on the capture clock. */
@@ -127,6 +141,7 @@ class HalfDuplex(
                     when {
                         end != null -> if (!speakNext(capturedAtNs, chunkStart + from)) guard(end)
                         capturedAtNs - speakingSinceNs > speakingLimitNs -> {
+                            speaker?.abandon(lastId)
                             listener.lost(lastId)
                             guard(capturedAtNs)
                         }
@@ -158,11 +173,17 @@ class HalfDuplex(
         }
     }
 
-    /** Capture thread: the Session is ending. A Turn still being captured closes; what was never spoken is reported. */
+    /**
+     * Capture thread: the Session is ending. A Turn still being captured
+     * closes; what was never spoken is reported, now and as later
+     * transcripts arrive (Turns still being decoded).
+     */
     fun finish() {
         segmenter.finish()
-        val unspoken = pending.size
-        pending.clear()
+        val unspoken = synchronized(lock) {
+            finished = true
+            pending.size.also { pending.clear() }
+        }
         if (unspoken > 0) listener.unspoken(unspoken)
     }
 

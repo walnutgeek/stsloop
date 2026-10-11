@@ -178,7 +178,11 @@ engine reads words rather than spelling letters; an empty transcript is not
 echoed. The loop is strictly Half-duplex: from the moment an echo starts
 until `guard_ms` after the engine reports its end, the recording keeps
 running but its samples are dropped before the VAD, so nothing the phone
-says can become a Turn. An echo is spoken only into Silence: if you are
+says can become a Turn. The engine reports the end a little before the
+last of the audio leaves the speaker or the car (output latency, more over
+Bluetooth), and the guard has to cover that gap. If the engine never reports
+an end, the echo is stopped and the mic reopens after 10 s plus 150 ms per
+character. An echo is spoken only into Silence: if you are
 already speaking when a transcript is ready, it waits until your Turn ends,
 and echoes that waited are spoken back to back.
 

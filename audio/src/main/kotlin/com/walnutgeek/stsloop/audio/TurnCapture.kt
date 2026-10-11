@@ -126,11 +126,11 @@ class TurnCapture(
             }
 
             override fun lost(id: Long) {
-                Log.w(TAG, "Session $sessionId echo $id never reported an end; reopening the mic after the guard")
+                Log.w(TAG, "Session $sessionId echo $id never reported an end; stopped it, reopening the mic after the guard")
             }
 
             override fun unspoken(count: Int) {
-                Log.i(TAG, "Session $sessionId ended with $count echoes never spoken")
+                Log.i(TAG, "Session $sessionId: $count echoes never spoken, the Session ended first")
             }
         },
     )
