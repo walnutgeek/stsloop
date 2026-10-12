@@ -1,0 +1,7 @@
+{
+  "description": "A receiver ignores fields it does not know, so each `fixture` reads exactly as its `reads_as`.",
+  "equivalents": [
+    { "fixture": "hello/extras.json", "reads_as": "hello/basic.json" },
+    { "fixture": "descriptors/extras.json", "reads_as": "descriptors/agents.json" }
+  ]
+}

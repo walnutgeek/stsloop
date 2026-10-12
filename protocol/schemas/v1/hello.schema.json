@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stsloop:protocol:v1:hello",
+  "title": "hello",
+  "description": "Phone to hub, the first message the phone sends on a new connection. The token is not here: it travels in the upgrade request's `Authorization: Bearer` header, so the hub refuses a wrong token before any message is read.",
+  "type": "object",
+  "required": ["type", "protocol", "capabilities"],
+  "properties": {
+    "type": { "const": "hello" },
+    "protocol": {
+      "description": "The protocol version the phone speaks. The phone speaks exactly one major.",
+      "type": "object",
+      "required": ["major", "minor"],
+      "properties": {
+        "major": { "type": "integer", "minimum": 0 },
+        "minor": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "capabilities": {
+      "description": "The protocol features the phone can use. The hub answers with the subset it will use and ignores names it does not know. Known in v1.0: `descriptors`.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "type": "pairing",
+  "protocol": { "major": 1, "minor": 0 },
+  "url": "ws://100.101.102.103:7717/",
+  "token": "test-token-not-a-real-secret-0000000000000"
+}

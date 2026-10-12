@@ -1,0 +1,7 @@
+{
+  "type": "hello",
+  "protocol": { "major": 1, "minor": 0, "patch": 7 },
+  "capabilities": ["descriptors"],
+  "client": { "name": "stsloop-android", "version": "0.1.0" },
+  "sent_at": "2026-10-11T09:30:00Z"
+}

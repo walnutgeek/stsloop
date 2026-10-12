@@ -1,0 +1,46 @@
+{
+  "description": "Conversations over one connection, in order. `from` is the side that sends; a step is either a `fixture` (one text frame) or a `close` with the WebSocket close code. Every connection is authorised with the token of pairing/basic.json. A hub publishing only the stub Bucket produces exactly the hub steps.",
+  "exchanges": [
+    {
+      "name": "handshake",
+      "steps": [
+        { "from": "phone", "fixture": "hello/basic.json" },
+        { "from": "hub", "fixture": "welcome/basic.json" },
+        { "from": "hub", "fixture": "descriptors/stub.json" }
+      ]
+    },
+    {
+      "name": "a hello with unknown fields reads as one without",
+      "steps": [
+        { "from": "phone", "fixture": "hello/extras.json" },
+        { "from": "hub", "fixture": "welcome/basic.json" },
+        { "from": "hub", "fixture": "descriptors/stub.json" }
+      ]
+    },
+    {
+      "name": "a newer-minor phone gets the hub's minor and only the capabilities both know",
+      "steps": [
+        { "from": "phone", "fixture": "hello/newer-minor.json" },
+        { "from": "hub", "fixture": "welcome/basic.json" },
+        { "from": "hub", "fixture": "descriptors/stub.json" }
+      ]
+    },
+    {
+      "name": "an unknown message type is ignored",
+      "steps": [
+        { "from": "phone", "fixture": "message/future-type.json" },
+        { "from": "phone", "fixture": "hello/basic.json" },
+        { "from": "hub", "fixture": "welcome/basic.json" },
+        { "from": "hub", "fixture": "descriptors/stub.json" }
+      ]
+    },
+    {
+      "name": "an unsupported major is refused",
+      "steps": [
+        { "from": "phone", "fixture": "hello/major-2.json" },
+        { "from": "hub", "fixture": "refusal/unsupported-major.json" },
+        { "from": "hub", "close": 1008 }
+      ]
+    }
+  ]
+}

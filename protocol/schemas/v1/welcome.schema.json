@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stsloop:protocol:v1:welcome",
+  "title": "welcome",
+  "description": "Hub to phone, the answer to an acceptable `hello`. From here on both sides speak `protocol` and use only `capabilities`.",
+  "type": "object",
+  "required": ["type", "protocol", "capabilities"],
+  "properties": {
+    "type": { "const": "welcome" },
+    "protocol": {
+      "description": "The version the hub will speak: the phone's major, and the lower of the two minors.",
+      "type": "object",
+      "required": ["major", "minor"],
+      "properties": {
+        "major": { "type": "integer", "minimum": 0 },
+        "minor": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "capabilities": {
+      "description": "The capabilities the hub will use: those in the phone's `hello` that the hub also supports, in the hub's order.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    }
+  }
+}

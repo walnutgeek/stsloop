@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stsloop:protocol:v1:message",
+  "title": "message",
+  "description": "The envelope every message satisfies: one JSON object per WebSocket text frame, with a string `type`. A receiver ignores a message whose type it does not know, and fields it does not know in any message.",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": { "type": "string", "minLength": 1 }
+  }
+}

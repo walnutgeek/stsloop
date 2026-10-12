@@ -1,0 +1,13 @@
+{
+  "type": "descriptors",
+  "buckets": [
+    {
+      "id": "hub",
+      "name": "hub",
+      "aliases": ["the hub"],
+      "type": "hub",
+      "primitives": [],
+      "commands": []
+    }
+  ]
+}

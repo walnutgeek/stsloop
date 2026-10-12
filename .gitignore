@@ -9,3 +9,8 @@ local.properties
 audio/src/main/jniLibs/
 audio/src/main/assets/
 audio/src/androidTest/assets/
+
+# Python (the hub and scripts)
+__pycache__/
+.venv/
+hub/dist/
