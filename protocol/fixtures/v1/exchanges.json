@@ -1,5 +1,5 @@
 {
-  "description": "Conversations over one connection, in order. `from` is the side that sends; a step is either a `fixture` (one text frame) or a `close` with the WebSocket close code. Every connection is authorised with the token of pairing/basic.json. A hub publishing only the stub Bucket produces exactly the hub steps.",
+  "description": "Conversations over one connection, in order. `from` is the side that acts; a step is one of: a `fixture` (one text frame), `idle_ms` (the phone sends nothing for that long), a `close` with the WebSocket close code, or `http` with the HTTP status that answers the upgrade instead of a WebSocket (nothing follows it). Every connection is authorised with `Authorization: Bearer <token>`, the token of pairing/basic.json, unless the exchange has its own `authorization`: the header's value, or null for no header. A hub publishing only the stub Bucket produces exactly the hub steps.",
   "exchanges": [
     {
       "name": "handshake",
@@ -39,6 +39,27 @@
       "steps": [
         { "from": "phone", "fixture": "hello/major-2.json" },
         { "from": "hub", "fixture": "refusal/unsupported-major.json" },
+        { "from": "hub", "close": 1008 }
+      ]
+    },
+    {
+      "name": "a wrong token gets HTTP 401 and no WebSocket",
+      "authorization": "Bearer wrong-token-not-the-paired-one-0000000000",
+      "steps": [
+        { "from": "hub", "http": 401 }
+      ]
+    },
+    {
+      "name": "a missing token gets HTTP 401 too",
+      "authorization": null,
+      "steps": [
+        { "from": "hub", "http": 401 }
+      ]
+    },
+    {
+      "name": "no hello within 10 s closes the connection",
+      "steps": [
+        { "from": "phone", "idle_ms": 10000 },
         { "from": "hub", "close": 1008 }
       ]
     }

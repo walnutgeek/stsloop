@@ -4,6 +4,7 @@ import com.walnutgeek.stsloop.core.Classification
 import com.walnutgeek.stsloop.core.Command
 import com.walnutgeek.stsloop.core.CommandInvocation
 import com.walnutgeek.stsloop.core.Turn
+import com.walnutgeek.stsloop.core.grammar.Descriptor
 
 /**
  * Carries out whole-utterance commands (`docs/phase0.md`, "Commands") against
@@ -41,9 +42,16 @@ import com.walnutgeek.stsloop.core.Turn
  *   the Bucket that has [focus] ([bucketAsWords]), "inbox." in the Inbox.
  * - [Command.FOCUS] (a lone Bucket alias): says the name of the Bucket it
  *   focuses. The Focus itself moves once its Turn is published ([CorpusSink]).
+ * - For a hub Bucket, both add [HUB_OFFLINE] while [hubOnline] is false
+ *   (ADR-0001): the Bucket still resolves from the cached Descriptors. Only a
+ *   volatile status is read, so an unreachable hub never holds up a reply.
  * - [Command.STOP_LISTENING]: says [STOPPED_LISTENING] and [Outcome.endsSession].
  */
-class SessionCommands(private val focus: Focus) {
+class SessionCommands(
+    private val focus: Focus,
+    /** Whether the hub is connected and welcomed now; must return at once. */
+    private val hubOnline: () -> Boolean = { false },
+) {
     /**
      * What a command does: the [classification] its Turn is written with, what
      * the loop says back, and whether the Session ends once that is said.
@@ -71,11 +79,18 @@ class SessionCommands(private val focus: Focus) {
                     else -> turn.transcript!!.text
                 },
             )
-            Command.WHERE_AM_I -> Outcome(plain, bucketAsWords(focus.bucket.name))
-            Command.FOCUS -> Outcome(plain, bucketAsWords(invocation.focus!!))
+            Command.WHERE_AM_I -> Outcome(plain, say(focus.bucket))
+            Command.FOCUS -> {
+                val name = invocation.focus!!
+                Outcome(plain, focus.named(name)?.let(::say) ?: bucketAsWords(name))
+            }
             Command.STOP_LISTENING -> Outcome(plain, STOPPED_LISTENING, endsSession = true)
         }
     }
+
+    /** A Bucket's name, and whether its hub is offline when it is the hub's. */
+    private fun say(bucket: Descriptor): String =
+        if (bucket.hub && !hubOnline()) "${bucketAsWords(bucket.name)} $HUB_OFFLINE" else bucketAsWords(bucket.name)
 
     /** [turn] is in the Corpus. Call for every Turn, in order, commands included. */
     fun published(turn: Turn) {
@@ -101,6 +116,9 @@ class SessionCommands(private val focus: Focus) {
 
         /** Said when "repeat" finds no previous Turn. */
         const val NOTHING_TO_REPEAT = "nothing to repeat."
+
+        /** Said after a hub Bucket's name while the hub cannot be reached. */
+        const val HUB_OFFLINE = "hub offline."
 
         /** Said before "stop listening" ends the Session. */
         const val STOPPED_LISTENING = "stopped listening."

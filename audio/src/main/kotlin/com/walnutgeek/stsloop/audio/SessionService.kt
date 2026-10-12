@@ -21,6 +21,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import com.k2fsa.sherpa.onnx.Vad
+import com.walnutgeek.stsloop.audio.hub.HubConnection
 import com.walnutgeek.stsloop.audio.speech.ModelDownloads
 import com.walnutgeek.stsloop.audio.testmode.TestModeSession
 import com.walnutgeek.stsloop.core.Ids
@@ -35,6 +36,7 @@ import com.walnutgeek.stsloop.core.StartRefusal
 import com.walnutgeek.stsloop.core.Transition
 import com.walnutgeek.stsloop.core.turn.SttTiming
 import com.walnutgeek.stsloop.core.Wav
+import com.walnutgeek.stsloop.core.hub.HubStore
 import com.walnutgeek.stsloop.core.testmode.TestConfig
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -283,11 +285,25 @@ class SessionService : Service() {
         var route: AudioRoute? = null
         var echo: EchoSpeaker? = null
         var silencedWatch: SilencedWatch? = null
+        var hub: HubConnection? = null
         try {
             if (recoveryDone.compareAndSet(false, true)) recoverStaged(writer)
             val timings = TurnCapture.loadTimings(filesDir)
             Log.i(TAG, "Session $sessionId timings: ${timings.toJson().replace(Regex("\\s+"), " ")}")
-            val registry = TurnCapture.loadRegistry(filesDir)
+            val buckets = TurnCapture.loadBuckets(filesDir)
+            // The hub's Buckets resolve from the cache, hub or no hub (ADR-0001); a live snapshot replaces them.
+            val hubStore = HubStore(filesDir)
+            val cached = try {
+                hubStore.descriptors()
+            } catch (e: Exception) {
+                Log.e(TAG, "Session $sessionId: cannot read the cached hub Descriptors", e)
+                null
+            }
+            val registry = TurnCapture.registry(buckets, cached)
+            val hubLink = HubConnection(this, hubStore, "Session $sessionId", onDescriptors = { d ->
+                turnCapture?.bucketsChanged(TurnCapture.registry(buckets, d))
+            })
+            hub = hubLink
             Log.i(TAG, "Session $sessionId buckets: ${registry.buckets.joinToString { b -> "${b.name} ${b.aliases}" }}")
             // Checked at Start; gone since only if the model files were deleted underneath us.
             val models = checkNotNull(ModelDownloads.locate(this)) { "no speech models installed" }
@@ -352,6 +368,7 @@ class SessionService : Service() {
                 TurnCapture.silero(vad), models.vadConfig().sileroVadModelConfig.windowSize,
                 recognizer = models::loadStt,
                 buckets = registry,
+                hubOnline = { !hubLink.offline },
                 testOf = testMode?.let { t -> t::turnTest },
                 speaker = echo,
                 endSession = { turn ->
@@ -369,6 +386,7 @@ class SessionService : Service() {
             }
             capture = turns
             turnCapture = turns
+            hubLink.start() // once turnCapture is set, so no snapshot is missed
             silencedWatch = SilencedWatch(getSystemService(AudioManager::class.java), record, main) { silenced ->
                 Log.w(TAG, "Session $sessionId: recording ${if (silenced) "silenced by another capture client" else "no longer silenced"}")
                 turns.clientSilenced(silenced)
@@ -406,6 +424,7 @@ class SessionService : Service() {
             capture?.let { c -> runCatching { c.finish() }.onFailure { Log.e(TAG, "Session $sessionId lost its open Turn", it) } }
         } finally {
             turnCapture = null
+            hub?.let { h -> runCatching { h.stop() }.onFailure { Log.e(TAG, "Session $sessionId: the hub connection did not close cleanly", it) } }
             silencedWatch?.let { w -> runCatching { w.close() } }
             test?.let { t -> runCatching { t.close() }.onFailure { Log.e(TAG, "Session $sessionId: test mode did not close cleanly", it) } }
             echo?.let { e -> runCatching { e.close() }.onFailure { Log.e(TAG, "Session $sessionId: the echo did not close cleanly", it) } }

@@ -11,15 +11,27 @@ import com.walnutgeek.stsloop.core.jsonString
 enum class Primitive(val json: String) {
     /** File the Turn under the Bucket, as a Note. */
     NOTE("note"),
+    ;
+
+    companion object {
+        /** The Primitive called [json] on the wire, or null when the phone does not know it. */
+        fun of(json: String): Primitive? = entries.firstOrNull { it.json == json }
+    }
 }
 
 /**
  * A Provider's description of one Bucket for the phone (`CONTEXT.md`,
  * Descriptor): its canonical [name] (written to `turn.json` as `bucket` or
  * `focus`), the [aliases] it may be addressed by aloud (the name is always
- * one too), and the [primitives] it uses.
+ * one too), and the [primitives] it uses. [hub] says it is published by a
+ * Provider on the hub, so it can be named with the hub offline.
  */
-data class Descriptor(val name: String, val aliases: List<String>, val primitives: Set<Primitive>) {
+data class Descriptor(
+    val name: String,
+    val aliases: List<String>,
+    val primitives: Set<Primitive>,
+    val hub: Boolean = false,
+) {
     companion object {
         /**
          * The Inbox (`CONTEXT.md`): the capture Bucket Focus falls back to. A
@@ -47,7 +59,8 @@ class CaptureProvider(private val config: BucketConfig) : Provider {
 /**
  * Every Bucket the phone can address, gathered from its [Provider]s
  * (ADR-0005), and the phrases each is heard by. The phrase grammar reads its
- * Buckets from here, so hub Descriptors can join the capture Buckets later.
+ * Buckets from here; the hub's join the capture Buckets through
+ * `HubProvider`, and a new registry replaces this one when they change.
  *
  * Phrases are compared as words ([Words]), and a phrase of several words is
  * also heard run together, as in [BucketConfig]. Conflicts between Buckets

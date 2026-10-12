@@ -86,6 +86,13 @@ plain `ws://`, so both commands warn: the token and every message travel
 unencrypted unless that network is trusted. A phone with the wrong token gets HTTP 401; one speaking a protocol
 major the hub does not support gets a refusal, in a sentence the phone can speak.
 
+On the phone, tap **Pair with hub** and scan the QR code. The phone keeps the
+address and token, and caches the hub's Buckets, so naming one ("the hub")
+focuses it even while the hub is unreachable; the loop then says "hub
+offline". While a Session runs, the phone stays connected, retries a lost
+connection, and reconnects at once when its network changes. A pairing made
+during a Session is used from the next one. **Forget hub** unpairs.
+
 The messages are specified in [`protocol/`](./protocol/README.md).
 
 ```sh

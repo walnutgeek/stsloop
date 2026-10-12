@@ -9,7 +9,7 @@ parse. Neither side shares code with the other; they agree here.
 schemas/v1/<type>.schema.json      one per message type, JSON Schema 2020-12
 fixtures/v1/<type>/<case>.json     canonical messages; "type" equals the directory
 fixtures/v1/message/<case>.json    messages of types no schema knows (to be ignored)
-fixtures/v1/exchanges.json         conversations: who sends which fixture, in order
+fixtures/v1/exchanges.json         conversations, in order: frames, idle time, closes, HTTP answers
 fixtures/v1/equivalents.json       fixtures with extra fields, and the fixture each reads as
 ```
 
@@ -61,5 +61,10 @@ Every implementation's tests load every fixture and:
 - for each message they send, produce output equal, as parsed JSON, to the
   fixture `exchanges.json` names for that step.
 
-The hub's are in `hub/tests/test_fixtures.py`. A hub publishing only the stub
-Bucket answers every exchange exactly.
+The hub's are in `hub/tests/test_fixtures.py`; a hub publishing only the stub
+Bucket answers every exchange exactly. The phone's are in
+`core/src/test/kotlin/com/walnutgeek/stsloop/core/hub/`
+(`ProtocolFixturesTest`, and `HubLinkTest`, which plays each exchange's hub
+steps to the phone and checks where it ends up: online, refused, offline and
+retrying, or unauthorised). The phone sends one message, `hello/basic.json`,
+whatever phone a given exchange stands for.

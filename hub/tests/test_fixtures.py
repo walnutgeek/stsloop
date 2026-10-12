@@ -8,13 +8,17 @@ import json
 import unittest
 
 from jsonschema import Draft202012Validator
-from websockets.exceptions import ConnectionClosed
+from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from stsloop_hub import pairing
 from stsloop_hub import protocol as p
+from stsloop_hub.hub import HELLO_TIMEOUT_S
 from stsloop_hub.stub import STUB_BUCKETS
 
 from support import SCHEMAS, fixture, fixture_paths, manifest, pairing_token, phone, running_hub, versions
+
+#: Exchanges run this much faster than real time: an `idle_ms` of 10 s takes 0.2 s.
+TIME_SCALE = 0.02
 
 
 def schema_validator(version: str, message_type: str) -> Draft202012Validator:
@@ -80,13 +84,38 @@ class ExchangesTest(unittest.IsolatedAsyncioTestCase):
         for version in versions():
             for exchange in manifest(version, "exchanges.json")["exchanges"]:
                 with self.subTest(version=version, exchange=exchange["name"]):
-                    await self.play(version, exchange["steps"])
+                    await self.play(version, exchange)
 
-    async def play(self, version, steps):
-        async with running_hub(token=pairing_token(version)) as (_, url):
-            async with phone(url, pairing_token(version)) as ws:
+    def test_the_idle_step_is_the_hubs_hello_timeout(self):
+        idles = [
+            step["idle_ms"]
+            for version in versions()
+            for exchange in manifest(version, "exchanges.json")["exchanges"]
+            for step in exchange["steps"]
+            if "idle_ms" in step
+        ]
+        self.assertTrue(idles)
+        for idle_ms in idles:
+            self.assertEqual(idle_ms, HELLO_TIMEOUT_S * 1000)
+
+    async def play(self, version, exchange):
+        steps = exchange["steps"]
+        authorization = exchange.get("authorization", f"Bearer {pairing_token(version)}")
+        # The hub's hello timeout, scaled down so the exchange takes a fraction of a second.
+        async with running_hub(token=pairing_token(version), hello_timeout=HELLO_TIMEOUT_S * TIME_SCALE) as (_, url):
+            if "http" in steps[0]:
+                with self.assertRaises(InvalidStatus) as caught:
+                    async with phone(url, authorization=authorization):
+                        pass
+                self.assertEqual(caught.exception.response.status_code, steps[0]["http"])
+                return
+            async with phone(url, authorization=authorization) as ws:
+                idle_until = 0.0
+                loop = asyncio.get_running_loop()
                 for step in steps:
-                    if step["from"] == "phone":
+                    if "idle_ms" in step:
+                        idle_until = loop.time() + step["idle_ms"] / 1000 * TIME_SCALE
+                    elif step["from"] == "phone":
                         await ws.send(json.dumps(fixture(version, step["fixture"])))
                     elif "fixture" in step:
                         expected = fixture(version, step["fixture"])
@@ -97,6 +126,9 @@ class ExchangesTest(unittest.IsolatedAsyncioTestCase):
                         with self.assertRaises(ConnectionClosed):
                             await asyncio.wait_for(ws.recv(), 5)
                         self.assertEqual(ws.close_code, step["close"])
+                        # Not much before the phone has been idle as long as the step says (the hub's
+                        # clock starts at accept, a little before the phone's connect returns).
+                        self.assertGreaterEqual(loop.time(), idle_until - 0.1)
                 if steps[-1]["from"] == "hub" and "fixture" in steps[-1]:
                     # The hub has said everything it will; nothing more arrives.
                     with self.assertRaises(asyncio.TimeoutError):

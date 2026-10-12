@@ -9,7 +9,6 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.assertThrows
 
 class FocusTest {
     private val registry = BucketRegistry.capture(BucketConfig.DEFAULT)
@@ -101,6 +100,8 @@ class FocusTest {
 
     @Test
     fun `only a registered Bucket can be focused`() {
-        assertThrows<IllegalArgumentException> { focus.set("nowhere", atMs = 0) }
+        focus.set("errands", atMs = 0)
+        assertFalse(focus.set("nowhere", atMs = 0))
+        assertEquals("errands", focus.bucket.name)
     }
 }

@@ -30,13 +30,15 @@ class CorpusSink(
     private val appVersion: String,
     private val grammar: PhraseGrammar,
     /** This Session's Focus, on the stream's clock; shared with whatever [Focus.tick]s it. */
-    private val focus: Focus = Focus(grammar.buckets, Timings().focusTimeoutMs.toLong()),
+    private val focus: Focus = Focus({ grammar.buckets }, Timings().focusTimeoutMs.toLong()),
     private val newId: () -> String = Ids::next,
     /**
      * Test mode (#27): the `test` block for a closed utterance, or null outside
      * test mode. Called on the writing thread; a failure only drops the block.
      */
     private val testOf: ((Utterance) -> TurnTest?)? = null,
+    /** Whether the hub is online now, for the replies that name a hub Bucket; must return at once. */
+    hubOnline: () -> Boolean = { false },
     private val listener: Listener,
 ) {
     interface Listener {
@@ -57,7 +59,7 @@ class CorpusSink(
         fun discarded(event: TurnEvent.Discarded) {}
     }
 
-    private val commands = SessionCommands(focus)
+    private val commands = SessionCommands(focus, hubOnline)
 
     /** Turns published so far. */
     var published = 0

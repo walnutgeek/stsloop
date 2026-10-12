@@ -21,4 +21,6 @@ android {
 
 dependencies {
     implementation(project(":audio"))
+    // Scans the hub's pairing QR code through Play services: no camera permission, no camera code.
+    implementation(libs.code.scanner)
 }

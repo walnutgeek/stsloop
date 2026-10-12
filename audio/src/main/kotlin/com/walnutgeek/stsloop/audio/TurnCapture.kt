@@ -11,6 +11,8 @@ import com.walnutgeek.stsloop.core.failure.SilentFailure
 import com.walnutgeek.stsloop.core.grammar.BucketConfig
 import com.walnutgeek.stsloop.core.grammar.BucketRegistry
 import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
+import com.walnutgeek.stsloop.core.hub.Descriptors
+import com.walnutgeek.stsloop.core.hub.HubProvider
 import com.walnutgeek.stsloop.core.speech.StreamingRecognizer
 import com.walnutgeek.stsloop.core.testmode.TestConfig
 import com.walnutgeek.stsloop.core.testmode.TurnTest
@@ -73,8 +75,10 @@ class TurnCapture(
     /** Loads the Session's one recognizer; called once, on the STT thread. */
     recognizer: () -> StreamingRecognizer,
     maxQueuedMs: Long = MAX_QUEUED_MS,
-    /** The Buckets a Turn may be Declared into or focus. */
+    /** The Buckets a Turn may be Declared into or focus; [bucketsChanged] replaces them. */
     buckets: BucketRegistry = BucketRegistry.capture(BucketConfig.DEFAULT),
+    /** Whether the hub is online now (a volatile read): the loop says "hub offline" for hub Buckets when not. */
+    hubOnline: () -> Boolean = { false },
     /** Test mode (#27): each Turn's `test` block, computed on the STT thread; null outside test mode. */
     testOf: ((Utterance) -> TurnTest?)? = null,
     /** Speaks each Turn's echo, reporting its end through [spoken]; null means no echo, and the mic never closes. */
@@ -89,10 +93,12 @@ class TurnCapture(
     private val onTurn: (Turn, Utterance, SttTiming?) -> Unit = { _, _, _ -> },
 ) {
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "stt-$sessionId") }
-    private val focus = Focus(buckets, timings.focusTimeoutMs.toLong())
+    private val grammar = PhraseGrammar(buckets)
+    private val focus = Focus({ grammar.buckets }, timings.focusTimeoutMs.toLong())
     private val sink: CorpusSink = CorpusSink(
-        writer, sessionId, sessionStartedAtMs, SAMPLE_RATE_HZ, appVersion, PhraseGrammar(buckets), focus,
+        writer, sessionId, sessionStartedAtMs, SAMPLE_RATE_HZ, appVersion, grammar, focus,
         testOf = testOf,
+        hubOnline = hubOnline,
         listener = object : CorpusSink.Listener {
             override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) {
                 // Persist, then speak (phase0.md's loop): a Turn that failed to write is not echoed. A command
@@ -232,6 +238,9 @@ class TurnCapture(
         }
     }
 
+    /** Any thread: from the next Turn on, the Buckets are [buckets] (the hub sent a new snapshot). */
+    fun bucketsChanged(buckets: BucketRegistry) = grammar.replace(buckets)
+
     /** Any thread: Android has (or no longer has) silenced this Session's recording for another capture client. */
     fun clientSilenced(silenced: Boolean) = failures.set(SilentFailure.MIC_SILENCED, silenced)
 
@@ -322,11 +331,12 @@ class TurnCapture(
             loadConfig(File(dir, BucketConfig.FILE), BucketConfig.DEFAULT) { BucketConfig.parse(it).run { config to rejected } }
 
         /**
-         * The Buckets the phone can address with no hub: the capture Provider
-         * over [loadBuckets]. Each conflict with the Inbox is logged.
+         * The Buckets the phone can address: the capture Provider over
+         * [loadBuckets], then the hub's Buckets of [hub] (the cached or a live
+         * snapshot), if any. Each conflict is logged.
          */
-        fun loadRegistry(dir: File): BucketRegistry =
-            BucketRegistry.capture(loadBuckets(dir)).also { r -> for (p in r.rejected) Log.e(TAG, "${BucketConfig.FILE}: ignoring $p") }
+        fun registry(config: BucketConfig, hub: Descriptors?): BucketRegistry =
+            HubProvider.registry(config, hub).also { r -> for (p in r.rejected) Log.e(TAG, "Buckets: ignoring $p") }
 
         /**
          * The Bluetooth test mode [TestConfig] in `<dir>/testmode.json`, read at

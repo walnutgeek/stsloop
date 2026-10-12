@@ -19,7 +19,10 @@
         </intent>
     </queries>
 
-    <application>
+    <!-- usesCleartextTraffic: the hub is plain ws:// on its tailnet address (HubConnection,
+         protocol/README.md). The tailnet's WireGuard is the encryption, and the token is checked
+         before any message. -->
+    <application android:usesCleartextTraffic="true">
         <!-- A Session. Typed `microphone` (a while-in-use type), never shortService.
              shortService is declared only for the moment a refused Start must
              still call startForeground() before stopping; no Session runs as it,

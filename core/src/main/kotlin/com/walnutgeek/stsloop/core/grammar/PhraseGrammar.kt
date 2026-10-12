@@ -55,21 +55,36 @@ import com.walnutgeek.stsloop.core.DeclarationPosition
  *
  * The Buckets come from a [BucketRegistry]: any Bucket in it may be focused,
  * and those using [Primitive.NOTE] (the Inbox aside) may be Declared into.
+ * When the hub's Buckets change mid-Session, [replace] swaps the registry
+ * whole; each [classify] reads one registry throughout. Thread-safe.
  */
-class PhraseGrammar(val buckets: BucketRegistry) {
+class PhraseGrammar(buckets: BucketRegistry) {
     /** The phone alone: the capture Buckets of [config]. */
     constructor(config: BucketConfig) : this(BucketRegistry.capture(config))
 
     /** A Declaration and the content left once it is taken out. */
     internal data class Declared(val declaration: Declaration, val content: String)
 
-    /** Forms longest first: most words, then most letters. */
-    private val forms: List<Pair<List<String>, String>> = buckets.declarationForms.entries
-        .map { it.key to it.value }
-        .sortedWith(compareByDescending<Pair<List<String>, String>> { it.first.size }.thenByDescending { it.first.sumOf(String::length) })
+    /** One registry and its Declaration forms, longest first: most words, then most letters. */
+    private class Compiled(val buckets: BucketRegistry) {
+        val forms: List<Pair<List<String>, String>> = buckets.declarationForms.entries
+            .map { it.key to it.value }
+            .sortedWith(compareByDescending<Pair<List<String>, String>> { it.first.size }.thenByDescending { it.first.sumOf(String::length) })
 
-    /** The same forms with their words reversed, for matching from the end. */
-    private val reversedForms = forms.map { (form, bucket) -> form.reversed() to bucket }
+        /** The same forms with their words reversed, for matching from the end. */
+        val reversedForms = forms.map { (form, bucket) -> form.reversed() to bucket }
+    }
+
+    @Volatile
+    private var compiled = Compiled(buckets)
+
+    /** The Buckets the grammar hears now. */
+    val buckets: BucketRegistry get() = compiled.buckets
+
+    /** From the next [classify] on, hear the Buckets of [buckets] instead. */
+    fun replace(buckets: BucketRegistry) {
+        compiled = Compiled(buckets)
+    }
 
     /** Every command phrase as words → its command. */
     private val commands: Map<List<String>, Command> =
@@ -83,15 +98,18 @@ class PhraseGrammar(val buckets: BucketRegistry) {
      */
     fun classify(transcript: String?, focus: String? = null): Classification {
         if (transcript == null) return Classification.UNCLASSIFIED
-        command(transcript)?.let { return Classification.command(it) }
-        declaration(transcript)?.let { return Classification.declared(it.declaration, it.content) }
+        val c = compiled
+        command(transcript, c)?.let { return Classification.command(it) }
+        declaration(transcript, c)?.let { return Classification.declared(it.declaration, it.content) }
         if (focus == null) return Classification.UNCLASSIFIED
         val content = content(transcript) ?: return Classification.UNCLASSIFIED
         return Classification.focused(focus, content)
     }
 
     /** The command [transcript] is as a whole, fillers at its ends aside, or null. */
-    internal fun command(transcript: String): CommandInvocation? {
+    internal fun command(transcript: String): CommandInvocation? = command(transcript, compiled)
+
+    private fun command(transcript: String, c: Compiled): CommandInvocation? {
         val words = Words.normalise(transcript)
         var from = 0
         var to = words.size
@@ -100,7 +118,7 @@ class PhraseGrammar(val buckets: BucketRegistry) {
         val said = words.subList(from, to)
         val matched = said.joinToString(" ")
         commands[said]?.let { return CommandInvocation(it, matched) }
-        val bucket = buckets.focusForms[said] ?: return null
+        val bucket = c.buckets.focusForms[said] ?: return null
         return CommandInvocation(Command.FOCUS, matched, focus = bucket)
     }
 
@@ -116,13 +134,15 @@ class PhraseGrammar(val buckets: BucketRegistry) {
     private fun cased(text: String, content: String) = if (text.any { it.isLowerCase() }) content else content.lowercase()
 
     /** The Declaration in [transcript], or null when there is none. */
-    internal fun declaration(transcript: String): Declared? {
+    internal fun declaration(transcript: String): Declared? = declaration(transcript, compiled)
+
+    private fun declaration(transcript: String, c: Compiled): Declared? {
         val text = Words.prepare(transcript)
         val words = Words.of(text)
         val texts = words.map { it.text }
         val n = texts.size
-        val lead = matchStart(texts, reversed = false)
-        val trail = matchStart(texts.asReversed(), reversed = true)
+        val lead = matchStart(texts, c.forms)
+        val trail = matchStart(texts.asReversed(), c.reversedForms, reversed = true)
         // Indices of the content's words, [from, to).
         val (found, from, to) = when {
             lead != null && trail != null && n - trail.aliasEnd < lead.aliasEnd ->
@@ -156,9 +176,8 @@ class PhraseGrammar(val buckets: BucketRegistry) {
         val position: DeclarationPosition = DeclarationPosition.LEADING,
     )
 
-    /** Matches at the start of [words]; the trailing case passes the words [reversed]. */
-    private fun matchStart(words: List<String>, reversed: Boolean): Match? {
-        val forms = if (reversed) reversedForms else forms
+    /** Matches [forms] at the start of [words]; the trailing case passes the words, and the forms, [reversed]. */
+    private fun matchStart(words: List<String>, forms: List<Pair<List<String>, String>>, reversed: Boolean = false): Match? {
         var at = 0
         while (at < words.size) {
             val hit = forms.firstOrNull { (form, _) -> at + form.size <= words.size && words.subList(at, at + form.size) == form }

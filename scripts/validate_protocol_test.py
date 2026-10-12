@@ -81,6 +81,35 @@ class BrokenProtocolTest(unittest.TestCase):
         self.write("fixtures/v1/exchanges.json", exchanges)
         self.assertIn("hello/nope.json", self.problems())
 
+    def replace_exchange(self, exchange):
+        exchanges = json.loads((self.root / "fixtures/v1/exchanges.json").read_text())
+        exchanges["exchanges"] = [exchange]
+        self.write("fixtures/v1/exchanges.json", exchanges)
+
+    def test_every_kind_of_step_is_accepted(self):
+        self.replace_exchange({"name": "ok", "authorization": None, "steps": [{"from": "hub", "http": 401}]})
+        self.assertEqual(self.problems(), "")
+        self.replace_exchange({"name": "ok", "steps": [{"from": "phone", "idle_ms": 10}, {"from": "hub", "close": 1008}]})
+        self.assertEqual(self.problems(), "")
+
+    def test_a_step_with_two_kinds_is_reported(self):
+        self.replace_exchange({"name": "two", "steps": [{"from": "hub", "close": 1008, "http": 401}]})
+        self.assertIn("exactly one of", self.problems())
+
+    def test_an_http_step_from_the_phone_or_followed_by_more_is_reported(self):
+        self.replace_exchange({"name": "phone http", "steps": [{"from": "phone", "http": 401}]})
+        self.assertIn("http", self.problems())
+        self.replace_exchange({"name": "more", "steps": [{"from": "hub", "http": 401}, {"from": "hub", "close": 1000}]})
+        self.assertIn("last", self.problems())
+
+    def test_idle_from_the_hub_is_reported(self):
+        self.replace_exchange({"name": "hub idle", "steps": [{"from": "hub", "idle_ms": 5}]})
+        self.assertIn("idle_ms", self.problems())
+
+    def test_an_authorization_that_is_not_a_string_or_null_is_reported(self):
+        self.replace_exchange({"name": "auth", "authorization": 5, "steps": [{"from": "hub", "http": 401}]})
+        self.assertIn("authorization", self.problems())
+
     def test_a_command_whose_primitive_its_descriptor_does_not_list_is_reported(self):
         message = json.loads((self.root / "fixtures/v1/descriptors/agents.json").read_text())
         message["buckets"][1]["commands"][0]["primitive"] = "draft"
