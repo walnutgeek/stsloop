@@ -3,7 +3,7 @@
 import unittest
 
 from stsloop_hub import protocol as p
-from stsloop_hub.agents import HerdrProvider, duration
+from stsloop_hub.agents import GRACE, HerdrProvider, duration
 from stsloop_hub.buckets import Buckets
 
 from support import Clock, FakeHerdr, agent, fixture
@@ -42,6 +42,14 @@ class BucketsTest(Setup):
         self.assertEqual([(d.name, d.aliases) for d in self.provider.descriptors()],
                          [("direction wiki agent", ("direction wiki",)), ("try laya agent", ("try laya",))])
 
+    def test_an_agent_keeps_its_name_while_it_lives(self):
+        self.poll(agent("w8:p1", "stsloop", "idle"), agent("w8:p4", "stsloop", "idle"))
+        self.poll(agent("w8:p4", "stsloop", "idle"), after=2)
+        self.assertEqual([d.name for d in self.provider.descriptors()], ["stsloop agent two"])
+        self.poll(agent("w8:p4", "stsloop", "idle"), agent("w8:p7", "stsloop", "idle"), after=2)
+        self.assertEqual([(d.id, d.name, d.aliases) for d in self.provider.descriptors()],
+                         [("herdr:w8:p4", "stsloop agent two", ()), ("herdr:w8:p7", "stsloop agent", ("stsloop",))])
+
     def test_buckets_come_and_go_as_agents_do(self):
         self.assertTrue(self.poll(agent("w8:p1", "stsloop", "working")))
         self.assertFalse(self.poll(agent("w8:p1", "stsloop", "working"), after=2))
@@ -63,6 +71,10 @@ class BucketsTest(Setup):
     def test_herdr_not_answering_means_no_agent_buckets(self):
         self.poll(agent("w8:p1", "stsloop", "working"))
         self.herdr.error = "protocol_mismatch"
+        with self.assertLogs("stsloop.herdr", "INFO"):
+            for _ in range(GRACE - 1):
+                self.assertFalse(self.provider.refresh(), "a hiccup keeps the Buckets")
+        self.assertEqual(self.say("herdr:w8:p1"), "stsloop agent is working, for at least a few seconds.")
         with self.assertLogs("stsloop.herdr", "WARNING"):
             self.assertTrue(self.provider.refresh())
         self.assertEqual([d.id for d in self.buckets.descriptors()], ["hub"])

@@ -32,9 +32,15 @@ class HubRequests(
     private val newId: () -> String = Ids::next,
     private val listener: Listener = object : Listener {},
 ) {
+    /** What happened to each request, for the log. */
     interface Listener {
+        /** [request], for [bucket]'s command, went to the hub. */
         fun sent(request: Request, bucket: BucketRequest) {}
+
+        /** The hub answered [request] with [reply], [afterMs] after it was sent; the reply is being said. */
         fun replied(request: Request, reply: Reply, afterMs: Long) {}
+
+        /** [request] was given up on: no reply within [timeoutMs]. */
         fun timedOut(request: Request) {}
 
         /** A reply that matches no request waiting for one: late, or not ours. */
