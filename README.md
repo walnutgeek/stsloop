@@ -86,12 +86,25 @@ plain `ws://`, so both commands warn: the token and every message travel
 unencrypted unless that network is trusted. A phone with the wrong token gets HTTP 401; one speaking a protocol
 major the hub does not support gets a refusal, in a sentence the phone can speak.
 
-On the phone, tap **Pair with hub** and scan the QR code. The phone keeps the
+On the phone, open **Settings**, tap **Pair with hub** and scan the QR code. The phone keeps the
 address and token, and caches the hub's Buckets, so naming one ("the hub")
 focuses it even while the hub is unreachable; the loop then says "hub
 offline". While a Session runs, the phone stays connected, retries a lost
 connection, and reconnects at once when its network changes. A pairing made
 during a Session is used from the next one. **Forget hub** unpairs.
+
+### The settings screen
+
+**Settings** on the main screen sets the trailing silence and the focus
+timeout, pairs and forgets the hub, and lists every Bucket (the capture
+Buckets, then the hub's cached ones) with its aliases. Every change applies
+from the next Session. The screen writes the same files adb can, described
+below: `files/timings.json`, `files/buckets.json`, and
+`files/hub/aliases.json` for hub Buckets. Each save changes only what was
+edited and keeps the rest of the file as it was, so values pushed over adb
+survive. Trailing silence takes 0.3 to 10 s on the screen; the file still
+takes anything it allows. An alias is refused when another Bucket is already
+heard by it, since a Session would drop it from both.
 
 The messages are specified in [`protocol/`](./protocol/README.md).
 
@@ -212,6 +225,14 @@ Buckets are logged under `stsloop.Session` when a Session starts. An empty list,
 (see "Focus" below): a Bucket by that name, or an alias "inbox", is dropped and
 logged.
 
+A hub Bucket's aliases come from its Provider. Aliases set for it on the
+settings screen replace them, on the phone only, and are kept by Descriptor
+`id` in `files/hub/aliases.json`. Forgetting the hub keeps them:
+
+```json
+{ "aliases": { "herdr:stsloop": ["loop agent"] } }
+```
+
 ```sh
 # write (debug build; takes effect at the next Session)
 mise exec -- adb exec-in run-as com.walnutgeek.stsloop sh -c 'cat > files/buckets.json' < buckets.json
@@ -224,7 +245,8 @@ mise exec -- adb shell run-as com.walnutgeek.stsloop rm files/buckets.json
 
 The loop's timings (`docs/phase0.md`, "Timings") are read at the start of every
 Session from `files/timings.json` in the app's private storage, so they can be
-changed without a rebuild. The file is optional, and so is every key in it: a
+changed without a rebuild. `trailing_silence_ms` and `focus_timeout_ms` are
+also on the settings screen. The file is optional, and so is every key in it: a
 missing key keeps its default. Fallback is per key: an unknown key, a
 non-number or an out-of-range value is logged as an error under
 `stsloop.TurnCapture` and keeps its default, while the other keys still apply.

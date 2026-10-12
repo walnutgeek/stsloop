@@ -31,7 +31,7 @@ class MainActivity : Activity() {
     private lateinit var models: TextView
     private lateinit var modelAction: Button
     private var testMode: TestModePane? = null
-    private lateinit var hub: HubPairingPane
+    private lateinit var openSettings: Button
     private val modelsChanged: () -> Unit = { refreshModels() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,7 +63,12 @@ class MainActivity : Activity() {
             onLoaded = { n -> corpusCount.text = "Corpus: $n Turn(s), newest first" }
         }
         corpusCount = TextView(this).apply { textSize = 16f; setPadding(0, 32, 0, 8) }
-        hub = HubPairingPane(this)
+        // Timings, hub pairing and Bucket aliases (#48).
+        openSettings = Button(this).apply {
+            isAllCaps = false
+            text = "Settings"
+            setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
+        }
         // Bluetooth test mode (#27) is a debug-build experiment, never part of the product UI.
         if (SessionService.testModeAllowed(this)) testMode = TestModePane()
         setContentView(LinearLayout(this).apply {
@@ -73,7 +78,7 @@ class MainActivity : Activity() {
             addView(status)
             addView(models)
             addView(modelAction)
-            addView(hub.view)
+            addView(openSettings)
             testMode?.let { addView(it.view) }
             addView(corpusCount)
             addView(transcripts.view, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -92,11 +97,18 @@ class MainActivity : Activity() {
         pairFromIntent(intent)
     }
 
-    /** Debug builds only: pair over adb with the QR code's text (`--es pairing '<json>'`), as a scan would. */
+    /**
+     * Debug builds only: pair over adb with the QR code's text (`--es pairing '<json>'`), as a scan would.
+     * Pairing lives on the settings screen, which is not exported, so the extra is forwarded there.
+     */
     private fun pairFromIntent(intent: Intent?) {
         val text = intent?.getStringExtra(EXTRA_PAIRING) ?: return
         intent.removeExtra(EXTRA_PAIRING)
-        if (SessionService.testModeAllowed(this)) hub.paired(text) else Log.w(TAG, "ignoring a pairing extra: debug builds only")
+        if (SessionService.testModeAllowed(this)) {
+            startActivity(Intent(this, SettingsActivity::class.java).putExtra(SettingsActivity.EXTRA_PAIRING, text))
+        } else {
+            Log.w(TAG, "ignoring a pairing extra: debug builds only")
+        }
     }
 
     override fun onResume() {
@@ -104,13 +116,11 @@ class MainActivity : Activity() {
         ModelDownloads.observe(modelsChanged)
         ModelDownloads.ensure(this)
         refresh()
-        hub.refresh()
         transcripts.start()
     }
 
     override fun onPause() {
         ModelDownloads.unobserve(modelsChanged)
-        hub.pause()
         transcripts.stop()
         super.onPause()
     }

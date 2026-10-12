@@ -299,9 +299,11 @@ class SessionService : Service() {
                 Log.e(TAG, "Session $sessionId: cannot read the cached hub Descriptors", e)
                 null
             }
-            val registry = TurnCapture.registry(buckets, cached)
+            // The aliases given hub Buckets on the settings screen, which outlive every snapshot.
+            val hubAliases = TurnCapture.loadHubAliases(filesDir)
+            val registry = TurnCapture.registry(buckets, cached, hubAliases)
             val hubLink = HubConnection(this, hubStore, "Session $sessionId", onDescriptors = { d ->
-                turnCapture?.bucketsChanged(TurnCapture.registry(buckets, d))
+                turnCapture?.bucketsChanged(TurnCapture.registry(buckets, d, hubAliases))
             })
             hub = hubLink
             Log.i(TAG, "Session $sessionId buckets: ${registry.buckets.joinToString { b -> "${b.name} ${b.aliases}" }}")
