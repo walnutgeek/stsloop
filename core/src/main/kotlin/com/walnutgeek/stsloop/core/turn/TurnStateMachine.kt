@@ -39,7 +39,7 @@ sealed interface TurnEvent {
 
 /**
  * The human side of the loop: LISTENING → CAPTURING → closed by trailing
- * Silence, by max duration, or by the end of the Session (`docs/mvp.md`, "The loop").
+ * Silence, by max duration, or by the end of the Session (`docs/phase0.md`, "The loop").
  *
  * It post-processes per-window speech probabilities rather than delegating to
  * sherpa-onnx's segmenter, so every timing is a [Timings] value and every

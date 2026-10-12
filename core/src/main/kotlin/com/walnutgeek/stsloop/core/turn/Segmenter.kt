@@ -32,7 +32,7 @@ interface UtteranceSink {
 }
 
 /**
- * The software tee (`docs/mvp.md`, "One microphone, software tee"): one int16
+ * The software tee (`docs/phase0.md`, "One microphone, software tee"): one int16
  * stream goes in; the same retained samples are cut into fixed VAD windows
  * (converted to float `/32768` here, downstream of the tee) and into each
  * closed utterance's Recording, which is also streamed to the sink while it is

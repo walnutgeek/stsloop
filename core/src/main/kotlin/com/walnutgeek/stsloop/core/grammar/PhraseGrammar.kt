@@ -7,7 +7,7 @@ import com.walnutgeek.stsloop.core.Declaration
 import com.walnutgeek.stsloop.core.DeclarationPosition
 
 /**
- * The phrase grammar (`docs/mvp.md`, "Phrase grammar"): pure string matching
+ * The phrase grammar (`docs/phase0.md`, "Phrase grammar"): pure string matching
  * against a transcript. No inference, no model, no thresholds.
  *
  * A **command** ([Command]) is obeyed only when it is the whole utterance:

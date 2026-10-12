@@ -1,7 +1,7 @@
 # Phase 0 findings that push on the vision (2026-10-10)
 
 What building and test-driving Phase 0 taught, where it disagrees with
-[`../vision.md`](../vision.md) or [`../mvp.md`](../mvp.md), and the ideas it
+[`../vision.md`](../vision.md) or [`../phase0.md`](../phase0.md), and the ideas it
 suggests. **Inputs to a brainstorm, not decisions.** Evidence for each point is
 on the issue named. The numbers come from two drives in one Tesla with one
 speaker and one phone (Pixel 10 Pro).
@@ -65,7 +65,7 @@ speaker and one phone (Pixel 10 Pro).
   A Turn that is only an alias is not a Declaration, so the label was lost.
 - **Ideas:** a lone-Bucket Turn could declare the *next* Turn (a short-lived
   "current Bucket"), or close a Turn with a longer silence after a lone alias.
-  Either changes the "one Turn, one Declaration" shape in `mvp.md`.
+  Either changes the "one Turn, one Declaration" shape in `phase0.md`.
 
 ## 6. The Corpus count needs a definition
 
@@ -106,5 +106,5 @@ speaker and one phone (Pixel 10 Pro).
   distribution and signing.
 - **Readback of errors:** the echo now reads back the transcript, errors
   included. Whether that helps (you hear what was stored) or grates is still
-  the open question in `mvp.md`. An earcon plus the Bucket name remains the
+  the open question in `phase0.md`. An earcon plus the Bucket name remains the
   fallback.

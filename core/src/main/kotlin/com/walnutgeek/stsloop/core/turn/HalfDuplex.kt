@@ -3,7 +3,7 @@ package com.walnutgeek.stsloop.core.turn
 import java.util.Locale
 import java.util.concurrent.ConcurrentLinkedQueue
 
-/** Where the loop is (`docs/mvp.md`, "The loop"). The mic is open only in [LISTENING] and [CAPTURING]. */
+/** Where the loop is (`docs/phase0.md`, "The loop"). The mic is open only in [LISTENING] and [CAPTURING]. */
 enum class LoopState { LISTENING, CAPTURING, SPEAKING, GUARD }
 
 /**
@@ -22,7 +22,7 @@ fun interface Speaker {
     fun abandon(id: Long) {}
 }
 
-/** What the loop says back for a transcript (`docs/mvp.md`, "Spoken echo of the transcript"). */
+/** What the loop says back for a transcript (`docs/phase0.md`, "Spoken echo of the transcript"). */
 object EchoText {
     /**
      * The transcript in a form a TTS engine reads as words, or null when there

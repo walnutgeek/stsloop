@@ -5,7 +5,7 @@ import com.walnutgeek.stsloop.core.corpus.JsonException
 import kotlin.math.floor
 
 /**
- * The loop's timings (`docs/mvp.md`, "Timings — all tunable, none final").
+ * The loop's timings (`docs/phase0.md`, "Timings — all tunable, none final").
  * Read at Session start from a JSON file in app storage, so they can be tuned
  * without a rebuild; every key is optional and falls back to the default here.
  *

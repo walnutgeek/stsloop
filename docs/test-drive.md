@@ -1,6 +1,6 @@
 # Test drive checklist (Bluetooth test mode, #27 → #8)
 
-One drive to answer two questions from `docs/mvp.md` ("Known unknowns"): which
+One drive to answer two questions from `docs/phase0.md` ("Known unknowns"): which
 microphone path survives road noise, and what the Tesla's Bluetooth routing does
 when the phone speaks while it records. Every Session below is a **test
 Session**: the phone speaks *"This is the machine speaking, test number N"*
@@ -116,7 +116,7 @@ Session's log ends with `session_end` showing `"mode":"normal"`.
 
 **Driving phrases** (memorised, the driver says only these): 1, 3 and 5.
 
-Phrases 1, 2, 4 and 6 start with a default Bucket name (`docs/mvp.md`), so they
+Phrases 1, 2, 4 and 6 start with a default Bucket name (`docs/phase0.md`), so they
 also test Declarations under each configuration.
 
 ## Afterwards: pull the Corpus and run the report

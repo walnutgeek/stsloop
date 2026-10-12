@@ -13,7 +13,11 @@ end of a Turn files it there. Four spoken commands work: "scratch that",
 mic and speaker. The loop says aloud when the mic or its speech fails silently.
 A script loads the pulled Corpus on Linux.
 
-What Phase 0 still has to prove is in [`docs/mvp.md`, "Done when"](./docs/mvp.md#done-when):
+**Next: v0.1, supervising coding agents from the car** ([`docs/mvp.md`](./docs/mvp.md)):
+a hub on your own machine publishes your herdr and Claude Code sessions as
+Buckets, the loop tells you when one is blocked, and you answer by voice.
+
+What Phase 0 left open is in [`docs/phase0.md`, "Done when"](./docs/phase0.md#done-when):
 weeks of real driving use, a tuned trailing silence, the battery cost, and a
 first classifier experiment on the Corpus. A release build has no way to export
 the Corpus yet ([`docs/corpus-sync.md`](./docs/corpus-sync.md)).
@@ -22,8 +26,9 @@ To build and install it, see [Development setup](#development-setup).
 | Document | What it is |
 | --- | --- |
 | [`CONTEXT.md`](./CONTEXT.md) | Glossary. The project's vocabulary, and the words it deliberately avoids |
-| [`docs/vision.md`](./docs/vision.md) | Long-term vision: the spine, lanes, the control-surface ladder, six phases |
-| [`docs/mvp.md`](./docs/mvp.md) | Phase 0 spec: the loop, phrase grammar, corpus format, done-criteria |
+| [`docs/vision.md`](./docs/vision.md) | Long-term vision: the agent wedge, Buckets and Providers, Focus, the control-surface ladder, phases |
+| [`docs/mvp.md`](./docs/mvp.md) | v0.1 scope: the hub, agent Buckets, Drafts, alerts, onboarding, done-criteria |
+| [`docs/phase0.md`](./docs/phase0.md) | Phase 0 spec, as built: the loop, timings, phrase grammar, corpus format |
 | [`docs/corpus-sync.md`](./docs/corpus-sync.md) | Getting the Corpus onto the Linux box, and loading it with `scripts/corpus_load.py` |
 | [`docs/adr/`](./docs/adr/) | Architectural decisions and the alternatives rejected |
 | [`docs/research/`](./docs/research/) | Primary-source verification of load-bearing technical claims |
@@ -32,16 +37,18 @@ To build and install it, see [Development setup](#development-setup).
 ## In one page
 
 The spine is a **bidirectional turn loop**. Everything is a Turn — one handover
-of the floor, in either direction — and capabilities attach as Lanes that are
-either Inbound (something competes for your attention) or Outbound (you emit a
-note, a command, a prompt).
+of the floor, in either direction — and everything you can talk to is a
+**Bucket**: an errands list, an agent session, later a podcast. Providers
+publish Buckets; naming one on its own gives it **Focus**, and the loop says
+where you are every time Focus changes.
 
 **Silence is the only scheduler.** A short silence closes your turn; a longer
 one grants the machine a turn and drains the attention queue. No wake word, no
-button, no modes.
+button. Focus is the one mode, and it is always spoken.
 
 **The phone owns the loop.** Transcription, synthesis, turn-taking and storage
-all run on-device and work with no network. The Linux hub is one optional Lane.
+all run on-device and work with no network. The hub on your own machine hosts
+optional Providers, and the two meet at JSON fixtures, not shared code.
 The use case is driving, where connectivity gaps are normal
 ([ADR-0001](./docs/adr/0001-phone-owns-the-loop.md)).
 
@@ -110,16 +117,16 @@ any other shell use `mise exec -- adb …`.
 | Android | 17 (API 37), build `CP3A.260905.009` |
 
 It runs Android 17, so the background-audio hardening in
-[`docs/mvp.md`](./docs/mvp.md#platform-constraints-on-the-loop) applies, and
+[`docs/phase0.md`](./docs/phase0.md#platform-constraints-on-the-loop) applies, and
 every on-device measurement is taken on this phone. For screenshots while
 plugged in, `adb shell svc power stayon usb` keeps the screen awake (undo with
 `svc power stayon false`).
 
 ### Editing the Buckets
 
-The Buckets a Turn can be Declared into (`docs/mvp.md`, "Declaration") are read
+The Buckets a Turn can be Declared into (`docs/phase0.md`, "Declaration") are read
 at the start of every Session from `files/buckets.json` in the app's private
-storage. Without the file, the four mvp.md Buckets apply:
+storage. Without the file, the four phase0.md Buckets apply:
 
 ```json
 {
@@ -154,7 +161,7 @@ mise exec -- adb shell run-as com.walnutgeek.stsloop rm files/buckets.json
 
 ### Tuning the timings
 
-The loop's timings (`docs/mvp.md`, "Timings") are read at the start of every
+The loop's timings (`docs/phase0.md`, "Timings") are read at the start of every
 Session from `files/timings.json` in the app's private storage, so they can be
 changed without a rebuild. The file is optional, and so is every key in it: a
 missing key keeps its default. Fallback is per key: an unknown key, a
@@ -220,7 +227,7 @@ while nothing plausibly played (no start, no player, or volume 0) is logged
 as a warning, and the Session end logs the counts.
 
 The loop also says when it notices a failure Android does not report (#15,
-`docs/mvp.md`, "Platform constraints on the loop"): "The microphone is
+`docs/phase0.md`, "Platform constraints on the loop"): "The microphone is
 silenced by another app", "The microphone is recording only silence" (3 s
 of digital zeros), "That recording was silent", "My speech may not be
 playing". Each is spoken like an echo, once when it starts, and at most once
@@ -249,7 +256,7 @@ Session:
 - **"Stop listening"** (or "end session") says "stopped listening." and ends
   the Session, as the Stop button does.
 
-The rules in full are in `docs/mvp.md`, "Commands".
+The rules in full are in `docs/phase0.md`, "Commands".
 
 ### Reading the Corpus on Linux
 

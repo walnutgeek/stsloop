@@ -36,7 +36,7 @@ sealed interface HotwordsDecision {
  * ends the process with `_Exit(-1)` (non-transducer, or an unknown modeling
  * unit) or dereferences a null BPE encoder (bpe unit without `bpeVocab`, or
  * not under modified_beam_search, which is the only method that builds it).
- * See docs/mvp.md "`_Exit(-1)` is a safety constraint".
+ * See docs/phase0.md "`_Exit(-1)` is a safety constraint".
  */
 object HotwordsGate {
     const val MODIFIED_BEAM_SEARCH = "modified_beam_search"

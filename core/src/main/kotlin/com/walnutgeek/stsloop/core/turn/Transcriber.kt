@@ -16,7 +16,7 @@ fun interface Worker {
 data class Transcription(val transcript: Transcript, val timing: SttTiming)
 
 /**
- * The TRANSCRIBE stage (`docs/mvp.md`, "The loop"): streams each utterance
+ * The TRANSCRIBE stage (`docs/phase0.md`, "The loop"): streams each utterance
  * into its own recognizer stream while it is being captured, then publishes
  * the Turn with its transcript through [sink].
  *

@@ -28,7 +28,7 @@ class PhraseGrammarTest {
         assertEquals(Classification.UNCLASSIFIED, g.classify(text), text)
     }
 
-    // --- the mvp.md examples ---
+    // --- the phase0.md examples ---
 
     @Test
     fun `mvp leading example`() = declared("errands, order roofing screws", "errands", LEADING, "errands", "order roofing screws")

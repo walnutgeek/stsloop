@@ -1,6 +1,6 @@
 # Getting the Corpus onto the Linux box
 
-The Egress design (`docs/mvp.md`, "Egress") is "no protocol": the Corpus is
+The Egress design (`docs/phase0.md`, "Egress") is "no protocol": the Corpus is
 immutable and append-only, so any folder copy that brings new files over is
 enough, and repeating a copy is harmless. This page is the step-by-step
 version, and it is honest about one obstacle.
@@ -136,7 +136,7 @@ uv run scripts/corpus_load_test.py                               # the loader's 
 ```
 
 It verifies each `audio.sha256` against its WAV, applies tombstones as
-`docs/mvp.md` "Corpus format" defines them, and prints Turn counts by kind
+`docs/phase0.md` "Corpus format" defines them, and prints Turn counts by kind
 and by Bucket, the Declaration rate, the tombstone count, and every problem
 it found. Until a classifier assigns Buckets, a Turn has a Bucket only
 because it was declared, so each named Bucket reads 100% declared and the

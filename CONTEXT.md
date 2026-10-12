@@ -36,19 +36,59 @@ _Avoid_: interruption (overloaded — the OS also "interrupts" audio sessions)
 
 ### What flows through it
 
-**Lane** _(provisional name — not yet grilled)_:
-A named source or sink of Turns, plugged into the loop. A Lane is either
-Inbound or Outbound. Examples: podcast, agent status, browser page, note
-capture.
-_Avoid_: channel, plugin, connector, integration, skill
+**Bucket**:
+Anything the person can address by name: a capture topic, an agent session,
+later a podcast show. It has a name, aliases, a type, declared commands and,
+optionally, Inbound Items it can raise. A capture Bucket also owns a Word list
+and is where its Notes live. Absorbed the former Lane (ADR-0005).
+_Avoid_: folder, tag, category, list, destination, lane, channel, context
+
+**Provider**:
+What publishes a set of Buckets and answers their commands: capture on the
+phone; herdr and Claude Code hooks on the hub; later podcast. The plug-in
+boundary.
+_Avoid_: lane (retired), plugin, connector, integration, skill
+
+**Descriptor**:
+A Provider's description of one Bucket for the phone: name, aliases, type,
+commands and the Primitives they use. The phone caches Descriptors so Buckets
+resolve with the hub offline.
+_Avoid_: manifest, schema
+
+**Primitive**:
+One of the fixed behaviours the phone knows how to run for a Bucket: `note`,
+`draft`, `speak_item`, `request`. Descriptors compose Primitives; the phone
+never runs Provider code.
+_Avoid_: capability, mixin (deferred idea, not yet a thing)
+
+**Focus**:
+The current Bucket. Naming a Bucket on its own sets it; later Turns are read
+against its commands. Sticky with a timeout back to the Inbox, and spoken on
+every change. The one mode the loop has.
+_Avoid_: mode, context, selection
+
+**Inbox**:
+The capture Bucket Focus falls back to. A Note in the Inbox is unlabelled.
+_Avoid_: default bucket, unsorted
+
+**Draft**:
+The text accumulating for an agent Bucket under Focus, Turn by Turn. Read back
+on request and always before it is sent; kept, never sent, when Focus times
+out.
+_Avoid_: prompt (that is what it becomes once sent), message
+
+**Hub**:
+The person's own machine running `stsloop-hub`, where the hub-side Providers,
+the summariser and the Corpus store live. Optional: the loop runs without it.
+_Avoid_: server, backend, cloud
 
 **Inbound**:
-A Lane direction in which something outside the person competes for their
-attention. Inbound Lanes produce items for the Attention Queue.
+The direction in which something outside the person competes for their
+attention. Inbound Buckets raise Items for the Attention Queue.
 
 **Outbound**:
-A Lane direction in which the person emits something — a note, a command, a
-prompt bound for an agent. Outbound Turns are classified, not queued.
+The direction in which the person emits something: a Note, a command, a Draft
+bound for an agent. Outbound Turns are classified, not queued.
 
 **Attention Queue**:
 The ordered set of Inbound items awaiting a machine Turn. Drains into Silence.
@@ -61,13 +101,8 @@ _Avoid_: content unit, event, notification
 
 ### Capture
 
-**Bucket**:
-A named topic that both owns a word list used to refine transcription and
-serves as the place its Notes live. One concept, two jobs.
-_Avoid_: folder, tag, category, list, lexicon, destination
-
 **Word list**:
-The set of terms belonging to a Bucket, used to bias or repair transcription
+The set of terms belonging to a capture Bucket, used to bias or repair transcription
 of a Turn assigned to that Bucket.
 _Avoid_: dictionary (overloaded with the data-structure sense), vocabulary
 
@@ -102,7 +137,8 @@ _Avoid_: delete, removal (nothing is removed)
 
 **Declaration**:
 An explicit spoken naming of a Bucket at the start or end of an utterance.
-A declared Turn needs no classification and yields free ground truth.
+A declared Turn needs no classification and yields free ground truth. A Bucket
+name said on its own is not a Declaration; it sets Focus.
 _Avoid_: prefix, tag, keyword
 
 ### Consumption
