@@ -14,8 +14,10 @@ import com.walnutgeek.stsloop.core.testmode.SESSIONS_DIR
  * [transcript] is `transcript.text` exactly as the engine produced it; null
  * means the Turn has no transcript, `""` that the recognizer heard nothing.
  * [kind] is shown as written, so a value from a newer app is not lost.
+ * [bucketSource] says where [bucket] came from (`declaration`, `focus`).
  * [command] is a command Turn's `command.name`; [tombstones] the directory
- * name a "scratch that" Turn tombstones. [tombstonedBy] is the directory
+ * name a "scratch that" Turn tombstones; [focus] the Bucket a lone alias
+ * focused. [tombstonedBy] is the directory
  * name of the command Turn that tombstoned this one: never in a Turn's own
  * `turn.json` (it would mean editing a published Turn), so it is filled in by
  * [TranscriptList.of], except that a non-null value already there is kept.
@@ -31,6 +33,8 @@ data class ListedTurn(
     val kind: String? = null,
     val command: String? = null,
     val tombstones: String? = null,
+    val bucketSource: String? = null,
+    val focus: String? = null,
     val tombstonedBy: String? = null,
     val problem: String? = null,
 ) {
@@ -65,6 +69,8 @@ object TranscriptList {
             kind = root.string("kind"),
             command = root.obj("command")?.string("name"),
             tombstones = root.string("tombstones"),
+            bucketSource = root.string("bucket_source"),
+            focus = root.string("focus"),
             tombstonedBy = root.string("tombstoned_by"),
         )
     }

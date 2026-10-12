@@ -78,14 +78,15 @@ class CommandGrammarTest {
         assertEquals("scratch", g.classify("scratch that buy screws").bucket)
     }
 
-    // --- repeat, what bucket, stop listening (#14) ---
+    // --- repeat, where am I, stop listening (#14, #40) ---
 
     @Test
     fun `each phrase of each command is that command`() {
         command("REPEAT", Command.REPEAT, "repeat")
         command("SAY THAT AGAIN", Command.REPEAT, "say that again")
-        command("WHAT BUCKET", Command.WHAT_BUCKET, "what bucket")
-        command("WHICH BUCKET", Command.WHAT_BUCKET, "which bucket")
+        command("WHERE AM I", Command.WHERE_AM_I, "where am i")
+        command("WHAT BUCKET", Command.WHERE_AM_I, "what bucket")
+        command("WHICH BUCKET", Command.WHERE_AM_I, "which bucket")
         command("STOP LISTENING", Command.STOP_LISTENING, "stop listening")
         command("END SESSION", Command.STOP_LISTENING, "end session")
     }
@@ -93,7 +94,7 @@ class CommandGrammarTest {
     @Test
     fun `fillers around them are allowed as for scratch that`() {
         command("okay, repeat", Command.REPEAT, "repeat")
-        command("um which bucket", Command.WHAT_BUCKET, "which bucket")
+        command("um which bucket", Command.WHERE_AM_I, "which bucket")
         command("OK STOP LISTENING", Command.STOP_LISTENING, "stop listening")
     }
 

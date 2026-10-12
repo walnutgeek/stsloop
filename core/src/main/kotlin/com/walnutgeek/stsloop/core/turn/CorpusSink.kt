@@ -14,10 +14,13 @@ import com.walnutgeek.stsloop.core.testmode.TurnTest
  * of the Session down with it.
  *
  * Each Turn is classified by [grammar] from its transcript: a whole-utterance
- * command, a Note in its Bucket when Declared, or unclassified. A command is
- * carried out by this Session's [SessionCommands], and its Turn records what
- * it did (for "scratch that", the Turn it tombstones); "stop listening"
- * asks the [Listener] to end the Session.
+ * command, a Note in its Bucket when Declared, a Note in the Bucket with
+ * [focus] (`bucket_source: "focus"`), or unclassified. A command is carried
+ * out by this Session's [SessionCommands], and its Turn records what it did
+ * (for "scratch that", the Turn it tombstones; for a lone Bucket alias, the
+ * Bucket it focuses, which takes Focus once the Turn is published); "stop
+ * listening" asks the [Listener] to end the Session. Every Turn published
+ * restarts the [focus] timeout, at the end of its utterance.
  */
 class CorpusSink(
     private val writer: CorpusWriter,
@@ -26,6 +29,8 @@ class CorpusSink(
     private val sampleRate: Int,
     private val appVersion: String,
     private val grammar: PhraseGrammar,
+    /** This Session's Focus, on the stream's clock; shared with whatever [Focus.tick]s it. */
+    private val focus: Focus = Focus(grammar.buckets, Timings().focusTimeoutMs.toLong()),
     private val newId: () -> String = Ids::next,
     /**
      * Test mode (#27): the `test` block for a closed utterance, or null outside
@@ -52,7 +57,7 @@ class CorpusSink(
         fun discarded(event: TurnEvent.Discarded) {}
     }
 
-    private val commands = SessionCommands()
+    private val commands = SessionCommands(focus)
 
     /** Turns published so far. */
     var published = 0
@@ -65,7 +70,7 @@ class CorpusSink(
     /** Publishes [pcm] (exactly the [utterance]'s samples) with its [transcription], if the recognizer gave one. */
     fun closed(utterance: Utterance, pcm: ShortArray, transcription: Transcription? = null) {
         val transcript = transcription?.transcript
-        val classification = grammar.classify(transcript?.text)
+        val classification = grammar.classify(transcript?.text, focus.filing)
         val command = classification.command?.let(commands::plan)
         val turn = try {
             val inProgress = writer.begin(newId(), sessionId, utterance.startedAtMs(sessionStartedAtMs, sampleRate), sampleRate)
@@ -84,6 +89,9 @@ class CorpusSink(
         }
         published++
         commands.published(turn)
+        val endMs = utterance.endSample * 1000 / sampleRate
+        val focused = turn.classification?.command?.focus
+        if (focused != null) focus.set(focused, endMs) else focus.heard(endMs)
         if (command?.endsSession == true) {
             listener.published(turn, utterance, transcription?.timing, null)
             listener.endSession(turn, command.say)

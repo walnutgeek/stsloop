@@ -98,12 +98,13 @@ class TurnJsonTest {
 
     @Test
     fun `command names are permanent`() {
-        assertEquals(listOf("scratch_that", "repeat", "what_bucket", "stop_listening"), Command.entries.map { it.json })
+        // what_bucket (#14) is retired, never reused: "what bucket" is now an alias of where_am_i (#40).
+        assertEquals(listOf("scratch_that", "repeat", "where_am_i", "stop_listening", "focus"), Command.entries.map { it.json })
     }
 
     @Test
     fun `the other commands write their name and no tombstones`() {
-        for (c in listOf(Command.REPEAT, Command.WHAT_BUCKET, Command.STOP_LISTENING)) {
+        for (c in listOf(Command.REPEAT, Command.WHERE_AM_I, Command.STOP_LISTENING)) {
             val inv = Classification.command(CommandInvocation(c, c.phrases.first()))
             val json = TurnJson.encode(turn.copy(transcript = transcript, classification = inv))
             val parsed = Json.parseObject(json)
@@ -111,6 +112,46 @@ class TurnJsonTest {
             assertEquals(mapOf("name" to c.json, "matched" to c.phrases.first()), parsed["command"])
             assertFalse(parsed.containsKey("tombstones"), json)
             for (k in listOf("declaration", "bucket", "bucket_source", "content")) assertEquals(null, parsed[k], k)
+        }
+    }
+
+    @Test
+    fun `a focus command writes the Bucket it focuses, and nothing else does`() {
+        val inv = Classification.command(CommandInvocation(Command.FOCUS, "house project", focus = "house-project"))
+        val json = TurnJson.encode(turn.copy(transcript = transcript, classification = inv))
+        val parsed = Json.parseObject(json)
+        assertEquals("command", parsed["kind"])
+        assertEquals(mapOf("name" to "focus", "matched" to "house project"), parsed["command"])
+        assertEquals("house-project", parsed["focus"])
+        assertFalse(parsed.containsKey("tombstones"), json)
+        for (k in listOf("declaration", "bucket", "bucket_source", "content")) assertEquals(null, parsed[k], k)
+        val repeat = Classification.command(CommandInvocation(Command.REPEAT, "repeat"))
+        assertFalse(TurnJson.encode(turn.copy(classification = repeat)).contains("\"focus\""))
+    }
+
+    @Test
+    fun `only a focus command names a Bucket to focus, and it always does`() {
+        assertThrows<IllegalArgumentException> { CommandInvocation(Command.REPEAT, "repeat", focus = "work") }
+        assertThrows<IllegalArgumentException> { CommandInvocation(Command.FOCUS, "work") }
+    }
+
+    @Test
+    fun `a Note filed by Focus is written with bucket_source focus and no Declaration`() {
+        val json = TurnJson.encode(turn.copy(transcript = transcript, classification = Classification.focused("errands", "buy milk")))
+        val parsed = Json.parseObject(json)
+        assertEquals(1, (parsed["schema"] as Number).toInt())
+        assertEquals("note", parsed["kind"])
+        assertEquals(null, parsed["declaration"])
+        assertEquals("errands", parsed["bucket"])
+        assertEquals("focus", parsed["bucket_source"])
+        assertEquals("buy milk", parsed["content"])
+        assertFalse(parsed.containsKey("focus"), json)
+    }
+
+    @Test
+    fun `bucket_source declaration needs a Declaration`() {
+        assertThrows<IllegalArgumentException> {
+            Classification(TurnKind.NOTE, bucket = "work", bucketSource = BucketSource.DECLARATION, content = "x")
         }
     }
 
@@ -302,7 +343,7 @@ class TurnJsonTest {
     @Test
     fun `position and bucket_source have their spec names`() {
         assertEquals(listOf("leading", "trailing"), DeclarationPosition.entries.map { it.json })
-        assertEquals(listOf("declaration"), BucketSource.entries.map { it.json })
+        assertEquals(listOf("declaration", "focus"), BucketSource.entries.map { it.json })
     }
 
     @Test

@@ -9,11 +9,13 @@ import com.walnutgeek.stsloop.core.failure.FailureAnnouncer
 import com.walnutgeek.stsloop.core.failure.DeadMic
 import com.walnutgeek.stsloop.core.failure.SilentFailure
 import com.walnutgeek.stsloop.core.grammar.BucketConfig
+import com.walnutgeek.stsloop.core.grammar.BucketRegistry
 import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
 import com.walnutgeek.stsloop.core.speech.StreamingRecognizer
 import com.walnutgeek.stsloop.core.testmode.TestConfig
 import com.walnutgeek.stsloop.core.testmode.TurnTest
 import com.walnutgeek.stsloop.core.turn.CorpusSink
+import com.walnutgeek.stsloop.core.turn.Focus
 import com.walnutgeek.stsloop.core.turn.HalfDuplex
 import com.walnutgeek.stsloop.core.turn.LoopState
 import com.walnutgeek.stsloop.core.turn.Segmenter
@@ -37,6 +39,11 @@ import java.util.concurrent.TimeUnit
  * [buckets] and writes it), and each published Turn's transcript is echoed
  * through [speaker], strictly Half-duplex ([HalfDuplex]: the mic is closed
  * while the echo plays and for `guard_ms` after).
+ *
+ * The Session keeps a [Focus] (#40), starting in the Inbox. A lone Bucket
+ * alias focuses that Bucket; [accept] ticks it on the stream's clock, and
+ * when `focus_timeout_ms` pass with no speech it returns to the Inbox and
+ * the loop says so, into the next Silence like any reply.
  *
  * It also notices the loop's silent failures (#15) and says them the same
  * way, once each ([FailureAnnouncer]): a mic stream that stays digitally
@@ -66,8 +73,8 @@ class TurnCapture(
     /** Loads the Session's one recognizer; called once, on the STT thread. */
     recognizer: () -> StreamingRecognizer,
     maxQueuedMs: Long = MAX_QUEUED_MS,
-    /** The Buckets a Turn may be Declared into. */
-    buckets: BucketConfig = BucketConfig.DEFAULT,
+    /** The Buckets a Turn may be Declared into or focus. */
+    buckets: BucketRegistry = BucketRegistry.capture(BucketConfig.DEFAULT),
     /** Test mode (#27): each Turn's `test` block, computed on the STT thread; null outside test mode. */
     testOf: ((Utterance) -> TurnTest?)? = null,
     /** Speaks each Turn's echo, reporting its end through [spoken]; null means no echo, and the mic never closes. */
@@ -82,8 +89,9 @@ class TurnCapture(
     private val onTurn: (Turn, Utterance, SttTiming?) -> Unit = { _, _, _ -> },
 ) {
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "stt-$sessionId") }
+    private val focus = Focus(buckets, timings.focusTimeoutMs.toLong())
     private val sink: CorpusSink = CorpusSink(
-        writer, sessionId, sessionStartedAtMs, SAMPLE_RATE_HZ, appVersion, PhraseGrammar(buckets),
+        writer, sessionId, sessionStartedAtMs, SAMPLE_RATE_HZ, appVersion, PhraseGrammar(buckets), focus,
         testOf = testOf,
         listener = object : CorpusSink.Listener {
             override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) {
@@ -183,6 +191,9 @@ class TurnCapture(
     }
     private var finished = false
 
+    /** Samples accepted so far: the stream's clock, which [focus] runs on. Capture thread only. */
+    private var position = 0L
+
     /**
      * Set once the Session is ending ("stop listening" asked to end it, or
      * [finish] started): a failure reported after that (a late platform
@@ -214,6 +225,11 @@ class TurnCapture(
         val open = loop.state.let { it == LoopState.LISTENING || it == LoopState.CAPTURING }
         if (open) deadMic.accept(samples, count)
         loop.accept(samples, count, capturedAtNs)
+        position += count
+        if (focus.tick(position * 1000 / SAMPLE_RATE_HZ, capturing = loop.state == LoopState.CAPTURING) && !ending) {
+            Log.i(TAG, "Session $sessionId: Focus timed out back to the Inbox")
+            loop.announce(Focus.TIMED_OUT)
+        }
     }
 
     /** Any thread: Android has (or no longer has) silenced this Session's recording for another capture client. */
@@ -304,6 +320,13 @@ class TurnCapture(
          */
         fun loadBuckets(dir: File): BucketConfig =
             loadConfig(File(dir, BucketConfig.FILE), BucketConfig.DEFAULT) { BucketConfig.parse(it).run { config to rejected } }
+
+        /**
+         * The Buckets the phone can address with no hub: the capture Provider
+         * over [loadBuckets]. Each conflict with the Inbox is logged.
+         */
+        fun loadRegistry(dir: File): BucketRegistry =
+            BucketRegistry.capture(loadBuckets(dir)).also { r -> for (p in r.rejected) Log.e(TAG, "${BucketConfig.FILE}: ignoring $p") }
 
         /**
          * The Bluetooth test mode [TestConfig] in `<dir>/testmode.json`, read at

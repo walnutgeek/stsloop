@@ -20,8 +20,10 @@ Then it prints Turn counts by kind and by Bucket, the Declaration rate per
 Bucket and overall, the tombstone count, and every problem found (sha256
 mismatch, no sha256 recorded, missing audio, missing or unparseable
 `turn.json`). The Bucket table and the Declaration rate leave command Turns
-out. Until a classifier writes `bucket_source: "classifier"`, a Turn gets a
-Bucket only by Declaration, so every named Bucket reads 100% there.
+out. A Turn gets a Bucket by Declaration (ground truth) or, from #40, by
+Focus (`bucket_source: "focus"`: filed under the Bucket a lone alias had
+focused), and the Bucket table counts each. A lone alias is itself a
+`kind: "command"` Turn with `command.name` `focus` and the Bucket in `focus`.
 
     uv run scripts/corpus_load.py CORPUS_DIR [--tombstoned exclude|mark] [--no-verify]
 
@@ -32,7 +34,7 @@ From Python (e.g. a classifier experiment), import the loader:
 
     sys.path.insert(0, "<repo>/scripts"); import corpus_load
     for t in corpus_load.load_turns("corpus"):   # live Turns with verified audio
-        t.audio_path, t.text, t.bucket, t.declared, t.kind, t.raw
+        t.audio_path, t.text, t.bucket, t.bucket_source, t.declared, t.focused, t.kind, t.raw
 """
 
 from __future__ import annotations
@@ -75,8 +77,22 @@ class Turn:
         return _str(self.raw.get("bucket"))
 
     @property
+    def bucket_source(self) -> str | None:
+        return _str(self.raw.get("bucket_source"))
+
+    @property
     def declared(self) -> bool:
-        return isinstance(self.raw.get("declaration"), dict) or self.raw.get("bucket_source") == "declaration"
+        return isinstance(self.raw.get("declaration"), dict) or self.bucket_source == "declaration"
+
+    @property
+    def focused(self) -> bool:
+        """Filed under the Bucket that had Focus, with no Bucket named in the Turn (#40)."""
+        return self.bucket_source == "focus"
+
+    @property
+    def focus(self) -> str | None:
+        """The Bucket a lone alias focused, on its command Turn (#40)."""
+        return _str(self.raw.get("focus")) if self.kind == "command" else None
 
     @property
     def text(self) -> str | None:
@@ -217,9 +233,10 @@ def stats(corpus: Corpus, tombstoned: str = "exclude") -> dict:
     speech = [t for t in counted if t.kind != "command"]
     by_bucket: dict[str, list[int]] = {}
     for t in speech:
-        row = by_bucket.setdefault(t.bucket or NONE, [0, 0])
+        row = by_bucket.setdefault(t.bucket or NONE, [0, 0, 0])
         row[0] += 1
         row[1] += t.declared
+        row[2] += t.focused
     heard = [t for t in speech if (t.text or "").strip()]
     return {
         "turns": len(corpus.turns),
@@ -254,9 +271,9 @@ def report(corpus: Corpus, tombstoned: str = "exclude") -> str:
     for kind, n in sorted(s["by_kind"].items(), key=lambda kv: (-kv[1], kv[0])):
         out.append(f"| {kind} | {n} | {s['tombstoned_by_kind'].get(kind, 0)} |" if mark else f"| {kind} | {n} |")
     out += ["", "## By Bucket (command Turns left out)", "",
-            "| Bucket | Turns | declared | Declaration rate |", "| --- | ---: | ---: | ---: |"]
-    for b, (n, d) in sorted(s["by_bucket"].items(), key=lambda kv: (kv[0] == NONE, -kv[1][0], kv[0])):
-        out.append(f"| {b} | {n} | {d} | {_pct(d, n)} |")
+            "| Bucket | Turns | declared | Declaration rate | by Focus |", "| --- | ---: | ---: | ---: | ---: |"]
+    for b, (n, d, f) in sorted(s["by_bucket"].items(), key=lambda kv: (kv[0] == NONE, -kv[1][0], kv[0])):
+        out.append(f"| {b} | {n} | {d} | {_pct(d, n)} | {f} |")
     (dn, dd), (hn, hd) = s["declared"], s["declared_heard"]
     out += [
         "",
