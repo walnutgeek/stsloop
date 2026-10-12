@@ -103,6 +103,12 @@ agents. The hub only reads herdr (`herdr api snapshot`, every 2 s); it never
 types into an agent. It runs `$HERDR_BIN_PATH` when set, else `herdr` on the
 PATH, so start `serve` where that is the herdr your server runs. Without
 herdr, the hub starts as before.
+While the hub is online during a Session, the phone also uploads its Corpus to
+it, new and backlog Turns alike, in the background. `serve` stores them in
+`~/.local/share/stsloop-hub/corpus` (`$STSLOOP_HUB_HOME/corpus` when that is
+set, or `--corpus DIR`), laid out as the phone writes them, so
+`uv run scripts/corpus_load.py <that directory>` reads it
+([`docs/corpus-sync.md`](./docs/corpus-sync.md)).
 
 ### The settings screen
 

@@ -4,6 +4,8 @@
     { "fixture": "hello/extras.json", "reads_as": "hello/basic.json" },
     { "fixture": "descriptors/extras.json", "reads_as": "descriptors/agents.json" },
     { "fixture": "request/extras.json", "reads_as": "request/status.json" },
-    { "fixture": "reply/extras.json", "reads_as": "reply/status.json" }
+    { "fixture": "reply/extras.json", "reads_as": "reply/status.json" },
+    { "fixture": "turn_offer/extras.json", "reads_as": "turn_offer/basic.json" },
+    { "fixture": "turn_ack/extras.json", "reads_as": "turn_ack/send.json" }
   ]
 }

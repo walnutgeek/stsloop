@@ -1,5 +1,5 @@
 {
   "type": "welcome",
   "protocol": { "major": 1, "minor": 0 },
-  "capabilities": ["descriptors"]
+  "capabilities": ["descriptors", "corpus"]
 }

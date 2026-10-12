@@ -172,6 +172,18 @@ class ServeTest(unittest.TestCase):
         asyncio.run(one_poll())
         self.assertEqual([d.id for d in hub._descriptors()], ["hub", "herdr:w8:p1"])
         self.assertEqual(hub._descriptors()[0].commands[0].id, "blocked")
+    def test_serve_stores_the_corpus_in_the_hub_home_by_default(self):
+        self.run("init")
+        self.run("serve")
+        hub = self.run.served[0][0]
+        self.assertEqual(hub.corpus.root, self.home / "corpus")
+        self.assertTrue((self.home / "corpus").is_dir())
+        self.assertIn(str(self.home / "corpus"), self.run.err.getvalue())
+
+    def test_serve_corpus_flag_picks_the_directory(self):
+        self.run("init")
+        self.run("serve", "--corpus", str(self.home.parent / "elsewhere"))
+        self.assertEqual(self.run.served[0][0].corpus.root, self.home.parent / "elsewhere")
 
     def test_a_config_that_is_not_json_is_reported(self):
         self.home.mkdir(parents=True)
@@ -190,6 +202,17 @@ class ConfigDirTest(unittest.TestCase):
 
     def test_otherwise_dot_config(self):
         self.assertEqual(config.config_dir({"HOME": "/h"}), Path("/h/.config/stsloop-hub"))
+
+
+class CorpusDirTest(unittest.TestCase):
+    def test_stsloop_hub_home_wins(self):
+        self.assertEqual(config.corpus_dir({"STSLOOP_HUB_HOME": "/a", "XDG_DATA_HOME": "/b"}), Path("/a/corpus"))
+
+    def test_xdg_data_home_is_next(self):
+        self.assertEqual(config.corpus_dir({"XDG_DATA_HOME": "/b"}), Path("/b/stsloop-hub/corpus"))
+
+    def test_otherwise_dot_local_share(self):
+        self.assertEqual(config.corpus_dir({"HOME": "/h"}), Path("/h/.local/share/stsloop-hub/corpus"))
 
 
 class TailnetTest(unittest.TestCase):

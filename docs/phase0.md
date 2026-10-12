@@ -690,8 +690,12 @@ reconcile, no conflicts, and order does not matter.
 On the Linux side it is a directory of files that `jq` and a Python script can
 read directly. That is the entire Phase 1 toolchain.
 
-Step by step, and what works today (the Corpus is in app-private storage, so
-only `adb` reaches it until the app exports it): `docs/corpus-sync.md`. The
+**v0.1 (#51):** the Corpus now uploads over the hub connection instead
+(`docs/mvp.md`, findings point 7), stored on the hub in this same layout, so
+the toolchain is unchanged. Folder copies still work.
+
+Step by step, the hub upload and the copies (the Corpus is in app-private
+storage, so without a hub only `adb` reaches it): `docs/corpus-sync.md`. The
 loader, with sha256 checks, tombstones and stats: `scripts/corpus_load.py`.
 
 ## Done when

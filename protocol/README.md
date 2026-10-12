@@ -41,6 +41,25 @@ string `type`.
    `anywhere` is heard whatever has Focus ("what's blocked"); the hub puts
    such commands on its own `hub` Bucket. No capability is needed: a hub
    that declares a `request` command answers it.
+6. **Corpus upload.** With the `corpus` capability (a hub offers it when it
+   has a Corpus directory to store into), the phone offers each Turn the hub
+   has not yet acknowledged, oldest first, one at a time:
+   - `turn_offer`: the Turn's directory name, its `turn.json` text, and the
+     length and SHA-256 of its Recording. The hub answers `turn_ack`:
+     `stored` if it already holds that same Turn (a re-upload is a no-op),
+     `send` with `offset` 0, or `rejected` with a `reason`.
+   - `turn_audio`: one base64 piece from the `offset` asked for, with `last`
+     on the final one. The hub answers each with `send` and the next offset,
+     and the last with `stored` (the whole file matched the offer's length and
+     SHA-256) or `rejected`.
+
+   Only one piece is ever in flight, so a live message on the same socket
+   waits behind at most one. A Turn is idempotent by its directory name;
+   another Turn under a held name is a `conflict`, and the held one is kept.
+   A dropped connection drops the Turn on offer; it is offered again, from the
+   start. The hub stores the Turn as the phone wrote it,
+   `<corpus>/<started_at>-<id>/{turn.json,audio.wav}`, so
+   `scripts/corpus_load.py` reads the hub's Corpus unchanged.
 
 The hub serves one phone at a time: once a new connection is welcomed, the
 hub closes the older one (code 1000). A refused connection replaces nothing.
@@ -69,12 +88,15 @@ Every implementation's tests load every fixture and:
   fixture `exchanges.json` names for that step.
 
 The hub's are in `hub/tests/test_fixtures.py`; a hub publishing only the stub
-Bucket answers every exchange exactly. `descriptors/herdr.json` and the
-`reply/` fixtures are what the hub's herdr Provider produces for a fake herdr
-(`hub/tests/test_agents.py`). The phone's are in
-`core/src/test/kotlin/com/walnutgeek/stsloop/core/hub/`
-(`ProtocolFixturesTest`, and `HubLinkTest`, which plays each exchange's hub
-steps to the phone and checks where it ends up: online, refused, offline and
-retrying, or unauthorised). The phone sends one message, `hello/basic.json`,
-whatever phone a given exchange stands for, then sends the exchange's
-`request`s itself, each equal to its fixture.
+Bucket, with an empty Corpus, answers every exchange exactly (an exchange with
+`after` runs on the hub the named earlier exchange left behind).
+`descriptors/herdr.json` and the `reply/` fixtures are what the hub's herdr
+Provider produces for a fake herdr (`hub/tests/test_agents.py`). The phone's
+are in `core/src/test/kotlin/com/walnutgeek/stsloop/core/hub/`
+(`ProtocolFixturesTest`; `HubLinkTest`, which plays each exchange's hub steps
+to the phone and checks where it ends up: online, refused, offline and
+retrying, or unauthorised; and `CorpusUploaderTest`, which plays the hub steps
+of each upload exchange to the uploader, with the offered Turns in its Corpus,
+and checks it sends exactly the phone steps). The phone sends one message,
+`hello/basic.json`, whatever phone a given exchange stands for, then sends the
+exchange's `request`s itself, each equal to its fixture.

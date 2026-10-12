@@ -9,11 +9,17 @@ golden fixtures. This module is the hub's reading of it:
   `BadMessage`.
 - `encode` / `to_json` turn a message back into compact JSON.
 - `negotiate` answers a `Hello` with a `Welcome` or a `Refusal`.
+
+Corpus upload (the `corpus` capability) is `TurnOffer` and `TurnAudio` from the
+phone, each answered by a `TurnAck`; `corpus.py` is what the hub does with them.
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Union
 
@@ -29,7 +35,8 @@ class Version:
 SUPPORTED: tuple[Version, ...] = (Version(1, 0),)
 
 #: The capabilities the hub can use, in the order it lists them in `welcome`.
-CAPABILITIES: tuple[str, ...] = ("descriptors",)
+CORPUS = "corpus"
+CAPABILITIES: tuple[str, ...] = ("descriptors", CORPUS)
 
 #: WebSocket close code sent right after a `refusal`, or when no hello arrives.
 POLICY_VIOLATION = 1008
@@ -104,7 +111,43 @@ class Reply:
     reason: str | None = None
 
 
-Message = Union[Hello, Welcome, Refusal, Descriptors, Pairing, Request, Reply]
+@dataclass(frozen=True)
+class TurnOffer:
+    """One Turn of the phone's Corpus, offered for upload: its directory name, its
+    `turn.json` text, and the length and SHA-256 of the Recording to come."""
+
+    turn: str
+    turn_json: str
+    sha256: str
+    bytes: int
+
+
+@dataclass(frozen=True)
+class TurnAudio:
+    """One piece of the Recording of the Turn on offer, starting at `offset`."""
+
+    turn: str
+    offset: int
+    data: bytes
+    last: bool
+
+
+#: TurnAck statuses known in v1.0; a phone treats any other as "rejected".
+SEND, STORED, REJECTED = "send", "stored", "rejected"
+
+
+@dataclass(frozen=True)
+class TurnAck:
+    """The hub's answer to each offer and each piece: `send` from `offset`, `stored`, or `rejected`."""
+
+    turn: str
+    status: str
+    offset: int | None = None
+    reason: str | None = None
+    message: str | None = None
+
+
+Message = Union[Hello, Welcome, Refusal, Descriptors, Pairing, Request, Reply, TurnOffer, TurnAudio, TurnAck]
 
 
 class BadMessage(ValueError):
@@ -119,14 +162,19 @@ class BadMessage(ValueError):
 # --- the handshake ---------------------------------------------------------
 
 
-def negotiate(hello: Hello, supported: tuple[Version, ...] = SUPPORTED) -> Welcome | Refusal:
+def negotiate(
+    hello: Hello,
+    supported: tuple[Version, ...] = SUPPORTED,
+    capabilities: tuple[str, ...] = CAPABILITIES,
+) -> Welcome | Refusal:
     """The hub's answer to `hello`: the phone's major at the lower minor, and the
-    capabilities both sides know, or a refusal naming what the hub speaks."""
+    `capabilities` of the hub's that the phone also has, or a refusal naming what
+    the hub speaks."""
     for version in supported:
         if version.major == hello.protocol.major:
             return Welcome(
                 protocol=Version(version.major, min(version.minor, hello.protocol.minor)),
-                capabilities=tuple(c for c in CAPABILITIES if c in hello.capabilities),
+                capabilities=tuple(c for c in capabilities if c in hello.capabilities),
             )
     majors = sorted(v.major for v in supported)
     speaks = " or ".join(str(m) for m in majors)
@@ -233,6 +281,56 @@ def _descriptor(obj) -> Descriptor:
     return descriptor
 
 
+#: A Turn directory name, `<started_at>-<id>` (docs/phase0.md, "Corpus format").
+TURN_NAME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z-[0-9a-f]{1,32}")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def _count(obj: dict, key: str, what: str) -> int:
+    value = _get(obj, key, int, what)
+    if value < 0:
+        raise BadMessage(f"{what} has a negative {key}")
+    return value
+
+
+def _turn_offer(o: dict) -> TurnOffer:
+    turn = _string(o, "turn", "turn_offer")
+    if not TURN_NAME.fullmatch(turn):
+        raise BadMessage(f"turn_offer's turn {turn!r} is not a Turn directory name")
+    audio = _get(o, "audio", dict, "turn_offer")
+    sha256 = _string(audio, "sha256", "turn_offer's audio")
+    if not _SHA256.fullmatch(sha256):
+        raise BadMessage("turn_offer's audio needs sha256 as 64 lowercase hex digits")
+    turn_json = _get(o, "turn_json", str, "turn_offer")
+    if len(turn_json) < 2:
+        raise BadMessage("turn_offer has an empty turn_json")
+    return TurnOffer(turn=turn, turn_json=turn_json, sha256=sha256, bytes=_count(audio, "bytes", "turn_offer's audio"))
+
+
+def _turn_audio(o: dict) -> TurnAudio:
+    try:
+        data = base64.b64decode(_get(o, "data", str, "turn_audio"), validate=True)
+    except binascii.Error as e:
+        raise BadMessage(f"turn_audio's data is not base64: {e}") from None
+    return TurnAudio(
+        turn=_string(o, "turn", "turn_audio"),
+        offset=_count(o, "offset", "turn_audio"),
+        data=data,
+        last=_get(o, "last", bool, "turn_audio"),
+    )
+
+
+def _turn_ack(o: dict) -> TurnAck:
+    status = _string(o, "status", "turn_ack")
+    return TurnAck(
+        turn=_string(o, "turn", "turn_ack"),
+        status=status,
+        offset=_count(o, "offset", "turn_ack") if "offset" in o or status == SEND else None,
+        reason=_string(o, "reason", "turn_ack") if "reason" in o or status == REJECTED else None,
+        message=_string(o, "message", "turn_ack") if "message" in o else None,
+    )
+
+
 _READERS = {
     "hello": lambda o: Hello(
         protocol=_version(o, "protocol", "hello"),
@@ -267,6 +365,9 @@ _READERS = {
         say=_string(o, "say", "reply"),
         reason=_string(o, "reason", "reply") if "reason" in o else None,
     ),
+    "turn_offer": _turn_offer,
+    "turn_audio": _turn_audio,
+    "turn_ack": _turn_ack,
 }
 
 
@@ -317,6 +418,17 @@ def to_json(message: Message) -> dict:
             if reason is not None:
                 obj["reason"] = reason
             obj["say"] = say
+            return obj
+        case TurnOffer(turn=turn, turn_json=turn_json, sha256=sha256, bytes=size):
+            return {"type": "turn_offer", "turn": turn, "turn_json": turn_json, "audio": {"sha256": sha256, "bytes": size}}
+        case TurnAudio(turn=turn, offset=offset, data=data, last=last):
+            return {"type": "turn_audio", "turn": turn, "offset": offset,
+                    "data": base64.b64encode(data).decode("ascii"), "last": last}
+        case TurnAck(turn=turn, status=status, offset=offset, reason=reason, message=text):
+            obj = {"type": "turn_ack", "turn": turn, "status": status}
+            for key, value in (("offset", offset), ("reason", reason), ("message", text)):
+                if value is not None:
+                    obj[key] = value
             return obj
     raise TypeError(f"not a message: {message!r}")
 

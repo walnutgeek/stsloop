@@ -1,0 +1,7 @@
+{
+  "type": "turn_ack",
+  "turn": "2026-10-06T14:23:00.000Z-b4e2d0",
+  "status": "rejected",
+  "reason": "sha256_mismatch",
+  "message": "The audio the hub received does not match its sha256."
+}

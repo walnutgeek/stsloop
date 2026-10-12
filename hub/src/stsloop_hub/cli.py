@@ -1,12 +1,14 @@
 """`stsloop-hub init` pairs a phone; `stsloop-hub serve` runs the hub.
 
     stsloop-hub init [--host HOST] [--port PORT] [--new-token]
-    stsloop-hub serve [--host HOST] [--port PORT]
+    stsloop-hub serve [--host HOST] [--port PORT] [--corpus DIR]
 
 Both listen on, or advertise, this machine's tailnet address unless a host is
 given; a host given to `init` is kept for `serve`. `serve` publishes one
 Bucket per herdr agent when herdr is installed (`$HERDR_BIN_PATH`, else
-`herdr` on the PATH), and only the hub Bucket when it is not.
+`herdr` on the PATH), and only the hub Bucket when it is not. It stores the
+Turns the phone uploads in DIR (default: `config.corpus_dir`), as
+`scripts/corpus_load.py` reads them.
 """
 
 from __future__ import annotations
@@ -18,11 +20,13 @@ import os
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 from typing import TextIO
 
 from . import config, herdr, pairing, tailnet
 from .agents import HerdrProvider
 from .buckets import Buckets
+from .corpus import CorpusStore
 from .hub import Hub
 
 #: Background work that runs while the hub serves, told when the Buckets change.
@@ -71,6 +75,8 @@ def _parser() -> argparse.ArgumentParser:
     init.add_argument("--new-token", action="store_true", help="replace the token; paired phones must pair again")
     serve = commands.add_parser("serve", help="serve the phone's WebSocket")
     where(serve)
+    serve.add_argument("--corpus", type=Path, help="where to store the Turns the phone uploads "
+                       "(default: $STSLOOP_HUB_HOME/corpus, else ~/.local/share/stsloop-hub/corpus)")
     return parser
 
 
@@ -140,12 +146,19 @@ def main(
         return 1
     _warn_if_unencrypted(host, err)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s", stream=err)
+    corpus_root = args.corpus or config.corpus_dir(os.environ if env is None else env)
+    try:
+        corpus = CorpusStore(corpus_root)
+    except OSError as e:
+        print(f"stsloop-hub: cannot use {corpus_root} for the Corpus: {e}", file=err)
+        return 1
+    print(f"stsloop-hub: storing uploaded Turns in {corpus.root}", file=err)
     found = (find_herdr or (lambda: _herdr(os.environ if env is None else env)))()
     providers = [HerdrProvider(found)] if found else []
     if not found:
         logging.getLogger("stsloop.hub").info("herdr is not installed; no agent Buckets")
     buckets = Buckets(providers)
-    hub = Hub(token=saved.token, descriptors=buckets.descriptors, answer=buckets.answer)
+    hub = Hub(token=saved.token, descriptors=buckets.descriptors, answer=buckets.answer, corpus=corpus)
     run_hub(hub, host, args.port or saved.port, [provider.run for provider in providers])
     return 0
 

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stsloop:protocol:v1:turn_audio",
+  "title": "turn_audio",
+  "description": "Phone to hub, with the `corpus` capability: one piece of the Recording of the Turn on offer, sent only in answer to a `turn_ack` with status `send`, from the `offset` it asked for. The phone sends the next piece only after the hub's next `turn_ack`, so at most one piece is ever in flight and a live message never waits behind more than one.",
+  "type": "object",
+  "required": ["type", "turn", "offset", "data", "last"],
+  "properties": {
+    "type": { "const": "turn_audio" },
+    "turn": {
+      "description": "The Turn on offer (`turn_offer.turn`).",
+      "type": "string",
+      "minLength": 1
+    },
+    "offset": {
+      "description": "Where in the file `data` starts: the `offset` of the `turn_ack` this answers.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "data": {
+      "description": "The bytes, standard base64 with padding. The phone picks the piece size (the app sends 32 KiB); the hub accepts any size that fits a frame (1 MiB).",
+      "type": "string",
+      "contentEncoding": "base64"
+    },
+    "last": {
+      "description": "Whether this piece ends the file. The hub then checks the whole file against the offer's `sha256` and `bytes`, and answers `stored` or `rejected`.",
+      "type": "boolean"
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stsloop:protocol:v1:turn_ack",
+  "title": "turn_ack",
+  "description": "Hub to phone, with the `corpus` capability: the answer to each `turn_offer` and each `turn_audio`.",
+  "type": "object",
+  "required": ["type", "turn", "status"],
+  "properties": {
+    "type": { "const": "turn_ack" },
+    "turn": {
+      "description": "The Turn it answers for (`turn_offer.turn`).",
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "description": "Known in v1.0: `send` (send the Recording from `offset`), `stored` (the hub holds the Turn, its Recording checked against the offer's sha256; the phone need never offer it again), `rejected` (not stored; `reason` says why). A phone treats a status it does not know as `rejected`, and may offer the Turn again on a later connection.",
+      "type": "string",
+      "minLength": 1
+    },
+    "offset": {
+      "description": "With `send`: the byte the next `turn_audio` starts at. 0 after an offer, then the length received so far.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "reason": {
+      "description": "With `rejected`, machine-readable. Known in v1.0: `sha256_mismatch` (the received bytes do not match the offer), `size_mismatch` (more or fewer bytes than offered), `conflict` (the hub holds a different Turn under this name), `bad_turn` (a name or turn.json the hub cannot store), `too_large`, `out_of_order` (a piece at an offset the hub did not ask for, or for a Turn not on offer), `bad_message`, `storage_failed`. A phone treats a reason it does not know as a plain rejection.",
+      "type": "string",
+      "minLength": 1
+    },
+    "message": {
+      "description": "With `rejected`: one short sentence for the log.",
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "send" } } },
+      "then": { "required": ["offset"] }
+    },
+    {
+      "if": { "properties": { "status": { "const": "rejected" } } },
+      "then": { "required": ["reason"] }
+    }
+  ]
+}

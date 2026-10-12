@@ -106,6 +106,16 @@ class BrokenProtocolTest(unittest.TestCase):
         self.replace_exchange({"name": "hub idle", "steps": [{"from": "hub", "idle_ms": 5}]})
         self.assertIn("idle_ms", self.problems())
 
+    def test_after_must_name_an_earlier_exchange(self):
+        first = {"name": "first", "steps": [{"from": "hub", "http": 401}]}
+        exchanges = json.loads((self.root / "fixtures/v1/exchanges.json").read_text())
+        exchanges["exchanges"] = [first, {"name": "second", "after": "first", "steps": first["steps"]}]
+        self.write("fixtures/v1/exchanges.json", exchanges)
+        self.assertEqual(self.problems(), "")
+        exchanges["exchanges"] = [{"name": "second", "after": "first", "steps": first["steps"]}, first]
+        self.write("fixtures/v1/exchanges.json", exchanges)
+        self.assertIn("after", self.problems())
+
     def test_an_authorization_that_is_not_a_string_or_null_is_reported(self):
         self.replace_exchange({"name": "auth", "authorization": 5, "steps": [{"from": "hub", "http": 401}]})
         self.assertIn("authorization", self.problems())

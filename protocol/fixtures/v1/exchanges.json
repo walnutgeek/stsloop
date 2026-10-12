@@ -1,5 +1,5 @@
 {
-  "description": "Conversations over one connection, in order. `from` is the side that acts; a step is one of: a `fixture` (one text frame), `idle_ms` (the phone sends nothing for that long), a `close` with the WebSocket close code, or `http` with the HTTP status that answers the upgrade instead of a WebSocket (nothing follows it). Every connection is authorised with `Authorization: Bearer <token>`, the token of pairing/basic.json, unless the exchange has its own `authorization`: the header's value, or null for no header. A hub publishing only the stub Bucket produces exactly the hub steps.",
+  "description": "Conversations over one connection, in order. `from` is the side that acts; a step is one of: a `fixture` (one text frame), `idle_ms` (the phone sends nothing for that long), a `close` with the WebSocket close code, or `http` with the HTTP status that answers the upgrade instead of a WebSocket (nothing follows it). Every connection is authorised with `Authorization: Bearer <token>`, the token of pairing/basic.json, unless the exchange has its own `authorization`: the header's value, or null for no header. An exchange with `after` runs on a hub that has just played that earlier exchange (its Corpus holds what that one stored), and its phone has forgotten what it uploaded. A hub publishing only the stub Bucket, with a Corpus empty at the start, produces exactly the hub steps.",
   "exchanges": [
     {
       "name": "handshake",
@@ -81,6 +81,53 @@
         { "from": "hub", "fixture": "descriptors/stub.json" },
         { "from": "phone", "fixture": "request/blocked.json" },
         { "from": "hub", "fixture": "reply/unknown-command.json" }
+      ]
+    },
+    {
+      "name": "a phone without the corpus capability gets a welcome without it",
+      "steps": [
+        { "from": "phone", "fixture": "hello/descriptors-only.json" },
+        { "from": "hub", "fixture": "welcome/descriptors-only.json" },
+        { "from": "hub", "fixture": "descriptors/stub.json" }
+      ]
+    },
+    {
+      "name": "a Turn uploads piece by piece, each piece acknowledged",
+      "steps": [
+        { "from": "phone", "fixture": "hello/basic.json" },
+        { "from": "hub", "fixture": "welcome/basic.json" },
+        { "from": "hub", "fixture": "descriptors/stub.json" },
+        { "from": "phone", "fixture": "turn_offer/basic.json" },
+        { "from": "hub", "fixture": "turn_ack/send.json" },
+        { "from": "phone", "fixture": "turn_audio/first.json" },
+        { "from": "hub", "fixture": "turn_ack/send-more.json" },
+        { "from": "phone", "fixture": "turn_audio/last.json" },
+        { "from": "hub", "fixture": "turn_ack/stored.json" }
+      ]
+    },
+    {
+      "name": "offering a Turn the hub already holds is a no-op",
+      "after": "a Turn uploads piece by piece, each piece acknowledged",
+      "steps": [
+        { "from": "phone", "fixture": "hello/basic.json" },
+        { "from": "hub", "fixture": "welcome/basic.json" },
+        { "from": "hub", "fixture": "descriptors/stub.json" },
+        { "from": "phone", "fixture": "turn_offer/basic.json" },
+        { "from": "hub", "fixture": "turn_ack/stored.json" }
+      ]
+    },
+    {
+      "name": "a Recording that does not match its offer's sha256 is rejected, and not stored",
+      "steps": [
+        { "from": "phone", "fixture": "hello/basic.json" },
+        { "from": "hub", "fixture": "welcome/basic.json" },
+        { "from": "hub", "fixture": "descriptors/stub.json" },
+        { "from": "phone", "fixture": "turn_offer/bad-sha256.json" },
+        { "from": "hub", "fixture": "turn_ack/bad-sha256-send.json" },
+        { "from": "phone", "fixture": "turn_audio/bad-sha256-first.json" },
+        { "from": "hub", "fixture": "turn_ack/bad-sha256-send-more.json" },
+        { "from": "phone", "fixture": "turn_audio/bad-sha256-last.json" },
+        { "from": "hub", "fixture": "turn_ack/rejected-sha256.json" }
       ]
     }
   ]

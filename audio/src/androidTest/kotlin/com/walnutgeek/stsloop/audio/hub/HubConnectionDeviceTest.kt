@@ -92,6 +92,53 @@ class HubConnectionDeviceTest {
         assertEquals(snapshot, HubStore(root).descriptors())
     }
 
+    /**
+     * A Corpus of this test's own (never the app's) goes up to the hub: a backlog
+     * Turn at once, a Turn published later on [HubConnection.published], each
+     * recorded as uploaded once the hub has checked and stored it. The hub's
+     * Corpus directory then holds both (`uv run scripts/corpus_load.py <it>`).
+     */
+    @Test
+    fun theCorpusUploadsWhileTheHubIsOnline() {
+        val p = pairing
+        assumeTrue("no hubUrl and hubToken arguments", p != null)
+        val corpus = File(root, "corpus")
+        val stamp = System.currentTimeMillis()
+        val backlog = writeTurn(corpus, stamp, 40_000) // more than one 32 KiB piece
+        store.pair(p!!)
+        val c = HubConnection(context, store, "device test", corpus = corpus)
+        connection = c
+        c.start()
+        awaitUploaded(backlog)
+        val later = writeTurn(corpus, stamp + 1_000, 1_000)
+        c.published()
+        awaitUploaded(later)
+        assertEquals(setOf(backlog, later), store.uploads().uploaded())
+        // The upload only read the Turns.
+        assertEquals(listOf("audio.wav", "turn.json"), File(corpus, backlog).list()!!.sorted())
+    }
+
+    private fun writeTurn(corpus: File, startedAtMs: Long, audioBytes: Int): String {
+        val id = "%06x".format((startedAtMs and 0xffffff))
+        val name = com.walnutgeek.stsloop.core.turnDirectoryName(startedAtMs, id)
+        val dir = File(corpus, name).apply { mkdirs() }
+        val audio = ByteArray(audioBytes) { (it * 31).toByte() }
+        File(dir, "audio.wav").writeBytes(audio)
+        val sha = java.security.MessageDigest.getInstance("SHA-256").digest(audio).joinToString("") { "%02x".format(it) }
+        File(dir, "turn.json").writeText(
+            """{"schema": 1, "id": "$id", "session_id": "devtst", "audio": {"file": "audio.wav", "sha256": "$sha"}, "kind": "unclassified", "app_version": "device-test"}""" + "\n",
+        )
+        return name
+    }
+
+    private fun awaitUploaded(name: String) {
+        val until = System.nanoTime() + 15_000_000_000L
+        while (name !in store.uploads().uploaded()) {
+            assertTrue("$name not uploaded within 15 s; status ${connection?.status}", System.nanoTime() < until)
+            Thread.sleep(100)
+        }
+    }
+
     @Test
     fun aRequestIsAnsweredWithAReplyToSay() {
         val p = pairing
