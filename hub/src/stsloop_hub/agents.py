@@ -302,11 +302,18 @@ class AgentsProvider:
         session_id = payload.get("session_id") if isinstance(payload, dict) else None
         before = self._bucket_of(session_id)
         was_blocked = before is not None and self._is_blocked(before)
+        session = self._sessions.get(session_id) if isinstance(session_id, str) else None
+        # A new dialog in a session already blocked on one (a second permission prompt) is a new block.
+        redialog = (session.dialogs, session.status) if session is not None else None
         if self._sessions.take(payload, pane, pid) is None:
             return False
         changed = self._publish()
         after = self._bucket_of(session_id)
-        if after is not None and self._is_blocked(after) and not (was_blocked and after == before):
+        if after is None or not self._is_blocked(after):
+            return changed
+        session = self._sessions.get(session_id)
+        reblocked = redialog is not None and redialog[1] == SESSION_BLOCKED and session.dialogs != redialog[0]
+        if not (was_blocked and after == before) or reblocked:
             self._raised.append(after)
         return changed
 

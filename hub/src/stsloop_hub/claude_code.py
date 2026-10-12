@@ -99,6 +99,9 @@ class Session:
     heard: float
     #: The tool whose dialog it is blocked on, when one is (its finishing ends the block).
     waiting_on: str | None = None
+    #: How many dialogs it has been seen to open: a new one while blocked (a second permission prompt) is a
+    #: new block, said again.
+    dialogs: int = 0
     context: deque[str] = field(default_factory=lambda: deque(maxlen=CONTEXT_LINES))
 
     def text(self) -> str:
@@ -209,7 +212,7 @@ class Sessions:
                     s.context.append(f"It asks: {_cut(_question(tool_input))}")
                 else:
                     s.context.append("It asks the owner to approve its plan.")
-                self._set(s, BLOCKED, now, why=DIALOG_TOOLS[tool], waiting_on=tool)
+                self._dialog(s, DIALOG_TOOLS[tool], tool, now)
             else:
                 s.context.append(f"It uses {_tool_use(tool, tool_input)}")
                 if s.status != BLOCKED:
@@ -218,7 +221,7 @@ class Sessions:
             why = DIALOG_TOOLS.get(tool, PERMISSION)
             if why == PERMISSION and tool != "ExitPlanMode":
                 s.context.append(f"It asks permission to use {_tool_use(tool, tool_input)}")
-            self._set(s, BLOCKED, now, why=why, waiting_on=tool or None)
+            self._dialog(s, why, tool or None, now)
         elif event in ("PostToolUse", "PostToolUseFailure"):
             if event == "PostToolUseFailure":
                 s.context.append(f"{tool or 'A tool'} failed.")
@@ -243,6 +246,13 @@ class Sessions:
             detail = _str(payload, "last_assistant_message") or _str(payload, "error")
             s.context.append(f"It stopped on an error: {_cut(detail, 300)}")
             self._set(s, STOPPED, now)
+
+    @staticmethod
+    def _dialog(s: Session, why: str, tool: str | None, now: float) -> None:
+        """A dialog opened: a new block, timed from now, even when another came before it."""
+        s.dialogs += 1
+        s.status, s.why, s.waiting_on = BLOCKED, why, tool
+        s.since, s.observed = now, True
 
     @staticmethod
     def _set(s: Session, status: str, now: float, why: str | None = None, waiting_on: str | None = None,

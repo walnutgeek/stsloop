@@ -115,12 +115,7 @@ def _ours(handler: object) -> bool:
 
 def has_ours(settings: dict) -> bool:
     """Whether any of the hub's hooks are in `settings`."""
-    return any(
-        _ours(h)
-        for groups in (settings.get("hooks") or {}).values() if isinstance(groups, list)
-        for g in groups if isinstance(g, dict) and isinstance(g.get("hooks"), list)
-        for h in g["hooks"]
-    )
+    return _count(settings) > 0
 
 
 def without_ours(settings: dict) -> dict:
@@ -178,7 +173,8 @@ def _count(settings: dict) -> int:
 
 def save(path: Path, settings: dict) -> None:
     """Writes `settings` to `path` whole (it never holds half a file), keeping its mode, and the file it
-    replaces as its backup."""
+    replaces as its backup. A symlink is followed: its target is written, and the link kept."""
+    path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     mode = 0o600
     if path.exists():

@@ -9,7 +9,9 @@ The hooks `init` installs (`claude_settings.py`) post each hook event's JSON to
   shell's parent), so the hub can tell when the session has gone without a
   `SessionEnd`.
 
-Every request is answered `204 No Content` before the event is taken in: an
+Only a POST of `application/json` naming a loopback `Host` is read, so a web
+page in a browser on this machine cannot post one. Every event is answered
+`204 No Content` before it is taken in: an
 empty 2xx is a hook that decides nothing, so a hook can never allow, deny or
 block anything in Claude Code. Malformed requests get a 4xx and are logged
 without their body (it holds what the person typed and what tools returned).
@@ -43,10 +45,11 @@ def _response(status: str) -> bytes:
     return f"HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".encode()
 
 
-async def _read(reader: asyncio.StreamReader) -> tuple[str, bytes | None, dict[str, str]]:
+async def _read(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> tuple[str, bytes | None, dict[str, str]]:
     """(status to answer, body or None, headers) for one request."""
-    head = await reader.readuntil(b"\r\n\r\n")
-    if len(head) > MAX_HEAD:
+    try:
+        head = await reader.readuntil(b"\r\n\r\n")
+    except asyncio.LimitOverrunError:
         return "431 Request Header Fields Too Large", None, {}
     lines = head.decode("latin-1").split("\r\n")
     parts = lines[0].split(" ")
@@ -68,6 +71,16 @@ async def _read(reader: asyncio.StreamReader) -> tuple[str, bytes | None, dict[s
         return "411 Length Required", None, headers
     if not 0 <= length <= MAX_BODY:
         return "413 Content Too Large", None, headers
+    # Only a hook's curl: a web page cannot send this content type without a preflight, which is never
+    # answered, nor name a loopback host through DNS rebinding.
+    if headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+        return "415 Unsupported Media Type", None, headers
+    if headers.get("host", "").rsplit(":", 1)[0] not in ("127.0.0.1", "localhost"):
+        return "403 Forbidden", None, headers
+    if headers.get("expect", "").lower() == "100-continue":
+        # curl asks before a large body (a tool's long output), and waits a second for this otherwise.
+        writer.write(b"HTTP/1.1 100 Continue\r\n\r\n")
+        await writer.drain()
     return "204 No Content", await reader.readexactly(length), headers
 
 
@@ -88,7 +101,7 @@ def handler(on_event: OnEvent):
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             async with asyncio.timeout(READ_TIMEOUT_S):
-                status, body, headers = await _read(reader)
+                status, body, headers = await _read(reader, writer)
             writer.write(_response(status))
             await writer.drain()
         except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, TimeoutError, ConnectionError, ValueError):

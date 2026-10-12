@@ -109,6 +109,16 @@ class FileTest(unittest.TestCase):
         self.assertTrue(cs.installed(cs.load(self.path), 7718))
         self.assertEqual(sorted(p.name for p in self.path.parent.iterdir()), ["settings.json", "settings.json.stsloop-hub.bak"])
 
+    def test_a_symlinked_file_is_written_through_its_link(self):
+        dotfiles = self.dir / "dotfiles" / "settings.json"
+        dotfiles.parent.mkdir()
+        dotfiles.write_text(json.dumps(THEIRS))
+        self.path.parent.mkdir()
+        self.path.symlink_to(dotfiles)
+        cs.save(self.path, cs.with_ours(cs.load(self.path), 7718))
+        self.assertTrue(self.path.is_symlink())
+        self.assertTrue(cs.installed(cs.load(dotfiles), 7718))
+
     def test_a_new_file_is_only_the_users(self):
         cs.save(self.path, cs.with_ours({}, 7718))
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)

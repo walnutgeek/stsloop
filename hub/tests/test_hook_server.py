@@ -68,6 +68,50 @@ class HookServerTest(unittest.TestCase):
         ])
         self.assertEqual(events, [])
 
+    def test_only_json_to_a_loopback_host_is_read(self):
+        # What a web page could send without a preflight, or through DNS rebinding.
+        body = json.dumps(PAYLOAD).encode()
+        page = (f"POST {hook_server.PATH} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: text/plain\r\n"
+                f"Content-Length: {len(body)}\r\n\r\n").encode() + body
+        rebound = (f"POST {hook_server.PATH} HTTP/1.1\r\nHost: evil.example:7718\r\nContent-Type: application/json\r\n"
+                   f"Content-Length: {len(body)}\r\n\r\n").encode() + body
+        with self.assertLogs("stsloop.hooks", "INFO"):
+            answers, events = self.exchange(page, rebound)
+        self.assertEqual([a.split(b"\r\n")[0] for a in answers],
+                         [b"HTTP/1.1 415 Unsupported Media Type", b"HTTP/1.1 403 Forbidden"])
+        self.assertEqual(events, [])
+
+    def test_a_large_body_is_asked_for_at_once(self):
+        # curl sends `Expect: 100-continue` before a large body, and waits a second for the go-ahead.
+        body = json.dumps(PAYLOAD).encode()
+        events = []
+
+        async def run():
+            server = await hook_server.listen(lambda *e: events.append(e), 0)
+            port = server.sockets[0].getsockname()[1]
+            async with server:
+                reader, writer = await asyncio.open_connection("127.0.0.1", port)
+                writer.write((f"POST {hook_server.PATH} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+                              f"Content-Type: application/json\r\nExpect: 100-continue\r\n"
+                              f"Content-Length: {len(body)}\r\n\r\n").encode())
+                await writer.drain()
+                go = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 0.5)
+                writer.write(body)
+                answer = await reader.read()
+                writer.close()
+                await asyncio.sleep(0)
+                return go, answer
+
+        go, answer = asyncio.run(run())
+        self.assertEqual(go, b"HTTP/1.1 100 Continue\r\n\r\n")
+        self.assertTrue(answer.startswith(b"HTTP/1.1 204"))
+        self.assertEqual(len(events), 1)
+
+    def test_headers_too_large_are_refused(self):
+        with self.assertLogs("stsloop.hooks", "INFO"):
+            [answer], _ = self.exchange(post(b"{}", headers="X-Big: " + "a" * hook_server.MAX_HEAD + "\r\n"))
+        self.assertTrue(answer.startswith(b"HTTP/1.1 431"))
+
     def test_a_body_that_is_not_json_is_answered_and_ignored(self):
         with self.assertLogs("stsloop.hooks", "INFO"):
             [answer], events = self.exchange(post(b"not json"))

@@ -193,6 +193,13 @@ class InitHooksTest(unittest.TestCase):
         self.run("init", "--remove-hooks")
         self.assertIn("nothing changed", self.run.out.getvalue())
 
+    def test_remove_hooks_works_with_a_broken_hub_config(self):
+        self.run("init", "--hooks")
+        (self.home / "hub.json").write_text("{nope")
+        self.run("init", "--remove-hooks")
+        self.assertEqual(self.run.code, 0)
+        self.assertEqual(json.loads(self.settings.read_text()), self.theirs)
+
     def test_no_hooks_does_not_offer(self):
         self.run("init", "--no-hooks")
         self.assertEqual(self.run.asked, [])

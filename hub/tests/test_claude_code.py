@@ -284,6 +284,19 @@ class WithoutHerdrTest(Setup):
         self.hook(INTERACTIVE[6])  # the permission prompt's notification: the same block
         self.assertIsNone(self.buckets.collect())
 
+    def test_a_second_permission_prompt_raises_again(self):
+        # As recorded: the first permission refused, and Claude asks for another.
+        events = [(None, 5151, e) for _, _, e in PERMISSION]
+        self.hook(*events[:4])
+        self.assertIsNotNone(self.buckets.collect())
+        self.hook(events[4])
+        self.assertIsNone(self.buckets.collect(), "another tool starting is no new block")
+        self.clock.now += 100
+        self.hook(events[5])
+        self.assertIsNotNone(self.buckets.collect())
+        self.assertEqual(self.ask("claude-code:32d3e381-c86e-4edd-8e18-99440f3ecd46").say,
+                         "stsloop agent is blocked on a permission prompt, for less than a minute.")
+
     def test_a_muted_session_raises_nothing(self):
         self.hook(*INTERACTIVE[:2])
         self.assertEqual(self.ask(WOODGLUE, "quiet").say, "woodglue agent muted.")

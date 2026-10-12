@@ -141,6 +141,9 @@ def main(
     out, err = out or sys.stdout, err or sys.stderr
     args = _parser().parse_args(argv)
     env = os.environ if env is None else env
+    if args.command == "init" and args.remove_hooks:
+        # Needs nothing of the hub's own config, which may be the thing that is broken.
+        return _remove_hooks(args.claude_settings or claude_settings.default_path(env), out, err)
     directory = config.config_dir(env)
     try:
         saved = config.load(directory)
@@ -148,8 +151,6 @@ def main(
         print(f"stsloop-hub: {e}", file=err)
         return 2
 
-    if args.command == "init" and args.remove_hooks:
-        return _remove_hooks(args.claude_settings or claude_settings.default_path(env), out, err)
     if args.command == "init":
         cfg = saved or config.HubConfig(token=config.new_token())
         if args.new_token:
