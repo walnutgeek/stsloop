@@ -1,0 +1,5 @@
+{
+  "type": "refusal",
+  "reason": "bad_hello",
+  "message": "The hub could not read the phone's hello. Update the phone app."
+}

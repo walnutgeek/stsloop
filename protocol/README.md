@@ -35,8 +35,8 @@ string `type`.
    `descriptors` snapshot, and a new one whenever a Bucket comes, goes or
    changes. Each snapshot replaces the last.
 
-The hub serves one phone at a time: a new authorised connection closes the
-older one (code 1000).
+The hub serves one phone at a time: once a new connection is welcomed, the
+hub closes the older one (code 1000). A refused connection replaces nothing.
 
 ## Rules for every receiver
 

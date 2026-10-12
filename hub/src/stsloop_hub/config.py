@@ -76,6 +76,8 @@ def save(directory: Path, config: HubConfig) -> Path:
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(obj, f, indent=2)
         f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
     os.chmod(tmp, 0o600)
     os.replace(tmp, path)
     return path

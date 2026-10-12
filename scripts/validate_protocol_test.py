@@ -81,6 +81,12 @@ class BrokenProtocolTest(unittest.TestCase):
         self.write("fixtures/v1/exchanges.json", exchanges)
         self.assertIn("hello/nope.json", self.problems())
 
+    def test_a_command_whose_primitive_its_descriptor_does_not_list_is_reported(self):
+        message = json.loads((self.root / "fixtures/v1/descriptors/agents.json").read_text())
+        message["buckets"][1]["commands"][0]["primitive"] = "draft"
+        self.write("fixtures/v1/descriptors/agents.json", message)
+        self.assertIn("draft", self.problems())
+
     def test_a_schema_that_forbids_extra_fields_is_reported(self):
         schema = json.loads((self.root / "schemas/v1/welcome.schema.json").read_text())
         schema["additionalProperties"] = False

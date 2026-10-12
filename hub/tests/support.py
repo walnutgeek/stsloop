@@ -8,7 +8,7 @@ from pathlib import Path
 
 from websockets.asyncio.client import connect
 
-from stsloop_hub.server import Hub
+from stsloop_hub.hub import Hub
 from stsloop_hub.stub import STUB_BUCKETS
 
 PROTOCOL = Path(__file__).resolve().parents[2] / "protocol"

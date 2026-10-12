@@ -13,6 +13,7 @@ For each version directory `protocol/fixtures/v<N>/` it checks that:
   malformed), satisfies `message.schema.json`, has `"type": "<type>"`, and
   satisfies `<type>.schema.json`. Fixtures under `message/` are messages of
   types no schema knows, and must stay that way;
+- every command in a `descriptors` fixture uses a Primitive its Descriptor lists;
 - every message schema has at least one fixture;
 - `exchanges.json` and `equivalents.json` name only fixtures that exist, and
   each equivalent pair has one type.
@@ -64,6 +65,17 @@ def _closed_objects(node, where="") -> list[str]:
     return found
 
 
+def _command_primitives(message: dict, where: str) -> list[str]:
+    """What a schema cannot say: a command's primitive is one its Descriptor lists."""
+    return [
+        f"{where}: Bucket {bucket['id']!r} command {command['id']!r} uses {command['primitive']!r}, "
+        f"not in its primitives"
+        for bucket in message["buckets"]
+        for command in bucket["commands"]
+        if command["primitive"] not in bucket["primitives"]
+    ]
+
+
 def _check_version(root: Path, version: str) -> list[str]:
     problems: list[str] = []
     fixtures_dir = root / "fixtures" / version
@@ -112,9 +124,12 @@ def _check_version(root: Path, version: str) -> list[str]:
         if kind not in validators:
             problems.append(f"{where}: no schema schemas/{version}/{kind}.schema.json")
             continue
-        for error in validators[kind].iter_errors(message):
+        errors = list(validators[kind].iter_errors(message))
+        for error in errors:
             at = "/" + "/".join(str(p) for p in error.absolute_path)
             problems.append(f"{where}: at {at}: {error.message}")
+        if kind == "descriptors" and not errors:
+            problems += _command_primitives(message, where)
 
     for name in sorted(set(validators) - covered - {ENVELOPE}):
         problems.append(f"schemas/{version}/{name}.schema.json: no fixture under fixtures/{version}/{name}/")

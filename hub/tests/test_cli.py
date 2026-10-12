@@ -1,4 +1,4 @@
-"""`stsloop-hub init` and `stsloop-hub serve`, with the tailnet and the server faked."""
+"""`stsloop-hub init` and `stsloop-hub serve`, with the tailnet and the running hub faked."""
 
 import io
 import json
@@ -29,7 +29,7 @@ class Run:
             out=self.out,
             err=self.err,
             find_tailnet=lambda: self.tailnet_ip,
-            run_server=lambda hub, host, port: self.served.append((hub, host, port)),
+            run_hub=lambda hub, host, port: self.served.append((hub, host, port)),
         )
         return self
 
@@ -72,6 +72,18 @@ class InitTest(unittest.TestCase):
         self.run("init", "--host", "192.168.1.5", "--port", "9000")
         self.assertEqual((self.run.config["host"], self.run.config["port"]), ("192.168.1.5", 9000))
         self.assertIn("ws://192.168.1.5:9000/", self.run.out.getvalue())
+
+    def test_a_port_out_of_range_is_rejected_before_anything_is_written(self):
+        for port in ("0", "70000", "-1"):
+            with self.subTest(port=port), self.assertRaises(SystemExit):
+                self.run("init", "--port", port)
+        self.assertFalse((self.home / "hub.json").exists())
+
+    def test_a_host_outside_the_tailnet_gets_a_warning(self):
+        self.run("init", "--host", "192.168.1.5")
+        self.assertIn("unencrypted", self.run.err.getvalue())
+        self.run("init", "--host", "100.64.0.9")
+        self.assertNotIn("unencrypted", self.run.err.getvalue())
 
     def test_init_without_a_tailnet_writes_the_token_and_says_how_to_go_on(self):
         run = Run(self.home, tailnet_ip=None)("init")
@@ -116,8 +128,11 @@ class ServeTest(unittest.TestCase):
 
     def test_serve_host_and_port_flags_win(self):
         self.run("init", "--host", "192.168.1.5")
-        self.run("serve", "--host", "127.0.0.1", "--port", "9001")
-        self.assertEqual(self.run.served[0][1:], ("127.0.0.1", 9001))
+        self.run("serve", "--host", "192.168.1.6", "--port", "9001")
+        self.assertEqual(self.run.served[0][1:], ("192.168.1.6", 9001))
+        self.assertIn("unencrypted", self.run.err.getvalue())
+        self.run("serve", "--host", "127.0.0.1")
+        self.assertNotIn("unencrypted", self.run.err.getvalue())
 
     def test_serve_uses_the_host_init_was_given(self):
         self.run("init", "--host", "192.168.1.5")

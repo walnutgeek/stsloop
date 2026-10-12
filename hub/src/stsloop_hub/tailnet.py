@@ -10,6 +10,7 @@ import ipaddress
 import subprocess
 
 TAILNET = ipaddress.ip_network("100.64.0.0/10")
+TAILNET_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 CANDIDATES = ("tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale")
 
 
@@ -23,9 +24,18 @@ def address(run=subprocess.run) -> str | None:
             continue
         for line in result.stdout.split():
             try:
-                ip = ipaddress.ip_address(line.strip())
+                ip = ipaddress.ip_address(line)
             except ValueError:
                 continue
             if ip in TAILNET:
                 return str(ip)
     return None
+
+
+def is_private_path(host: str) -> bool:
+    """True for a tailnet or loopback address, where the WebSocket needs no TLS of its own."""
+    try:
+        ip = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return host == "localhost"
+    return ip.is_loopback or ip in (TAILNET if ip.version == 4 else TAILNET_V6)

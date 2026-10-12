@@ -82,6 +82,12 @@ The person's own machine running `stsloop-hub`, where the hub-side Providers,
 the summariser and the Corpus store live. Optional: the loop runs without it.
 _Avoid_: server, backend, cloud
 
+**Capability**:
+A protocol feature the phone and the hub agree to use, named in the handshake
+(`descriptors` in v1). Not a Primitive: a Capability is about the connection,
+a Primitive about what the phone does for a Bucket.
+_Avoid_: feature flag
+
 **Inbound**:
 The direction in which something outside the person competes for their
 attention. Inbound Buckets raise Items for the Attention Queue.

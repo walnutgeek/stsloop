@@ -7,8 +7,9 @@
   No hello within `hello_timeout` closes the connection (1008).
 - An acceptable hello gets `welcome`, then a `descriptors` snapshot when both
   sides have that capability. Anything else gets `refusal`, then close (1008).
-- A newer authorised connection replaces an older one: a phone that changed
-  networks reconnects before the old socket has noticed it is dead.
+- A newer welcomed connection replaces an older one (closed with 1000, in the
+  background): a phone that changed networks reconnects before the old socket
+  has noticed it is dead. A refused connection replaces nothing.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ class Hub:
         self._supported = supported
         self._current: ServerConnection | None = None
         self._open: set[ServerConnection] = set()
+        self._closing: set[asyncio.Task] = set()
 
     @property
     def connections(self) -> int:
@@ -53,7 +55,7 @@ class Hub:
 
     def authorised(self, authorization: str | None) -> bool:
         scheme, _, token = (authorization or "").partition(" ")
-        return scheme == "Bearer" and hmac.compare_digest(token.strip().encode(), self._token)
+        return scheme.lower() == "bearer" and hmac.compare_digest(token.encode(), self._token)
 
     def listen(self, host: str, port: int):
         """An async context manager serving on (host, port); port 0 picks a free one."""
@@ -66,12 +68,8 @@ class Hub:
         return connection.respond(HTTPStatus.UNAUTHORIZED, UNAUTHORISED_BODY)
 
     async def _handle(self, ws: ServerConnection) -> None:
-        previous, self._current = self._current, ws
         self._open.add(ws)
         try:
-            if previous is not None:
-                log.info("a newer connection from %s replaces %s", ws.remote_address, previous.remote_address)
-                await previous.close(1000, "replaced by a newer connection")
             log.info("phone connected from %s", ws.remote_address)
             if await self._handshake(ws):
                 await self._ignore_the_rest(ws)
@@ -97,9 +95,19 @@ class Hub:
             return False
         log.info("welcomed the phone: protocol %d.%d, capabilities %s",
                  answer.protocol.major, answer.protocol.minor, list(answer.capabilities))
+        self._replace_current(ws)
         if "descriptors" in answer.capabilities:
-            await ws.send(p.encode(p.Descriptors(buckets=tuple(self._descriptors()))))
+            await ws.send(p.encode(p.Descriptors(buckets=self._descriptors())))
         return True
+
+    def _replace_current(self, ws: ServerConnection) -> None:
+        previous, self._current = self._current, ws
+        if previous is not None and previous is not ws:
+            log.info("a newer connection from %s replaces %s", ws.remote_address, previous.remote_address)
+            # Not awaited: a dead socket would hold the new phone up for close_timeout.
+            task = asyncio.create_task(previous.close(1000, "replaced by a newer connection"))
+            self._closing.add(task)
+            task.add_done_callback(self._closing.discard)
 
     async def _answer_hello(self, ws: ServerConnection) -> p.Welcome | p.Refusal:
         async for frame in ws:
@@ -109,7 +117,8 @@ class Hub:
                 message = p.decode(frame)
             except p.BadMessage as e:
                 if e.message_type == "hello":
-                    return p.bad_hello(str(e))
+                    log.warning("could not read the phone's hello: %s", e)
+                    return p.BAD_HELLO
                 log.debug("ignored a frame before hello: %s", e)
                 continue
             if isinstance(message, p.Hello):

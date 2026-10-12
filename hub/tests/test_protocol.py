@@ -96,9 +96,22 @@ class EncodeTest(unittest.TestCase):
         self.assertNotIn("supported", p.to_json(p.Refusal(reason="bad_hello", message="No.")))
 
     def test_bad_hello_refusal_is_a_sentence(self):
-        refusal = p.bad_hello("protocol is missing")
-        self.assertEqual(refusal.reason, "bad_hello")
-        self.assertTrue(refusal.message.endswith("."))
+        self.assertEqual(p.BAD_HELLO.reason, "bad_hello")
+        self.assertTrue(p.BAD_HELLO.message.endswith("."))
+
+
+class DescriptorRulesTest(unittest.TestCase):
+    def descriptors(self, **bucket):
+        base = {"id": "x", "name": "x", "aliases": [], "type": "agent", "primitives": ["request"], "commands": []}
+        return json.dumps({"type": "descriptors", "buckets": [{**base, **bucket}]})
+
+    def test_duplicates_are_kept_as_sent(self):
+        message = p.decode(self.descriptors(aliases=["a", "a"]))
+        self.assertEqual(message.buckets[0].aliases, ("a", "a"))
+
+    def test_a_command_must_use_one_of_its_descriptors_primitives(self):
+        with self.assertRaises(p.BadMessage):
+            p.decode(self.descriptors(commands=[{"id": "s", "phrases": ["send"], "primitive": "draft"}]))
 
 
 if __name__ == "__main__":

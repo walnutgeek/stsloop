@@ -69,8 +69,8 @@ class EmittedMessagesTest(unittest.TestCase):
         self.assertEqual(message, expected)
         schema_validator("v1", "pairing").validate(message)
 
-    def test_the_bad_hello_refusal_satisfies_its_schema(self):
-        schema_validator("v1", "refusal").validate(p.to_json(p.bad_hello("protocol is missing")))
+    def test_the_bad_hello_refusal_is_the_bad_hello_fixture(self):
+        self.assertEqual(p.to_json(p.BAD_HELLO), fixture("v1", "refusal/bad-hello.json"))
 
 
 class ExchangesTest(unittest.IsolatedAsyncioTestCase):

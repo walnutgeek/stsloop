@@ -19,13 +19,29 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import TextIO
 
 from . import config, pairing, tailnet
-from .server import Hub
+from .hub import Hub
 from .stub import STUB_BUCKETS
 
 NO_TAILNET = (
     "No tailnet address found: is Tailscale installed and up (`tailscale ip -4`)? "
     "To use another address the phone can reach, pass --host."
 )
+
+
+def _port(text: str) -> int:
+    try:
+        port = int(text)
+    except ValueError:
+        port = 0
+    if not 0 < port < 65536:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a port (1-65535)")
+    return port
+
+
+def _warn_if_unencrypted(host: str, err: TextIO) -> None:
+    if not tailnet.is_private_path(host):
+        print(f"stsloop-hub: warning: {host} is not a tailnet address; the token and every message "
+              "travel unencrypted unless that network is trusted", file=err)
 
 
 def _version() -> str:
@@ -42,7 +58,7 @@ def _parser() -> argparse.ArgumentParser:
 
     def where(p):
         p.add_argument("--host", help="address to listen on (default: this machine's tailnet address)")
-        p.add_argument("--port", type=int, help=f"port (default: {config.DEFAULT_PORT})")
+        p.add_argument("--port", type=_port, help=f"port (default: {config.DEFAULT_PORT})")
 
     init = commands.add_parser("init", help="make a pairing token and print the pairing QR code")
     where(init)
@@ -71,7 +87,7 @@ def main(
     out: TextIO | None = None,
     err: TextIO | None = None,
     find_tailnet: Callable[[], str | None] = tailnet.address,
-    run_server: Callable[[Hub, str, int], None] = _run_forever,
+    run_hub: Callable[[Hub, str, int], None] = _run_forever,
 ) -> int:
     out, err = out or sys.stdout, err or sys.stderr
     args = _parser().parse_args(argv)
@@ -96,6 +112,7 @@ def main(
         if not host:
             print(f"stsloop-hub: {NO_TAILNET}", file=err)
             return 1
+        _warn_if_unencrypted(host, err)
         hub_url = pairing.url(host, cfg.port)
         print("Scan this with the stsloop app on your phone:\n", file=out)
         pairing.print_qr(pairing.payload(hub_url, cfg.token), out)
@@ -109,6 +126,7 @@ def main(
     if not host:
         print(f"stsloop-hub: {NO_TAILNET}", file=err)
         return 1
+    _warn_if_unencrypted(host, err)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s", stream=err)
-    run_server(Hub(token=saved.token, descriptors=lambda: STUB_BUCKETS), host, args.port or saved.port)
+    run_hub(Hub(token=saved.token, descriptors=lambda: STUB_BUCKETS), host, args.port or saved.port)
     return 0

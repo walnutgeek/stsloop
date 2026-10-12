@@ -37,6 +37,15 @@ class TokenTest(unittest.IsolatedAsyncioTestCase):
                 await ws.send(HELLO)
                 self.assertEqual(json.loads(await asyncio.wait_for(ws.recv(), 5))["type"], "welcome")
 
+    async def test_the_scheme_is_case_insensitive(self):
+        async with running_hub() as (_, url):
+            async with phone(url, authorization=f"bearer {pairing_token()}") as ws:
+                await ws.send(HELLO)
+                self.assertEqual(json.loads(await asyncio.wait_for(ws.recv(), 5))["type"], "welcome")
+
+    async def test_a_token_with_trailing_space_is_refused(self):
+        await self.assert_refused(f"Bearer {pairing_token()} x")
+
 
 class HelloTest(unittest.IsolatedAsyncioTestCase):
     async def test_a_malformed_hello_is_refused_as_bad_hello(self):
@@ -44,8 +53,7 @@ class HelloTest(unittest.IsolatedAsyncioTestCase):
             async with phone(url, pairing_token()) as ws:
                 await ws.send('{"type": "hello", "capabilities": ["descriptors"]}')
                 refusal = json.loads(await asyncio.wait_for(ws.recv(), 5))
-                self.assertEqual(refusal["type"], "refusal")
-                self.assertEqual(refusal["reason"], "bad_hello")
+                self.assertEqual(refusal, fixture("v1", "refusal/bad-hello.json"))
                 with self.assertRaises(ConnectionClosed):
                     await asyncio.wait_for(ws.recv(), 5)
                 self.assertEqual(ws.close_code, 1008)
@@ -95,11 +103,26 @@ class OnePhoneTest(unittest.IsolatedAsyncioTestCase):
                 await first.send(HELLO)
                 await first.recv(), await first.recv()
                 async with phone(url, pairing_token()) as second:
-                    with self.assertRaises(ConnectionClosed):
-                        await asyncio.wait_for(first.recv(), 5)
                     await second.send(HELLO)
                     self.assertEqual(json.loads(await asyncio.wait_for(second.recv(), 5))["type"], "welcome")
+                    with self.assertRaises(ConnectionClosed):
+                        await asyncio.wait_for(first.recv(), 5)
+                    self.assertEqual(first.close_code, 1000)
                     self.assertEqual(hub.connections, 1)
+
+    async def test_a_refused_connection_leaves_the_welcomed_one_alone(self):
+        async with running_hub() as (hub, url):
+            async with phone(url, pairing_token()) as good:
+                await good.send(HELLO)
+                await good.recv(), await good.recv()
+                async with phone(url, pairing_token()) as bad:
+                    await bad.send(json.dumps(fixture("v1", "hello/major-2.json")))
+                    self.assertEqual(json.loads(await asyncio.wait_for(bad.recv(), 5))["type"], "refusal")
+                    with self.assertRaises(ConnectionClosed):
+                        await asyncio.wait_for(bad.recv(), 5)
+                await good.ping()
+                with self.assertRaises(asyncio.TimeoutError):
+                    await asyncio.wait_for(good.recv(), 0.2)
 
 
 if __name__ == "__main__":

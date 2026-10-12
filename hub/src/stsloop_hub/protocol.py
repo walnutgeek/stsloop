@@ -117,8 +117,8 @@ def negotiate(hello: Hello, supported: tuple[Version, ...] = SUPPORTED) -> Welco
     )
 
 
-def bad_hello(problem: str) -> Refusal:
-    return Refusal(reason="bad_hello", message=f"The hub could not read the phone's hello: {problem}.")
+#: The answer to a hello the hub cannot read; the details go to the hub's log.
+BAD_HELLO = Refusal(reason="bad_hello", message="The hub could not read the phone's hello. Update the phone app.")
 
 
 # --- decoding ----------------------------------------------------------------
@@ -172,7 +172,7 @@ def _strings(obj: dict, key: str, what: str, min_items: int = 0) -> tuple[str, .
     values = _get(obj, key, list, what)
     if len(values) < min_items or not all(isinstance(v, str) and v for v in values):
         raise BadMessage(f"{what} needs {key} as a list of non-empty strings")
-    return tuple(dict.fromkeys(values))
+    return tuple(values)
 
 
 def _version(obj: dict, key: str, what: str) -> Version:
@@ -197,7 +197,7 @@ def _descriptor(obj) -> Descriptor:
     if not isinstance(obj, dict):
         raise BadMessage("a Descriptor is not an object")
     what = f"Descriptor {obj.get('id')!r}"
-    return Descriptor(
+    descriptor = Descriptor(
         id=_string(obj, "id", what),
         name=_string(obj, "name", what),
         aliases=_strings(obj, "aliases", what),
@@ -205,6 +205,10 @@ def _descriptor(obj) -> Descriptor:
         primitives=_strings(obj, "primitives", what),
         commands=tuple(_command(c, f"{what}'s command") for c in _get(obj, "commands", list, what)),
     )
+    for command in descriptor.commands:
+        if command.primitive not in descriptor.primitives:
+            raise BadMessage(f"{what}'s command {command.id!r} uses {command.primitive!r}, not in its primitives")
+    return descriptor
 
 
 _READERS = {

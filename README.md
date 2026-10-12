@@ -79,7 +79,9 @@ same QR code; `--new-token` replaces the token, and phones must pair again.
 Both commands use this machine's tailnet address (`tailscale ip -4`) and port
 7717, so the hub listens on the tailnet only. `--host` and `--port` choose
 another address the phone can reach; given to `init`, they are kept for
-`serve`. A phone with the wrong token gets HTTP 401; one speaking a protocol
+`serve`, which then listens there instead. Off the tailnet the connection is
+plain `ws://`, so both commands warn: the token and every message travel
+unencrypted unless that network is trusted. A phone with the wrong token gets HTTP 401; one speaking a protocol
 major the hub does not support gets a refusal, in a sentence the phone can speak.
 
 The messages are specified in [`protocol/`](./protocol/README.md).
