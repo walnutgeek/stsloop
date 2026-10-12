@@ -23,6 +23,7 @@ import com.walnutgeek.stsloop.core.turn.SessionCommands
  *   the send is done. With any reason, the Draft was not sent, or may not
  *   have been: it is said with [DRAFT_KEPT], and the text goes back in front
  *   of the Bucket's Draft, to be sent again only by a new "send" (a new key).
+ *   An `uncertain` answer (it may have arrived) says [MAYBE_ARRIVED] instead.
  * - Not able to send ([dispatch] while the hub is offline): [OFFLINE], and
  *   the Draft is put back. Not answered within [unconfirmedMs]: [NOT_CONFIRMED],
  *   said once, and the send keeps waiting for the next welcome.
@@ -107,17 +108,19 @@ class Drafts(
 
     /** The Draft taken under [key] has been read back: send it. Says [OFFLINE], and keeps the Draft, when it cannot go. */
     fun dispatch(key: String) {
-        val p = synchronized(this) { pending[key]?.takeIf { !it.dispatched } } ?: return
+        // Marked dispatched before it goes, so a welcome that comes meanwhile sends it again (the same key: harmless).
+        val p = synchronized(this) {
+            pending[key]?.takeIf { !it.dispatched }?.also {
+                it.dispatched = true
+                it.sentAtMs = clockMs()
+            }
+        } ?: return
         if (!send(p.send)) {
             synchronized(this) {
                 if (pending.remove(key) != null) restore(p)
                 say(OFFLINE)
             }
             return
-        }
-        synchronized(this) {
-            p.dispatched = true
-            p.sentAtMs = clockMs()
         }
         listener.sent(p.send, again = false)
     }
@@ -135,11 +138,16 @@ class Drafts(
     fun sent(sent: Sent) {
         val p = pending.remove(sent.key) ?: return listener.ignored(sent)
         listener.answered(p.send, sent, clockMs() - p.sentAtMs)
-        if (sent.reason == null) {
-            say(sent.say)
-        } else {
-            restore(p)
-            say("${sent.say} $DRAFT_KEPT")
+        when (sent.reason) {
+            null -> say(sent.say)
+            UNCERTAIN -> {
+                restore(p)
+                say("${sent.say} $MAYBE_ARRIVED")
+            }
+            else -> {
+                restore(p)
+                say("${sent.say} $DRAFT_KEPT")
+            }
         }
     }
 
@@ -183,6 +191,16 @@ class Drafts(
 
         /** Said after any answer that did not deliver the Draft. */
         const val DRAFT_KEPT = "draft kept."
+
+        /** The [Sent.reason] for a send that may or may not have arrived. */
+        const val UNCERTAIN = "uncertain"
+
+        /**
+         * Said after an [UNCERTAIN] answer: the Draft is kept, but sending it
+         * again is a new send, which the agent would get twice if the first
+         * did arrive.
+         */
+        const val MAYBE_ARRIVED = "it may have arrived. draft kept; check before you send it again."
 
         /** Said when "send" finds the hub offline. */
         const val OFFLINE = "hub offline, draft kept."

@@ -220,6 +220,17 @@ class DraftPrimitiveTest {
     }
 
     @Test
+    fun `an uncertain answer keeps the Draft and warns that sending it again may send it twice`() {
+        val s = Session()
+        s.hear("STSLOOP")
+        s.hear("REBASE")
+        s.hear("SEND")
+        s.hubAnswers(Drafts.UNCERTAIN, "herdr did not confirm that stsloop agent got it.")
+        assertEquals("herdr did not confirm that stsloop agent got it. ${Drafts.MAYBE_ARRIVED}", s.said.last())
+        assertEquals("rebase", s.draft())
+    }
+
+    @Test
     fun `an answer the phone does not know the reason of keeps the Draft`() {
         val s = Session()
         s.hear("STSLOOP")

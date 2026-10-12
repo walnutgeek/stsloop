@@ -159,7 +159,13 @@ class TurnCapture(
         drafts = drafts,
         listener = object : CorpusSink.Listener {
             override fun readBack(turn: Turn, say: String, send: () -> Unit, withdraw: () -> Unit) {
-                // Read back, then sent: a readback the Session ends before is never heard, so nothing is sent.
+                // Read back, then sent: a readback the Session ends before is never heard, so nothing is sent,
+                // and neither is anything in a Session with no echo (test mode), where nothing is read back.
+                if (speaker == null) {
+                    Log.w(TAG, "Session $sessionId: a Draft is never sent without its readback, and this Session speaks nothing; kept")
+                    withdraw()
+                    return
+                }
                 loop.echo(say) { if (ending) withdraw() else send() }
             }
 

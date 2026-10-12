@@ -77,10 +77,11 @@ class CorpusSink(
          * [turn], a "send", is in the Corpus (and went to [published] just
          * before, with nothing to say): say [say], the Draft read back, then
          * call [send]; or, if the readback is never heard (the Session ends
-         * first), [withdraw], which keeps the Draft. With no one to say it to,
-         * the Draft is sent at once.
+         * first, or nothing is spoken in it), [withdraw], which keeps the
+         * Draft. A Draft is never sent without its readback, so by default it
+         * is withdrawn.
          */
-        fun readBack(turn: Turn, say: String, send: () -> Unit, withdraw: () -> Unit) = send()
+        fun readBack(turn: Turn, say: String, send: () -> Unit, withdraw: () -> Unit) = withdraw()
         fun discarded(event: TurnEvent.Discarded) {}
     }
 
@@ -119,7 +120,7 @@ class CorpusSink(
         commands.published(turn)
         val focused = turn.classification?.command?.focus
         if (focused != null) focus.set(focused, endMs) else focus.heard(endMs)
-        val key = command?.send
+        val key = command?.sendKey
         if (command?.endsSession == true) {
             listener.published(turn, utterance, transcription?.timing, null)
             listener.endSession(turn, command.say.orEmpty())

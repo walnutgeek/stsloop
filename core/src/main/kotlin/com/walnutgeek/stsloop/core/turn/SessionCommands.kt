@@ -62,7 +62,7 @@ import com.walnutgeek.stsloop.core.grammar.Descriptor
  * - [Command.SEND]: with a Draft, the hub not known offline, and no earlier
  *   send of that Bucket still waiting on the hub, takes a new idempotency key
  *   ([DraftCommand.key]) and says "sending to <Bucket>: <text>."; once that
- *   readback is over the Draft goes to the hub ([Outcome.send], [Drafts]).
+ *   readback is over the Draft goes to the hub ([Outcome.sendKey], [Drafts]).
  *   Otherwise it says [NOTHING_TO_SEND], [Drafts.OFFLINE] or [STILL_SENDING],
  *   and the Draft stays.
  * - Focusing a Bucket that has a Draft adds [DRAFT_WAITING].
@@ -73,7 +73,7 @@ class SessionCommands(
     /** Whether the hub is connected and welcomed now; must return at once. */
     private val hubOnline: () -> Boolean = { false },
     /** This Session's Drafts. */
-    private val drafts: Drafts = Drafts(send = { false }, say = {}, clockMs = { 0L }),
+    private val drafts: Drafts,
 ) {
     /**
      * What a command does: the [classification] its Turn is written with, what
@@ -86,7 +86,7 @@ class SessionCommands(
         /** For [Command.REQUEST]: what to send to the hub once the Turn is published. */
         val request: BucketRequest? = null,
         /** For a [Command.SEND] that goes ahead: the key the Draft is sent under, once [say] (its readback) is over. */
-        val send: String? = null,
+        val sendKey: String? = null,
     )
 
     /** The previous Turn, or null. Its transcript is never null or blank: only such a Turn becomes [previous]. */
@@ -133,7 +133,7 @@ class SessionCommands(
         val text = drafts.text(d.bucketId)
         val name = bucketAsWords(d.bucket).removeSuffix(".")
         fun outcome(say: String, key: String? = null) =
-            Outcome(Classification.command(invocation.copy(draft = d.copy(text = text, key = key))), say, send = key)
+            Outcome(Classification.command(invocation.copy(draft = d.copy(text = text, key = key))), say, sendKey = key)
         return when (invocation.command) {
             Command.READ_BACK -> outcome(if (text == null) NO_DRAFT else "draft for $name: $text.")
             Command.CANCEL -> outcome(if (text == null) NO_DRAFT else DRAFT_DROPPED)
