@@ -13,6 +13,7 @@ import android.widget.BaseAdapter
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
+import com.walnutgeek.stsloop.core.BucketSource
 import com.walnutgeek.stsloop.core.Command
 import com.walnutgeek.stsloop.core.TURN_FILE
 import com.walnutgeek.stsloop.core.corpus.ListedTurn
@@ -135,8 +136,10 @@ class TranscriptListPane(context: Context, private val corpusDir: File) {
             } else {
                 buildString {
                     append("Bucket: ").append(t.bucket ?: "none")
+                    if (t.bucketSource == BucketSource.FOCUS.json) append(" (by Focus)")
                     append(" · kind: ").append(t.kind ?: "none")
                     t.command?.let { append(" (").append(it).append(")") }
+                    t.focus?.let { append(" · focused ").append(it) }
                     if (t.command == Command.SCRATCH_THAT.json) append(t.tombstones?.let { " · dropped the Turn of ${dirTime(it)}" } ?: " · nothing to drop")
                     t.tombstonedBy?.let { append(" · DROPPED by scratch that at ").append(dirTime(it)) }
                 }

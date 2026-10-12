@@ -118,8 +118,9 @@ through the recognisability check before it ships.
 
 - Naming a Bucket alone focuses it. A Declaration at the start or end of a
   Turn files that Turn and does not move Focus.
-- Focus times out after a quiet period (starting at 2 minutes, tunable) back to
-  the Inbox. Every change of Focus, timeout included, is spoken.
+- Focus times out after a quiet period (starting at 2 minutes, tunable as
+  `focus_timeout_ms` in `files/timings.json`) back to the Inbox. Every change
+  of Focus, timeout included, is spoken ("back to inbox.").
 - In a capture Bucket, a Turn that is not a command is a Note.
 - In an agent Bucket, a Turn that is not a command is appended to the Draft.
 - A Draft left at the timeout is kept and announced ("draft kept for stsloop
@@ -171,8 +172,9 @@ adb. v0.1 adds one screen with:
 
 ## Open questions
 
-- The Corpus format for Turns that are commands to a Bucket, Focus changes and
-  Drafts. Additive to `schema: 1` if possible.
+- The Corpus format for Turns that are commands to a Bucket and Drafts.
+  Additive to `schema: 1` if possible. Focus changes and Notes filed by Focus
+  are settled (#40): `docs/phase0.md`, "Corpus format".
 - How the hub detects "blocked" from herdr alone, without hooks.
 - The focus timeout's real value, and whether a Draft should extend it.
 - The model download host and its integrity check.

@@ -449,7 +449,7 @@ Four, chosen because the loop is unusable in a car without them:
 | "scratch that" / "discard that" | Tombstone the previous Turn (its audio is kept, see Corpus format). Say "dropped." |
 | "repeat" / "say that again" | Re-speak the previous transcript |
 | "stop listening" / "end session" | Say "stopped listening.", then end the Session cleanly |
-| "what bucket" / "which bucket" | Speak the Bucket assigned to the previous Turn |
+| "what bucket" / "which bucket" | Speak the Bucket assigned to the previous Turn. **v0.1 (#40):** an alias of "where am I", which speaks the Bucket that has Focus (`docs/mvp.md`, "Focus") |
 
 Commands are recognised only as a **whole utterance**, not as a substring. A
 Note that happens to contain the words "repeat" must be stored, not obeyed.
@@ -630,11 +630,25 @@ Design notes worth keeping:
   reader that finds a non-null one still honours it. No schema bump: the field
   was always null, and `jq` reads a missing key as null too.
 - `command` is present only on a command Turn: `name` is permanent once
-  written (`scratch_that`, `repeat`, `what_bucket`, `stop_listening`),
-  `matched` the phrase as heard, normalised. `tombstones` is present only on
-  a `scratch_that` Turn, `null` when there was nothing to drop. The other
-  command Turns record nothing more: what "repeat" and "what bucket" said
-  follows from the Turns before them in the Session.
+  written (`scratch_that`, `repeat`, `what_bucket`, `stop_listening`; from
+  #40 `where_am_i` and `focus`), `matched` the phrase as heard, normalised.
+  A name keeps its meaning: `what_bucket` (the previous Turn's Bucket) is no
+  longer written, because "what bucket" now says the focused Bucket and is
+  recorded as `where_am_i`. `tombstones` is present only on a `scratch_that`
+  Turn, `null` when there was nothing to drop. The other command Turns record
+  nothing more: what "repeat" and "where am I" said follows from the Turns
+  before them in the Session.
+- **Focus (#40, additive within `schema: 1`).** A lone Bucket alias is a
+  command Turn with `command.name` `focus` and the Bucket it focuses in a
+  top-level `focus` (`"inbox"` for the Inbox); `bucket` stays `null`. A Turn
+  filed under the focused Bucket is a `note` with `declaration: null`,
+  `bucket` the Bucket and `bucket_source: "focus"`, its `content` the whole
+  transcript (first word to last, fillers at either end left out, cased as
+  for a Declaration; a Turn of only fillers stays `unclassified`). It is
+  filed by the Focus at the moment its utterance ended, even if Focus timed
+  out while it was being decoded. A Declared Turn is unchanged, whatever has
+  Focus. A timeout back to the Inbox is not a Turn and is not recorded; the
+  Turns after it are simply unlabelled again.
 
 ## Modules
 

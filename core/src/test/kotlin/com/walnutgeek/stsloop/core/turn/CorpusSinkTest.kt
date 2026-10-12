@@ -15,6 +15,7 @@ import com.walnutgeek.stsloop.core.TurnKind
 import com.walnutgeek.stsloop.core.TurnVad
 import com.walnutgeek.stsloop.core.grammar.Bucket
 import com.walnutgeek.stsloop.core.grammar.BucketConfig
+import com.walnutgeek.stsloop.core.grammar.BucketRegistry
 import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
 import com.walnutgeek.stsloop.core.testmode.TestConfig
 import com.walnutgeek.stsloop.core.testmode.TurnTest
@@ -380,9 +381,10 @@ class CorpusSinkTest {
         say(null)
         say("SAY THAT AGAIN")
         say("WHAT BUCKET")
+        say("ERRANDS")
         say("REPEAT")
         assertEquals(
-            listOf("I NEED TO WORK ON THE ROOF", "", null, "I NEED TO WORK ON THE ROOF", "no bucket.", "I NEED TO WORK ON THE ROOF"),
+            listOf("I NEED TO WORK ON THE ROOF", "", null, "I NEED TO WORK ON THE ROOF", "inbox.", "errands.", "I NEED TO WORK ON THE ROOF"),
             said,
         )
     }
@@ -394,37 +396,111 @@ class CorpusSinkTest {
     }
 
     @Test
-    fun `a scratched Turn is neither repeated nor asked about, and nothing further back is reached`() {
+    fun `a scratched Turn is not repeated, and nothing further back is reached`() {
         say("ERRANDS BUY BREAD")
         say("ERRANDS BUY MILK")
         say("SCRATCH THAT")
         say("REPEAT")
-        say("WHICH BUCKET")
-        assertEquals(listOf("that was dropped.", "that was dropped."), said.takeLast(2))
+        assertEquals("that was dropped.", said.last())
+    }
+
+    // --- Focus (#40) ---
+
+    @Test
+    fun `a lone Bucket alias focuses that Bucket and is answered with its name`() {
+        val focus = say("HOUSE PROJECT")
+        assertEquals(TurnKind.COMMAND, focus.kind)
+        assertEquals(CommandInvocation(Command.FOCUS, "house project", focus = "house-project"), focus.command)
+        assertEquals(listOf("house project."), said)
     }
 
     @Test
-    fun `what bucket says the previous Turn's Bucket, as words`() {
-        say("ERRANDS BUY MILK")
-        val ask = say("WHAT BUCKET")
-        assertEquals(CommandInvocation(Command.WHAT_BUCKET, "what bucket"), ask.command)
+    fun `errands, a pause, then order roofing screws is filed in errands (Phase 0 finding 5)`() {
+        say("ERRANDS")
+        val note = say("ORDER ROOFING SCREWS")
+        assertEquals(Classification.focused("errands", "order roofing screws"), note.classification)
+        assertEquals(listOf("errands.", "ORDER ROOFING SCREWS"), said)
+        assertEquals("errands", say("BUY MILK").classification!!.bucket)
+    }
+
+    @Test
+    fun `a Declaration files its Turn and leaves Focus where it was`() {
+        say("ERRANDS")
+        val declared = say("WORK FIX THE BUILD")
+        assertEquals("work", declared.classification!!.bucket)
+        assertEquals(BucketSource.DECLARATION, declared.classification!!.bucketSource)
+        assertEquals(BucketSource.FOCUS, say("BUY MILK").classification!!.bucketSource)
+        say("WHERE AM I")
         assertEquals("errands.", said.last())
-        say("HOUSE PROJECT CHECK THE JOISTS")
-        say("WHICH BUCKET")
-        assertEquals("house project.", said.last())
     }
 
     @Test
-    fun `what bucket for an undeclared Turn says it has none`() {
+    fun `commands are not filed by Focus and do not move it`() {
+        say("ERRANDS")
         say("ORDER ROOFING SCREWS")
-        say("WHAT BUCKET")
-        assertEquals("no bucket.", said.last())
+        assertEquals(TurnKind.COMMAND, say("REPEAT").kind)
+        assertEquals(TurnKind.COMMAND, say("SCRATCH THAT").kind)
+        assertEquals("errands", say("BUY MILK").classification!!.bucket)
     }
 
     @Test
-    fun `with nothing before it what bucket says so`() {
+    fun `where am I and what bucket say the focused Bucket, the Inbox at first`() {
+        val ask = say("WHERE AM I")
+        assertEquals(CommandInvocation(Command.WHERE_AM_I, "where am i"), ask.command)
+        say("HOUSEPROJECT")
         say("WHAT BUCKET")
-        assertEquals(listOf("nothing said yet."), said)
+        say("WHICH BUCKET")
+        assertEquals(listOf("inbox.", "house project.", "house project.", "house project."), said)
+    }
+
+    @Test
+    fun `inbox focuses the Inbox, where a Turn is unlabelled again`() {
+        say("ERRANDS")
+        val inbox = say("INBOX")
+        assertEquals(CommandInvocation(Command.FOCUS, "inbox", focus = "inbox"), inbox.command)
+        assertEquals("inbox.", said.last())
+        assertEquals(Classification.UNCLASSIFIED, say("ORDER ROOFING SCREWS").classification)
+    }
+
+    @Test
+    fun `after the focus timeout Turns are unlabelled again`() {
+        val focus = Focus(BucketRegistry.capture(BucketConfig.DEFAULT), timeoutMs = 10_000)
+        val heard = mutableListOf<Turn>()
+        val s = CorpusSink(
+            writer, "s", 0, 1000, "t", PhraseGrammar(BucketConfig.DEFAULT), focus,
+            listener = object : CorpusSink.Listener {
+                override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) { heard += turn }
+            },
+        )
+        s.closed(u(0, 500), pcm(500), transcribed("ERRANDS"))
+        // The capture thread ticks the same Focus on the same clock: the timeout runs from the end of each Turn.
+        assertEquals(false, focus.tick(10_499, capturing = false))
+        s.closed(u(1000, 1500), pcm(500), transcribed("BUY MILK"))
+        assertEquals("errands", heard.last().classification!!.bucket)
+        assertEquals(true, focus.tick(11_500, capturing = false))
+        s.closed(u(12_000, 12_500), pcm(500), transcribed("BUY BREAD"))
+        assertEquals(Classification.UNCLASSIFIED, heard.last().classification)
+    }
+
+    @Test
+    fun `each Session starts in the Inbox`() {
+        say("ERRANDS")
+        val next = CorpusSink(
+            writer, "5e5511", 2_000_000, 1000, "t", PhraseGrammar(BucketConfig.DEFAULT), newId = { "id${++ids}" },
+            listener = object : CorpusSink.Listener {
+                override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) { published += turn to utterance }
+            },
+        )
+        next.closed(u(0, 500), pcm(500), transcribed("BUY MILK"))
+        assertEquals(Classification.UNCLASSIFIED, published.last().first.classification)
+    }
+
+    @Test
+    fun `a focus that fails to write moves nothing and says nothing`() {
+        writer.failFinishOn = 1
+        sink.closed(u(0, 500), pcm(500), transcribed("ERRANDS"))
+        assertEquals(emptyList<String?>(), said)
+        assertEquals(Classification.UNCLASSIFIED, say("BUY MILK").classification)
     }
 
     @Test
@@ -473,7 +549,6 @@ class CorpusSinkTest {
             },
         )
         next.closed(u(0, 500), pcm(500), transcribed("REPEAT"))
-        next.closed(u(1000, 1500), pcm(500), transcribed("WHAT BUCKET"))
-        assertEquals(listOf("nothing to repeat.", "nothing said yet."), heard)
+        assertEquals(listOf("nothing to repeat."), heard)
     }
 }

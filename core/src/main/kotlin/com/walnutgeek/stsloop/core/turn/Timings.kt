@@ -16,6 +16,7 @@ import kotlin.math.floor
  * - [preRollMs]: audio kept before the first speech window, so the VAD's onset latency does not clip the first syllable.
  * - [speechThreshold]: Silero probability at or above which a window starts speech.
  * - [releaseThreshold]: once capturing, a window at or above this still counts as speech (hysteresis).
+ * - [focusTimeoutMs]: Focus on a Bucket returns to the Inbox after this long with no human Turn (`docs/mvp.md`, "Focus").
  */
 data class Timings(
     val trailingSilenceMs: Int = 1500,
@@ -25,6 +26,7 @@ data class Timings(
     val preRollMs: Int = 300,
     val speechThreshold: Float = 0.5f,
     val releaseThreshold: Float = 0.35f,
+    val focusTimeoutMs: Int = 120_000,
 ) {
     init {
         for (f in FIELDS) f.check(f.get(this).toDouble())?.let { throw IllegalArgumentException("${f.key}: $it") }
@@ -55,6 +57,10 @@ data class Timings(
         const val MAX_UTTERANCE_FLOOR_MS = 1_000
         const val PRE_ROLL_CAP_MS = 5_000
 
+        /** Shorter than this, Focus would time out between two Turns of one thought. */
+        const val FOCUS_TIMEOUT_FLOOR_MS = 10_000
+        const val FOCUS_TIMEOUT_CAP_MS = 3_600_000
+
         private fun ms(key: String, range: LongRange, get: (Timings) -> Int) = Field(key, get) { v ->
             when {
                 v != floor(v) -> "must be a whole number of milliseconds, was $v"
@@ -75,6 +81,7 @@ data class Timings(
             ms("pre_roll_ms", 0L..PRE_ROLL_CAP_MS) { it.preRollMs },
             probability("speech_threshold") { it.speechThreshold },
             probability("release_threshold") { it.releaseThreshold },
+            ms("focus_timeout_ms", FOCUS_TIMEOUT_FLOOR_MS.toLong()..FOCUS_TIMEOUT_CAP_MS.toLong()) { it.focusTimeoutMs },
         )
 
         val KEYS: List<String> = FIELDS.map { it.key }
@@ -92,6 +99,7 @@ data class Timings(
                 preRollMs = ms("pre_roll_ms", d.preRollMs),
                 speechThreshold = p("speech_threshold", d.speechThreshold),
                 releaseThreshold = p("release_threshold", d.releaseThreshold),
+                focusTimeoutMs = ms("focus_timeout_ms", d.focusTimeoutMs),
             )
         }
 

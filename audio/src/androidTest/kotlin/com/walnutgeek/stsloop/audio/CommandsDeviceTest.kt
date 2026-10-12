@@ -36,7 +36,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
 /**
- * "Repeat", "what bucket" and "stop listening" (#14) through the service's
+ * "Repeat", "what bucket", "stop listening" (#14) and Focus (#40) through the service's
  * pipeline on the phone: the real VAD, the real [FileCorpusWriter] and the
  * real [EchoSpeaker] (audible), with a recognizer that returns scripted
  * transcripts. Writes only under the test's own cache directory, never the
@@ -81,7 +81,7 @@ class CommandsDeviceTest {
     }
 
     @Test
-    fun repeatWhatBucketThenStopListeningEndsTheSessionOnlyAfterItsReplyIsSaid() {
+    fun focusRepeatWhatBucketThenStopListeningEndsTheSessionOnlyAfterItsReplyIsSaid() {
         val rnd = Random(14)
         fun noise(ms: Int) = ShortArray(RATE / 1000 * ms) { (rnd.nextInt(61) - 30).toShort() }
         val w = WaveReader.readWave(context.assets, "test_wavs/0.wav")
@@ -109,7 +109,7 @@ class CommandsDeviceTest {
         val c = TurnCapture(
             FileCorpusWriter(corpus, File(root, "staging")), "5c4a7d", System.currentTimeMillis(), "test",
             Timings(), TurnCapture.silero(vad), SpeechModels.vadConfig().sileroVadModelConfig.windowSize,
-            recognizer = { Scripted(listOf("HOUSE PROJECT CHECK THE JOISTS", "SAY THAT AGAIN", "WHICH BUCKET", "STOP LISTENING")) },
+            recognizer = { Scripted(listOf("HOUSE PROJECT", "CHECK THE JOISTS", "SAY THAT AGAIN", "WHICH BUCKET", "STOP LISTENING")) },
             speaker = speaker,
             endSession = { turn ->
                 endedAt += ended.toList()
@@ -137,7 +137,7 @@ class CommandsDeviceTest {
 
         try {
             feed(noise(1000), forMs(1000))
-            for (n in 1..3) {
+            for (n in 1..4) {
                 feed(speech, forMs(speech.size * 1000 / RATE))
                 feed(noise(1000), untilSaid(n))
                 feed(noise(1000), forMs(4000)) // the echo plays, then the guard
@@ -152,21 +152,82 @@ class CommandsDeviceTest {
         }
         Log.i(TAG, "turns: ${turns.map { it.directoryName to it.transcript?.text }}; said: $said; ended: $ended at $endedAt")
 
-        assertEquals(4, turns.size)
-        val (note, repeat, which, stop) = turns
+        assertEquals(5, turns.size)
+        val (focus, note, repeat, which, stop) = turns
         assertEquals(TurnKind.NOTE, note.kind)
-        assertEquals(listOf("house project check the joists", "house project check the joists", "house project.", "stopped listening."), said.toList())
+        assertEquals("house-project", note.classification?.bucket)
+        assertEquals(listOf("house project.", "check the joists", "check the joists", "house project.", "stopped listening."), said.toList())
+        val focused = Json.parseObject(File(corpus, "${focus.directoryName}/$TURN_FILE").readText())
+        assertEquals("focus", (focused["command"] as Map<*, *>)["name"])
+        assertEquals("house-project", focused["focus"])
+        assertEquals("focus", Json.parseObject(File(corpus, "${note.directoryName}/$TURN_FILE").readText())["bucket_source"])
 
         // Ended once, on the persisted command Turn, after the engine reported the reply's end.
         assertEquals(listOf(stop), endedOn.toList())
         assertTrue("ended before the reply was said: $endedAt", endedAt.single().contains(4L))
 
-        for ((turn, command) in listOf(repeat to Command.REPEAT, which to Command.WHAT_BUCKET, stop to Command.STOP_LISTENING)) {
+        for ((turn, command) in listOf(repeat to Command.REPEAT, which to Command.WHERE_AM_I, stop to Command.STOP_LISTENING)) {
             val written = Json.parseObject(File(corpus, "${turn.directoryName}/$TURN_FILE").readText())
             assertEquals("command", written["kind"])
             assertEquals(command.json, (written["command"] as Map<*, *>)["name"])
             assertTrue(!written.containsKey("tombstones"))
         }
+    }
+
+    /**
+     * A lone alias focuses its Bucket; then, with no speech for the focus
+     * timeout, Focus returns to the Inbox and the loop says so (#40).
+     */
+    @Test
+    fun focusTimesOutBackToTheInboxAndSaysSo() {
+        val rnd = Random(40)
+        fun noise(ms: Int) = ShortArray(RATE / 1000 * ms) { (rnd.nextInt(61) - 30).toShort() }
+        val w = WaveReader.readWave(context.assets, "test_wavs/0.wav")
+        val speech = ShortArray(w.samples.size) { Math.round(w.samples[it] * 32768f).toShort() }
+        val said = Collections.synchronizedList(mutableListOf<String>())
+        var capture: TurnCapture? = null
+        val echo = EchoSpeaker(target, "5c4a7e") { id, atNs -> capture?.spoken(id, atNs) }
+        val speaker = object : Speaker {
+            override fun speak(id: Long, text: String) {
+                said += text
+                echo.speak(id, text)
+            }
+            override fun abandon(id: Long) = echo.abandon(id)
+        }
+        echo.start()
+        val c = TurnCapture(
+            FileCorpusWriter(File(root, "corpus"), File(root, "staging")), "5c4a7e", System.currentTimeMillis(), "test",
+            Timings(focusTimeoutMs = Timings.FOCUS_TIMEOUT_FLOOR_MS), TurnCapture.silero(vad),
+            SpeechModels.vadConfig().sileroVadModelConfig.windowSize,
+            recognizer = { Scripted(listOf("ERRANDS")) },
+            speaker = speaker,
+        )
+        capture = c
+        val t0 = System.nanoTime()
+        var fed = 0L
+        val buf = ShortArray(CHUNK)
+        fun feed(pcm: ShortArray, until: () -> Boolean) {
+            var i = 0
+            while (!until()) {
+                for (k in 0 until CHUNK) buf[k] = pcm[(i + k) % pcm.size]
+                i = (i + CHUNK) % pcm.size
+                fed += CHUNK
+                val due = t0 + fed * 1_000_000_000L / RATE
+                while (System.nanoTime() < due) Thread.sleep(1)
+                c.accept(buf, CHUNK, SystemClock.elapsedRealtimeNanos())
+            }
+        }
+        try {
+            feed(noise(1000)) { fed >= RATE }
+            val end = fed + speech.size
+            feed(speech) { fed >= end }
+            val deadline = fed + RATE * 30L
+            feed(noise(1000)) { said.size >= 2 || fed >= deadline }
+        } finally {
+            c.finish()
+            echo.close()
+        }
+        assertEquals(listOf("errands.", "back to inbox."), said.toList())
     }
 
     /**

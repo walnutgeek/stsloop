@@ -8,8 +8,10 @@ capture surfaces in your life — hands-free and eyes-free.
 runs the whole loop on the phone, offline. It records each Turn, transcribes it
 on-device (sherpa-onnx, Nemotron 0.6B streaming), reads it back, and stores
 audio and transcript in an append-only Corpus. Naming a Bucket at the start or
-end of a Turn files it there. Four spoken commands work: "scratch that",
-"repeat", "what bucket" and "stop listening". In the car it uses the hands-free
+end of a Turn files it there; naming one on its own gives it Focus, and the
+Turns after it are filed there until a quiet timeout returns Focus to the
+Inbox. Spoken commands: "scratch that", "repeat", "where am I" (or "what
+bucket"), "inbox" and "stop listening". In the car it uses the hands-free
 mic and speaker. The loop says aloud when the mic or its speech fails silently.
 A script loads the pulled Corpus on Linux.
 
@@ -182,7 +184,9 @@ is dropped from both. Each problem is logged as an error under
 is not strict JSON (a duplicate key counts as malformed) or has no `buckets`
 array means the defaults. The effective
 Buckets are logged under `stsloop.Session` when a Session starts. An empty list,
-`{"buckets": []}`, turns Declarations off.
+`{"buckets": []}`, turns Declarations off. `inbox` is reserved for the Inbox
+(see "Focus" below): a Bucket by that name, or an alias "inbox", is dropped and
+logged.
 
 ```sh
 # write (debug build; takes effect at the next Session)
@@ -214,7 +218,8 @@ are logged under `stsloop.Session` when a Session starts.
   "min_utterance_ms": 300,
   "pre_roll_ms": 300,
   "speech_threshold": 0.5,
-  "release_threshold": 0.35
+  "release_threshold": 0.35,
+  "focus_timeout_ms": 120000
 }
 ```
 
@@ -223,6 +228,8 @@ once one is being captured, `release_threshold` is enough to keep it going.
 `pre_roll_ms` of audio before the first speech window is kept in the Turn.
 `guard_ms` is how long the mic stays closed after an echo ends (see "The
 spoken echo" below); 0 reopens it as soon as the engine reports the end.
+`focus_timeout_ms` (10 s to 1 h) is how long Focus stays on a Bucket with no
+speech before it returns to the Inbox (see "Focus" below).
 
 ```sh
 # write (the app must be a debug build; takes effect at the next Session)
@@ -277,19 +284,32 @@ mise exec -- adb logcat -s stsloop.Echo stsloop.TurnCapture stsloop.Session
 Each is obeyed only when it is all you said ("um" and "okay" at either
 end aside), and each is stored as a Turn of its own,
 `kind: "command"`. A Note that only contains the phrase is stored, not
-obeyed. They act on the last Turn the loop read back to you in this
-Session:
+obeyed. "Scratch that" and "repeat" act on the last Turn the loop read back
+to you in this Session:
 
 - **"Scratch that"** (or "discard that") tombstones it, and the loop says
   "dropped." (or "nothing to drop."). The dropped Turn stays in the Corpus,
   audio and all; the command's `tombstones` names the dropped Turn's
   directory, and the transcript list strikes the dropped Turn through.
 - **"Repeat"** (or "say that again") reads its transcript back again.
-- **"What bucket"** (or "which bucket") says its Bucket, or "no bucket.".
+- **"Where am I"** (or "what bucket", "which bucket") says the Bucket that
+  has Focus, "inbox." in the Inbox.
 - **"Stop listening"** (or "end session") says "stopped listening." and ends
   the Session, as the Stop button does.
 
 The rules in full are in `docs/phase0.md`, "Commands".
+
+### Focus
+
+A Bucket's name or alias said on its own ("errands") gives it Focus, and the
+loop says its name ("errands."). Every Turn after that which is not a command
+is filed in that Bucket as a Note, with `bucket_source: "focus"`, so
+"errands", a pause, "order roofing screws" lands in errands. A Declaration
+("work, fix the build") still files its own Turn and leaves Focus where it
+was. "Inbox" on its own returns Focus to the Inbox, where Turns are
+unlabelled as before. After `focus_timeout_ms` (2 minutes) with no speech,
+Focus returns to the Inbox and the loop says "back to inbox.". Every Session
+starts in the Inbox.
 
 ### Reading the Corpus on Linux
 

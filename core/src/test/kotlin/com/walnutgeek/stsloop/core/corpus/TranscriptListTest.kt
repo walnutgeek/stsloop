@@ -1,6 +1,8 @@
 package com.walnutgeek.stsloop.core.corpus
 
 import com.walnutgeek.stsloop.core.Classification
+import com.walnutgeek.stsloop.core.Command
+import com.walnutgeek.stsloop.core.CommandInvocation
 import com.walnutgeek.stsloop.core.Transcript
 import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.TurnAudio
@@ -119,6 +121,22 @@ class TranscriptListTest {
         assertEquals("2026-10-06T14:22:07.431Z", t.startedAt)
         assertNull(t.bucket)
         assertNull(t.problem)
+    }
+
+    @Test
+    fun `a focus Turn and a Note filed by Focus read back what they did`() {
+        val base = Turn("c5f3e1", "0f22ab", 1_791_296_527_431, TurnAudio("audio.wav", "x", 16_000, 1000), "0.1.0")
+        val focus = base.copy(classification = Classification.command(CommandInvocation(Command.FOCUS, "errands", focus = "errands")))
+        val f = TranscriptList.read(focus.directoryName, TurnJson.encode(focus))
+        assertEquals("focus", f.command)
+        assertEquals("errands", f.focus)
+        assertNull(f.bucket)
+        val note = base.copy(classification = Classification.focused("errands", "buy milk"))
+        val n = TranscriptList.read(note.directoryName, TurnJson.encode(note))
+        assertEquals("errands", n.bucket)
+        assertEquals("focus", n.bucketSource)
+        assertNull(n.focus)
+        assertEquals("declaration", TranscriptList.read(declaredDir, declared).bucketSource)
     }
 
     @Test

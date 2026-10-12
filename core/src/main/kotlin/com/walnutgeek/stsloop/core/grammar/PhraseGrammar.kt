@@ -17,7 +17,7 @@ import com.walnutgeek.stsloop.core.DeclarationPosition
  * than ignoring a command. A command is matched before any Declaration, so a
  * Bucket alias that happens to be a command phrase cannot shadow it.
  *
- * A **Declaration** is a Bucket's name or alias ([BucketConfig]) at the very
+ * A **Declaration** is a Bucket's name or alias ([BucketRegistry]) at the very
  * start or the very end of the transcript, read as words (see [Words]: case,
  * punctuation, dashes, apostrophe style and Unicode composition are ignored):
  *
@@ -44,13 +44,27 @@ import com.walnutgeek.stsloop.core.DeclarationPosition
  * it are kept and punctuation around it is dropped. An engine that only
  * writes upper case (the current one) is lower-cased. The transcript itself is
  * never changed.
+ *
+ * **Focus** (`docs/mvp.md`): a Turn that is only one Bucket alias, fillers
+ * aside, is [Command.FOCUS] on that Bucket, the Inbox included ("inbox").
+ * It is matched after the fixed commands and before Declarations. A Turn
+ * that is neither a command nor Declared is a Note in the focused Bucket,
+ * when [classify] is given one, its content running from its first word to
+ * its last with [FILLERS] at either end left out; a Turn of only fillers
+ * ("um") stays unclassified.
+ *
+ * The Buckets come from a [BucketRegistry]: any Bucket in it may be focused,
+ * and those using [Primitive.NOTE] (the Inbox aside) may be Declared into.
  */
-class PhraseGrammar(buckets: BucketConfig) {
+class PhraseGrammar(val buckets: BucketRegistry) {
+    /** The phone alone: the capture Buckets of [config]. */
+    constructor(config: BucketConfig) : this(BucketRegistry.capture(config))
+
     /** A Declaration and the content left once it is taken out. */
     internal data class Declared(val declaration: Declaration, val content: String)
 
     /** Forms longest first: most words, then most letters. */
-    private val forms: List<Pair<List<String>, String>> = buckets.forms.entries
+    private val forms: List<Pair<List<String>, String>> = buckets.declarationForms.entries
         .map { it.key to it.value }
         .sortedWith(compareByDescending<Pair<List<String>, String>> { it.first.size }.thenByDescending { it.first.sumOf(String::length) })
 
@@ -63,14 +77,17 @@ class PhraseGrammar(buckets: BucketConfig) {
 
     /**
      * What [transcript] (exactly as the engine produced it) is: a command when
-     * it is one as a whole, a Note in its Bucket when Declared, otherwise
-     * unclassified.
+     * it is one as a whole (a lone Bucket alias included), a Note in its
+     * Bucket when Declared, a Note in [focus] (a Bucket's name) when there is
+     * one, otherwise unclassified.
      */
-    fun classify(transcript: String?): Classification {
+    fun classify(transcript: String?, focus: String? = null): Classification {
         if (transcript == null) return Classification.UNCLASSIFIED
         command(transcript)?.let { return Classification.command(it) }
-        val d = declaration(transcript) ?: return Classification.UNCLASSIFIED
-        return Classification.declared(d.declaration, d.content)
+        declaration(transcript)?.let { return Classification.declared(it.declaration, it.content) }
+        if (focus == null) return Classification.UNCLASSIFIED
+        val content = content(transcript) ?: return Classification.UNCLASSIFIED
+        return Classification.focused(focus, content)
     }
 
     /** The command [transcript] is as a whole, fillers at its ends aside, or null. */
@@ -81,9 +98,22 @@ class PhraseGrammar(buckets: BucketConfig) {
         while (from < to && words[from] in FILLERS) from++
         while (to > from && words[to - 1] in FILLERS) to--
         val said = words.subList(from, to)
-        val command = commands[said] ?: return null
-        return CommandInvocation(command, said.joinToString(" "))
+        val matched = said.joinToString(" ")
+        commands[said]?.let { return CommandInvocation(it, matched) }
+        val bucket = buckets.focusForms[said] ?: return null
+        return CommandInvocation(Command.FOCUS, matched, focus = bucket)
     }
+
+    /** [transcript] as a Note's content: its words, fillers at either end aside, or null when nothing is left. */
+    private fun content(transcript: String): String? {
+        val text = Words.prepare(transcript)
+        val words = Words.of(text).dropWhile { it.text in FILLERS }.dropLastWhile { it.text in FILLERS }
+        if (words.isEmpty()) return null
+        return cased(text, text.substring(words.first().start, words.last().end))
+    }
+
+    /** [content], cut from [text]; lower-cased when [text] is all upper case. */
+    private fun cased(text: String, content: String) = if (text.any { it.isLowerCase() }) content else content.lowercase()
 
     /** The Declaration in [transcript], or null when there is none. */
     internal fun declaration(transcript: String): Declared? {
@@ -110,7 +140,7 @@ class PhraseGrammar(buckets: BucketConfig) {
         val content = text.substring(words[from].start, words[to - 1].end)
         return Declared(
             Declaration(found.bucket, found.position, found.matched),
-            if (text.any { it.isLowerCase() }) content else content.lowercase(),
+            cased(text, content),
         )
     }
 

@@ -29,6 +29,16 @@ class TimingsTest {
         assertEquals(300, t.preRollMs)
         assertEquals(0.5f, t.speechThreshold)
         assertEquals(0.35f, t.releaseThreshold)
+        assertEquals(120_000, t.focusTimeoutMs)
+    }
+
+    @Test
+    fun `the focus timeout is tunable, from 10 seconds to an hour`() {
+        assertEquals(Timings(focusTimeoutMs = 30_000), ok("""{"focus_timeout_ms": 30000}"""))
+        assertEquals(10_000, ok("""{"focus_timeout_ms": 10000}""").focusTimeoutMs)
+        assertEquals(3_600_000, ok("""{"focus_timeout_ms": 3600000}""").focusTimeoutMs)
+        assertEquals(Timings(), rejecting("""{"focus_timeout_ms": 9999}""", "focus_timeout_ms"))
+        assertEquals(Timings(), rejecting("""{"focus_timeout_ms": 3600001}""", "focus_timeout_ms"))
     }
 
     @Test
@@ -79,7 +89,7 @@ class TimingsTest {
     fun `toJson names every key`() {
         val json = Timings().toJson()
         for (key in Timings.KEYS) assertTrue(json.contains("\"$key\""), "$key missing from $json")
-        assertEquals(7, Timings.KEYS.size)
+        assertEquals(8, Timings.KEYS.size)
     }
 
     @Test

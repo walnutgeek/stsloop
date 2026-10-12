@@ -16,7 +16,7 @@ import com.walnutgeek.stsloop.core.Turn
  * account only once that Turn is in the Corpus. A command Turn that fails
  * to write has done nothing, and the loop says nothing for it.
  *
- * Every command but "stop listening" acts on the **previous Turn**: what the
+ * "Scratch that" and "repeat" act on the **previous Turn**: what the
  * loop last read back to you, or is about to. That is the most recent Turn
  * of this Session that is not a command and has a transcript worth echoing
  * ([EchoText]), whether or not its echo has played yet (it may still be
@@ -28,7 +28,7 @@ import com.walnutgeek.stsloop.core.Turn
  * - If that Turn is tombstoned, no command reaches a Turn further back:
  *   "scratch that" says [NOTHING_TO_DROP] (a repeated "scratch that", say
  *   because "dropped." went unheard, never drops a second Turn), and
- *   "repeat" and "what bucket" say [WAS_DROPPED].
+ *   "repeat" says [WAS_DROPPED].
  * - Only this Session: a Session is started and ended deliberately, so a
  *   new one starts with no previous Turn.
  *
@@ -37,11 +37,13 @@ import com.walnutgeek.stsloop.core.Turn
  *   with none, the command Turn is still written (`tombstones: null`) and
  *   says [NOTHING_TO_DROP].
  * - [Command.REPEAT]: says its transcript again, or [NOTHING_TO_REPEAT].
- * - [Command.WHAT_BUCKET]: says its Bucket's name ([bucketAsWords]), [NO_BUCKET]
- *   when it has none (an undeclared Turn), or [NOTHING_SAID_YET].
+ * - [Command.WHERE_AM_I] ("where am I", "what bucket"): says the name of
+ *   the Bucket that has [focus] ([bucketAsWords]), "inbox." in the Inbox.
+ * - [Command.FOCUS] (a lone Bucket alias): says the name of the Bucket it
+ *   focuses. The Focus itself moves once its Turn is published ([CorpusSink]).
  * - [Command.STOP_LISTENING]: says [STOPPED_LISTENING] and [Outcome.endsSession].
  */
-class SessionCommands {
+class SessionCommands(private val focus: Focus) {
     /**
      * What a command does: the [classification] its Turn is written with, what
      * the loop says back, and whether the Session ends once that is said.
@@ -69,14 +71,8 @@ class SessionCommands {
                     else -> turn.transcript!!.text
                 },
             )
-            Command.WHAT_BUCKET -> Outcome(
-                plain,
-                when {
-                    previous == null -> NOTHING_SAID_YET
-                    turn == null -> WAS_DROPPED
-                    else -> turn.classification?.bucket?.let(::bucketAsWords) ?: NO_BUCKET
-                },
-            )
+            Command.WHERE_AM_I -> Outcome(plain, bucketAsWords(focus.bucket.name))
+            Command.FOCUS -> Outcome(plain, bucketAsWords(invocation.focus!!))
             Command.STOP_LISTENING -> Outcome(plain, STOPPED_LISTENING, endsSession = true)
         }
     }
@@ -100,17 +96,11 @@ class SessionCommands {
         /** Said when "scratch that" finds nothing to drop. */
         const val NOTHING_TO_DROP = "nothing to drop."
 
-        /** Said when "repeat" or "what bucket" finds the previous Turn tombstoned. */
+        /** Said when "repeat" finds the previous Turn tombstoned. */
         const val WAS_DROPPED = "that was dropped."
 
         /** Said when "repeat" finds no previous Turn. */
         const val NOTHING_TO_REPEAT = "nothing to repeat."
-
-        /** Said when "what bucket" finds no previous Turn. */
-        const val NOTHING_SAID_YET = "nothing said yet."
-
-        /** Said when "what bucket" finds the previous Turn in no Bucket. */
-        const val NO_BUCKET = "no bucket."
 
         /** Said before "stop listening" ends the Session. */
         const val STOPPED_LISTENING = "stopped listening."

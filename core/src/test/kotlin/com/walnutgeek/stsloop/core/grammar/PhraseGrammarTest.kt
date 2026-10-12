@@ -23,6 +23,14 @@ class PhraseGrammarTest {
         assertEquals(content, c.content, text)
     }
 
+    /** Asserts [text] is no Declaration but a lone alias: it focuses [bucket] (#40). */
+    private fun focuses(text: String, bucket: String) {
+        val c = grammar.classify(text)
+        assertEquals(TurnKind.COMMAND, c.kind, text)
+        assertNull(c.declaration, text)
+        assertEquals(bucket, c.command?.focus, text)
+    }
+
     /** Asserts [text] is not Declared: unclassified, with no label of any kind and no content. */
     private fun undeclared(text: String, g: PhraseGrammar = grammar) {
         assertEquals(Classification.UNCLASSIFIED, g.classify(text), text)
@@ -220,13 +228,13 @@ class PhraseGrammarTest {
     // --- an utterance that is only a Bucket name ---
 
     @Test
-    fun `only a Bucket name is not a Declaration`() = undeclared("errands")
+    fun `only a Bucket name is not a Declaration, it is Focus`() = focuses("errands", "errands")
 
     @Test
-    fun `only a multi-word Bucket name is not a Declaration`() = undeclared("House project.")
+    fun `only a multi-word Bucket name is not a Declaration, it is Focus`() = focuses("House project.", "house-project")
 
     @Test
-    fun `only a Bucket name and fillers is not a Declaration`() = undeclared("um errands okay")
+    fun `only a Bucket name and fillers is not a Declaration, it is Focus`() = focuses("um errands okay", "errands")
 
     @Test
     fun `two different Bucket names and nothing else are not a Declaration`() = undeclared("errands work")
@@ -254,7 +262,7 @@ class PhraseGrammarTest {
         declared("shopping, buy milk - errands.", "errands", LEADING, "shopping", "buy milk")
 
     @Test
-    fun `an alias whose words overlap at both ends is still only one alias`() = undeclared("work log")
+    fun `an alias whose words overlap at both ends is still only one alias`() = focuses("work log", "work")
 
     // --- content ---
 

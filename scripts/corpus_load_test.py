@@ -79,6 +79,18 @@ def command(tombstones, name="scratch_that"):
     return t
 
 
+def focus(bucket):
+    """A lone alias (#40): a command Turn naming the Bucket it focuses."""
+    return dict(kind="command", transcript={"text": bucket.upper()}, declaration=None, bucket=None,
+                bucket_source=None, content=None, command={"name": "focus", "matched": bucket}, focus=bucket)
+
+
+def focused_note(bucket, text="BUY BREAD"):
+    """A Turn filed by Focus (#40): a Note with no Declaration."""
+    return dict(kind="note", transcript={"text": text}, declaration=None,
+                bucket=bucket, bucket_source="focus", content=text.lower())
+
+
 T = "2026-10-10T18:00:{:02d}.000Z-{}"
 
 
@@ -202,7 +214,7 @@ class CorpusLoadTest(unittest.TestCase):
         self.assertEqual(11, s["counted"])
         self.assertEqual(2, s["tombstoned"])
         self.assertEqual({"note": 3, "command": 4, "unclassified": 3, "(none)": 1}, s["by_kind"])
-        self.assertEqual({"errands": (1, 1), "ideas": (2, 2), "(none)": (4, 0)}, s["by_bucket"])
+        self.assertEqual({"errands": (1, 1, 0), "ideas": (2, 2, 0), "(none)": (4, 0, 0)}, s["by_bucket"])
         # Non-command Turns: a0 a5 a6 a7 a8 a9 b0 -> 7, of which 3 declared.
         self.assertEqual((3, 7), s["declared"])
         # ... and of those with a non-empty transcript: a0 a5 a7 a8 a9 -> 5.
@@ -213,20 +225,37 @@ class CorpusLoadTest(unittest.TestCase):
         self.assertEqual(13, s["counted"])
         self.assertEqual({"note": 4, "command": 4, "unclassified": 4, "(none)": 1}, s["by_kind"])
         self.assertEqual({"note": 1, "unclassified": 1}, s["tombstoned_by_kind"])
-        self.assertEqual({"errands": (2, 2), "ideas": (2, 2), "(none)": (5, 0)}, s["by_bucket"])
+        self.assertEqual({"errands": (2, 2, 0), "ideas": (2, 2, 0), "(none)": (5, 0, 0)}, s["by_bucket"])
 
     def test_report_prints_the_numbers(self):
         out = cl.report(cl.load_corpus(self.corpus))
         self.assertIn("13 Turn(s), 2 tombstoned (excluded below), 5 problem(s).", out)
         self.assertIn("| note | 3 |", out)
-        self.assertIn("| ideas | 2 | 2 | 100% |", out)
-        self.assertIn("| (none) | 4 | 0 | 0% |", out)
+        self.assertIn("| ideas | 2 | 2 | 100% | 0 |", out)
+        self.assertIn("| (none) | 4 | 0 | 0% | 0 |", out)
         self.assertIn("Declared: 3 of 7 non-command Turn(s) (43%); 3 of 5 with a non-empty transcript (60%).", out)
         self.assertIn("2026-10-10T18:00:08.000Z-aaaaa8: sha256_mismatch", out)
         self.assertIn("1 tombstone(s) name a Turn not loaded", out)
         marked = cl.report(cl.load_corpus(self.corpus), tombstoned="mark")
         self.assertIn("2 tombstoned (counted below, see column)", marked)
         self.assertIn("| note | 4 | 1 |", marked)
+
+    def test_focus_turns_load_alongside_older_ones(self):
+        write_turn(self.corpus, T.format(20, "fffff0"), **focus("errands"))
+        write_turn(self.corpus, T.format(21, "fffff1"), **focused_note("errands"))
+        by_name = {t.name[-6:]: t for t in cl.load_corpus(self.corpus).turns}
+        lone, filed, old = by_name["fffff0"], by_name["fffff1"], by_name["aaaaa0"]
+        self.assertEqual(("command", "errands", None), (lone.kind, lone.focus, lone.bucket))
+        self.assertEqual(("note", "errands", "focus"), (filed.kind, filed.bucket, filed.bucket_source))
+        self.assertTrue(filed.focused)
+        self.assertFalse(filed.declared)
+        self.assertIsNone(filed.focus)
+        self.assertTrue(old.declared)
+        self.assertFalse(old.focused)
+        self.assertIsNone(by_name["bbbbb0"].bucket_source)  # pre-#12, no classification at all
+        s = cl.stats(cl.load_corpus(self.corpus))
+        self.assertEqual((2, 1, 1), s["by_bucket"]["errands"])  # the focus command Turn is left out
+        self.assertIn("| errands | 2 | 1 | 50% | 1 |", cl.report(cl.load_corpus(self.corpus)))
 
     def test_main_runs(self):
         buf = io.StringIO()

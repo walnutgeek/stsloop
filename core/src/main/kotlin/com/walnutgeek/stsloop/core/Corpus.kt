@@ -18,9 +18,10 @@ const val TURN_FILE = "turn.json"
  * VAD cut the Turn, and `transcript` when the recognizer produced none. A
  * classified Turn always writes `kind`, `declaration`, `bucket`,
  * `bucket_source` and `content`, as `null` where unset; a command Turn also
- * writes `command` (and, for "scratch that", `tombstones`). `test` is present
- * only for Turns recorded in Bluetooth test mode (#27). [recovered] marks a
- * Turn published after a crash from what its Session had staged (#15).
+ * writes `command` (and, for "scratch that", `tombstones`; for a lone Bucket
+ * alias, `focus`). `test` is present only for Turns recorded in Bluetooth
+ * test mode (#27). [recovered] marks a Turn published after a crash from
+ * what its Session had staged (#15).
  *
  * There is no `tombstoned_by`: a Turn directory never changes once
  * published, so a Turn cannot record that it was tombstoned later. Readers
@@ -92,8 +93,8 @@ data class Transcript(
 
 /**
  * `kind` in `turn.json`. Corpus labels are permanent training data, so a Turn
- * is a [NOTE] only when its Bucket is known (today: Declared). Everything
- * else, transcribed or not, is [UNCLASSIFIED].
+ * is a [NOTE] only when its Bucket is known: Declared, or filed by Focus.
+ * Everything else, transcribed or not, is [UNCLASSIFIED].
  */
 enum class TurnKind(val json: String) {
     NOTE("note"),
@@ -108,7 +109,8 @@ enum class TurnKind(val json: String) {
  * A Note is assigned to exactly one Bucket (CONTEXT.md), so it always has a
  * [bucket] and [content]. [bucketSource] says where the [bucket] came from,
  * so a later classifier's predictions never mix with Declarations (ground
- * truth). An unclassified Turn carries no label and no content.
+ * truth) or with Turns filed by Focus. An unclassified Turn carries no label
+ * and no content.
  */
 data class Classification(
     val kind: TurnKind,
@@ -124,6 +126,7 @@ data class Classification(
         require(declaration == null || (declaration.bucket == bucket && bucketSource == BucketSource.DECLARATION)) {
             "a Declaration sets the bucket, with bucket_source declaration"
         }
+        require(bucketSource != BucketSource.DECLARATION || declaration != null) { "bucket_source declaration needs a Declaration" }
         require(kind == TurnKind.NOTE || (bucket == null && content == null)) { "only a Note has a bucket and content" }
         require(kind != TurnKind.NOTE || (bucket != null && content != null)) { "a Note has a bucket and content" }
     }
@@ -134,6 +137,9 @@ data class Classification(
         /** A Note whose Bucket was named aloud. */
         fun declared(declaration: Declaration, content: String) =
             Classification(TurnKind.NOTE, declaration, declaration.bucket, BucketSource.DECLARATION, content)
+
+        /** A Note filed under the Bucket that had Focus, with no Bucket named in the Turn. */
+        fun focused(bucket: String, content: String) = Classification(TurnKind.NOTE, bucket = bucket, bucketSource = BucketSource.FOCUS, content = content)
 
         /** A Turn that was a whole-utterance command. */
         fun command(invocation: CommandInvocation) = Classification(TurnKind.COMMAND, command = invocation)
@@ -147,6 +153,11 @@ data class Classification(
  *
  * To add one: an entry here, and its effect in
  * [com.walnutgeek.stsloop.core.turn.SessionCommands.plan]. The grammar needs no change.
+ *
+ * A name is permanent once written, and so is what it did: a command whose
+ * effect changes gets a new name, and the old one is no longer written.
+ * `what_bucket` (Phase 0: say the previous Turn's Bucket) was retired that
+ * way when "what bucket" became an alias of [WHERE_AM_I].
  */
 enum class Command(val json: String, val phrases: List<String>) {
     /** Tombstones the previous Turn (see [com.walnutgeek.stsloop.core.turn.SessionCommands]). */
@@ -155,25 +166,34 @@ enum class Command(val json: String, val phrases: List<String>) {
     /** Says the previous Turn's transcript again. */
     REPEAT("repeat", listOf("repeat", "say that again")),
 
-    /** Says the Bucket the previous Turn was assigned to. */
-    WHAT_BUCKET("what_bucket", listOf("what bucket", "which bucket")),
+    /** Says the Bucket that has Focus. */
+    WHERE_AM_I("where_am_i", listOf("where am i", "what bucket", "which bucket")),
 
     /** Ends the Session, once its reply has been said. */
     STOP_LISTENING("stop_listening", listOf("stop listening", "end session")),
+
+    /**
+     * A Bucket alias said on its own: Focus that Bucket, and say its name. It
+     * has no fixed phrase; the grammar matches the Buckets' aliases instead.
+     */
+    FOCUS("focus", emptyList()),
 }
 
 /**
  * A command as invoked in one Turn: which [command], the words heard
- * (normalised), and, for [Command.SCRATCH_THAT], the directory name of the
- * Turn it tombstones, or null when there was nothing to drop.
+ * (normalised), for [Command.SCRATCH_THAT] the directory name of the Turn
+ * it tombstones (null when there was nothing to drop), and for
+ * [Command.FOCUS] the name of the Bucket it [focus]es.
  */
 data class CommandInvocation(
     val command: Command,
     val matched: String,
     val tombstones: String? = null,
+    val focus: String? = null,
 ) {
     init {
         require(tombstones == null || command == Command.SCRATCH_THAT) { "only scratch_that tombstones a Turn" }
+        require((focus != null) == (command == Command.FOCUS)) { "a focus command, and only a focus command, names a Bucket" }
     }
 }
 
@@ -192,7 +212,11 @@ enum class DeclarationPosition(val json: String) {
 
 /** `bucket_source` in `turn.json`; `classifier` comes later. */
 enum class BucketSource(val json: String) {
+    /** The Bucket was named at one end of the Turn: ground truth. */
     DECLARATION("declaration"),
+
+    /** No Bucket was named; the Turn was filed under the Bucket that had Focus. */
+    FOCUS("focus"),
 }
 
 fun turnDirectoryName(startedAtMs: Long, id: String): String = "${UtcTimestamp.format(startedAtMs)}-$id"

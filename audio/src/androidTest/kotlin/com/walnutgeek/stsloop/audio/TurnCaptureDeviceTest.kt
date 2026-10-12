@@ -16,6 +16,7 @@ import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.TurnKind
 import com.walnutgeek.stsloop.core.Wav
 import com.walnutgeek.stsloop.core.grammar.BucketConfig
+import com.walnutgeek.stsloop.core.grammar.BucketRegistry
 import com.walnutgeek.stsloop.core.speech.StreamingRecognizer
 import com.walnutgeek.stsloop.core.turn.CloseReason
 import com.walnutgeek.stsloop.core.turn.SttTiming
@@ -134,7 +135,7 @@ class TurnCaptureDeviceTest {
         val capture = TurnCapture(
             writer, "5e5510", startMs, "test", Timings(),
             TurnCapture.silero(vad), SpeechModels.vadConfig().sileroVadModelConfig.windowSize,
-            recognizer, maxQueuedMs, buckets,
+            recognizer, maxQueuedMs, BucketRegistry.capture(buckets),
         ) { t, u, timing ->
             Log.i(TAG, "Turn ${t.directoryName} ${u.closedBy}: ${SttTiming.summary(t, timing)}: '${t.transcript?.text}'")
             out += Triple(t, u, timing)

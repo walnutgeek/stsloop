@@ -52,6 +52,7 @@ object TurnJson {
                 append("  \"command\": { \"name\": ").str(cmd.command.json)
                 append(", \"matched\": ").str(cmd.matched).append(" },\n")
                 if (cmd.command == Command.SCRATCH_THAT) append("  \"tombstones\": ").strOrNull(cmd.tombstones).append(",\n")
+                cmd.focus?.let { append("  \"focus\": ").str(it).append(",\n") }
             }
         }
         turn.test?.let { t ->
