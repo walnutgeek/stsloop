@@ -9,6 +9,9 @@ import com.k2fsa.sherpa.onnx.WaveReader
 import com.walnutgeek.stsloop.audio.speech.SpeechModels
 import com.walnutgeek.stsloop.audio.speech.SttRecognizer
 import com.walnutgeek.stsloop.core.Turn
+import com.walnutgeek.stsloop.core.hub.Item
+import com.walnutgeek.stsloop.core.hub.ItemSpoken
+import com.walnutgeek.stsloop.core.hub.Message
 import com.walnutgeek.stsloop.core.turn.Speaker
 import com.walnutgeek.stsloop.core.turn.Timings
 import org.junit.After
@@ -78,6 +81,94 @@ class EchoDeviceTest {
         assertEquals(2, speaker.spoken)
         assertEquals(0, speaker.failed)
         Log.i(TAG, "unobserved: ${speaker.unobserved}")
+    }
+
+    @Test
+    fun anItemPlaysItsEarconThenItsSentenceAndReportsOneEnd() {
+        // The engine reports no progress for an earcon, so it is seen in the timing: the same sentence
+        // takes about the earcon's 300 ms longer as an Item. Each is said twice, interleaved, and the
+        // faster of each pair is compared, so warming up the engine cannot pass for an earcon.
+        val ends = Collections.synchronizedList(mutableListOf<Long>())
+        val heard = Collections.synchronizedList(mutableListOf<Boolean>())
+        var done = CountDownLatch(1)
+        val speaker = EchoSpeaker(target, "echo03", played = { heard += it }) { id, _ -> ends += id; done.countDown() }
+        speaker.start()
+        val text = "stsloop agent is blocked."
+        val took = mutableMapOf<Boolean, MutableList<Long>>(true to mutableListOf(), false to mutableListOf())
+        try {
+            for ((id, item) in listOf(1L to false, 2L to true, 3L to false, 4L to true)) {
+                done = CountDownLatch(1)
+                val t0 = SystemClock.elapsedRealtime()
+                if (item) speaker.alert(id, text) else speaker.speak(id, text)
+                assertTrue("no end reported within 20 s", done.await(20, TimeUnit.SECONDS))
+                took.getValue(item) += SystemClock.elapsedRealtime() - t0
+            }
+        } finally {
+            speaker.close()
+        }
+        Log.i(TAG, "said as an Item: ${took[true]} ms, as a reply: ${took[false]} ms; heard $heard")
+        assertEquals(listOf(1L, 2L, 3L, 4L), ends.toList())
+        assertEquals(4, speaker.spoken)
+        assertEquals(0, speaker.failed)
+        val longer = took.getValue(true).min() - took.getValue(false).min()
+        assertTrue("an Item takes only $longer ms longer than its sentence: no earcon?", longer >= 200)
+    }
+
+    @Test
+    fun anItemFromTheHubIsSaidIntoSilenceAndTheHubIsTold() {
+        val rnd = Random(7)
+        fun noise(ms: Int) = ShortArray(RATE / 1000 * ms) { (rnd.nextInt(61) - 30).toShort() }
+        val alerts = Collections.synchronizedList(mutableListOf<String>())
+        val sent = Collections.synchronizedList(mutableListOf<Message>())
+        val ended = CountDownLatch(1)
+        var capture: TurnCapture? = null
+        val echo = EchoSpeaker(target, "echo04") { id, atNs ->
+            capture?.spoken(id, atNs)
+            ended.countDown()
+        }
+        val speaker = object : Speaker {
+            override fun speak(id: Long, text: String) = echo.speak(id, text)
+            override fun alert(id: Long, text: String) {
+                alerts += text
+                echo.alert(id, text)
+            }
+        }
+        echo.start()
+        val c = TurnCapture(
+            FileCorpusWriter(File(root, "corpus"), File(root, "staging")), "ec4012", System.currentTimeMillis(), "test",
+            Timings(), TurnCapture.silero(vad), SpeechModels.vadConfig().sileroVadModelConfig.windowSize,
+            recognizer = { SttRecognizer.load(context.assets) },
+            hubSend = { m -> sent += m; true },
+            speaker = speaker,
+        ) { _, _, _ -> }
+        capture = c
+        val item = Item("a1", listOf("herdr:w8:p1"), "stsloop agent is blocked.")
+        val pcm = noise(1000)
+        val t0 = System.nanoTime()
+        var fed = 0L
+        val buf = ShortArray(CHUNK)
+        try {
+            c.item(item)
+            c.item(item) // sent again: still said once
+            val deadline = RATE * 30L
+            var i = 0
+            while (ended.count > 0 && fed < deadline) {
+                for (k in 0 until CHUNK) buf[k] = pcm[(i + k) % pcm.size]
+                i = (i + CHUNK) % pcm.size
+                fed += CHUNK
+                val due = t0 + fed * 1_000_000_000L / RATE
+                while (System.nanoTime() < due) Thread.sleep(1)
+                c.accept(buf, CHUNK, SystemClock.elapsedRealtimeNanos())
+            }
+            assertEquals("the item was never said", 0L, ended.count)
+            repeat(5) { c.accept(buf, CHUNK, SystemClock.elapsedRealtimeNanos()) } // the end is taken in on the next chunk
+        } finally {
+            c.finish()
+            echo.close()
+        }
+        assertEquals(listOf("stsloop agent is blocked."), alerts.toList())
+        assertTrue("not before a full Silence: fed ${fed * 1000 / RATE} ms", fed >= RATE * Timings().trailingSilenceMs / 1000L)
+        assertEquals(listOf<Message>(ItemSpoken("a1")), sent.toList())
     }
 
     @Test

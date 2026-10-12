@@ -16,13 +16,15 @@
       "name": "woodglue agent",
       "aliases": ["woodglue"],
       "type": "agent",
-      "primitives": ["draft", "request"],
+      "primitives": ["draft", "request", "speak_item"],
       "commands": [
         { "id": "status", "phrases": ["status"], "primitive": "request" },
         { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 },
         { "id": "read_back", "phrases": ["read it back"], "primitive": "draft" },
         { "id": "send", "phrases": ["send"], "primitive": "draft" },
-        { "id": "cancel", "phrases": ["cancel"], "primitive": "draft" }
+        { "id": "cancel", "phrases": ["cancel"], "primitive": "draft" },
+        { "id": "quiet", "phrases": ["quiet", "mute alerts"], "primitive": "request" },
+        { "id": "unmute", "phrases": ["unmute", "unmute alerts"], "primitive": "request" }
       ]
     },
     {
@@ -30,13 +32,15 @@
       "name": "stsloop agent",
       "aliases": ["stsloop"],
       "type": "agent",
-      "primitives": ["draft", "request"],
+      "primitives": ["draft", "request", "speak_item"],
       "commands": [
         { "id": "status", "phrases": ["status"], "primitive": "request" },
         { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 },
         { "id": "read_back", "phrases": ["read it back"], "primitive": "draft" },
         { "id": "send", "phrases": ["send"], "primitive": "draft" },
-        { "id": "cancel", "phrases": ["cancel"], "primitive": "draft" }
+        { "id": "cancel", "phrases": ["cancel"], "primitive": "draft" },
+        { "id": "quiet", "phrases": ["quiet", "mute alerts"], "primitive": "request" },
+        { "id": "unmute", "phrases": ["unmute", "unmute alerts"], "primitive": "request" }
       ]
     },
     {
@@ -44,13 +48,15 @@
       "name": "stsloop agent two",
       "aliases": [],
       "type": "agent",
-      "primitives": ["draft", "request"],
+      "primitives": ["draft", "request", "speak_item"],
       "commands": [
         { "id": "status", "phrases": ["status"], "primitive": "request" },
         { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 },
         { "id": "read_back", "phrases": ["read it back"], "primitive": "draft" },
         { "id": "send", "phrases": ["send"], "primitive": "draft" },
-        { "id": "cancel", "phrases": ["cancel"], "primitive": "draft" }
+        { "id": "cancel", "phrases": ["cancel"], "primitive": "draft" },
+        { "id": "quiet", "phrases": ["quiet", "mute alerts"], "primitive": "request" },
+        { "id": "unmute", "phrases": ["unmute", "unmute alerts"], "primitive": "request" }
       ]
     }
   ]

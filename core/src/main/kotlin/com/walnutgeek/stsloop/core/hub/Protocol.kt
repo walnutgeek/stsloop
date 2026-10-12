@@ -58,6 +58,17 @@ data class Request(val id: String, val bucket: String, val command: String) : Me
 /** Hub to phone: the answer to the [Request] [id], to be spoken as it is. [reason] is null when the command ran. */
 data class Reply(val id: String, val say: String, val reason: String? = null) : Message
 
+/**
+ * Hub to phone: an Item for the Attention Queue (`item.schema.json`), said
+ * into the next Silence after an earcon by the `speak_item` Primitive.
+ * [buckets] are the Descriptor ids it is about; [id] is what the phone
+ * deduplicates on, so a reconnect never repeats it.
+ */
+data class Item(val id: String, val buckets: List<String>, val say: String) : Message
+
+/** Phone to hub: the [Item] [id] has been said; the hub stops sending it. */
+data class ItemSpoken(val id: String) : Message
+
 /** What the hub's QR code holds: where the hub is, and the token to connect with. Never sent over the WebSocket. */
 data class Pairing(val protocol: Version, val url: String, val token: String) : Message {
     override fun toString() = "Pairing(protocol=$protocol, url=$url, token=…)" // keeps the token out of logs
@@ -188,6 +199,8 @@ object Protocol {
                     Send(key, o.string("bucket"), o.string("text"))
                 }
                 "sent" -> Sent(o.string("key"), o.string("say"), if ("reason" in obj) o.string("reason") else null)
+                "item" -> Item(o.string("id"), o.strings("buckets", minItems = 1), o.string("say"))
+                "item_spoken" -> ItemSpoken(o.string("id"))
                 "pairing" -> {
                     val url = o.string("url")
                     val token = o.string("token")
@@ -273,6 +286,8 @@ object Protocol {
             message.reason?.let { put("reason", it) }
             message.message?.let { put("message", it) }
         }
+        is Item -> mapOf("type" to "item", "id" to message.id, "buckets" to message.buckets, "say" to message.say)
+        is ItemSpoken -> mapOf("type" to "item_spoken", "id" to message.id)
     }
 
     private fun v(version: Version) = mapOf("major" to version.major, "minor" to version.minor)

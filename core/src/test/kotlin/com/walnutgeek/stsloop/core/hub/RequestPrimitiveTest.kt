@@ -35,6 +35,7 @@ import org.junit.jupiter.api.Test
 class RequestPrimitiveTest {
     private val herdr = Protocol.decode(Fixtures.text("v1", "descriptors/herdr.json")) as Descriptors
     private val agents = Protocol.decode(Fixtures.text("v1", "descriptors/agents.json")) as Descriptors
+    private val future = Protocol.decode(Fixtures.text("v1", "descriptors/future-primitive.json")) as Descriptors
 
     private fun grammar(hub: Descriptors? = herdr, config: BucketConfig = BucketConfig.DEFAULT) =
         PhraseGrammar(HubProvider.registry(config, hub))
@@ -104,10 +105,11 @@ class RequestPrimitiveTest {
 
     @Test
     fun `a Bucket naming a Primitive the phone does not know keeps only its request commands`() {
-        val g = grammar(agents)
-        assertEquals("status", g.classify("status", focused = "stsloop agent").command!!.request!!.command)
-        assertEquals("read", g.classify("read it", focused = "stsloop agent").command!!.request!!.command)
-        assertNull(g.classify("send", focused = "stsloop agent").command, "the Bucket names speak_item, which the phone does not know yet, so its draft commands go too")
+        val g = grammar(future)
+        assertEquals("status", g.classify("status", focused = "the daily show").command!!.request!!.command)
+        assertNull(g.classify("skip", focused = "the daily show").command, "the Bucket names seek, which the phone does not know")
+        assertEquals("send", grammar(agents).classify("send", focused = "stsloop agent").command!!.command.json,
+            "draft and speak_item are both known: an agent Bucket keeps its draft commands")
     }
 
     @Test
@@ -289,13 +291,14 @@ class RequestPrimitiveTest {
 
     @Test
     fun `focusing a Bucket that needs a newer app says so once per Session`() {
-        val s = Session(hub = agents)
-        s.hear("STSLOOP")
+        val s = Session(hub = future)
+        s.hear("DAILY SHOW")
         s.hear("ERRANDS")
-        s.hear("THE LOOP AGENT")
-        assertEquals(listOf("stsloop agent. ${SessionCommands.NEEDS_NEWER_APP}", "errands.", "stsloop agent."), s.said)
-        s.hear("HOUSE SITE")
-        assertEquals("house site. ${SessionCommands.NEEDS_NEWER_APP}", s.said.last(), "once per Bucket: speak_item is not known yet either")
+        s.hear("DAILY SHOW")
+        assertEquals(listOf("the daily show. ${SessionCommands.NEEDS_NEWER_APP}", "errands.", "the daily show."), s.said)
+        val agentSession = Session(hub = agents)
+        agentSession.hear("STSLOOP")
+        assertEquals(listOf("stsloop agent."), agentSession.said, "every Primitive an agent Bucket names is known")
     }
 
     @Test

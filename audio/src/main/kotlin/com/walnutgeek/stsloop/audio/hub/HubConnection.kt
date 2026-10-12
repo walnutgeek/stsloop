@@ -18,6 +18,7 @@ import com.walnutgeek.stsloop.core.hub.HubSocket
 import com.walnutgeek.stsloop.core.hub.HubStatus
 import com.walnutgeek.stsloop.core.hub.HubStore
 import com.walnutgeek.stsloop.core.hub.HubTransport
+import com.walnutgeek.stsloop.core.hub.Item
 import com.walnutgeek.stsloop.core.hub.Message
 import com.walnutgeek.stsloop.core.hub.Pairing
 import com.walnutgeek.stsloop.core.hub.Reply
@@ -67,6 +68,8 @@ class HubConnection(
     private val onReply: (Reply) -> Unit = {},
     /** The hub answered a send; called like [onReply]. */
     private val onSent: (Sent) -> Unit = {},
+    /** The hub raised an Item; called like [onReply], so it must return at once. */
+    private val onItem: (Item) -> Unit = {},
     /** The Corpus to upload; null uploads nothing. */
     corpus: File? = null,
 ) {
@@ -112,6 +115,8 @@ class HubConnection(
             uploader?.status(status)
             onStatus(status)
         }
+
+        override fun item(item: Item) = onItem(item)
 
         override fun turnAck(ack: TurnAck) {
             uploader?.received(ack)

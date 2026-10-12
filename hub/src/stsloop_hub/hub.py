@@ -11,6 +11,9 @@
   `turn_offer` and `turn_audio` is answered with a `turn_ack` (`corpus.py`),
   in order, with the disk work off the event loop. A broken one that names its
   Turn is answered `rejected`, so the phone moves on.
+- Once welcomed (after the `descriptors` snapshot), the phone is sent every
+  outstanding Item (`items`), then each new one as it is raised
+  (`item_raised`). An `item_spoken` goes to `spoken`.
 - A newer welcomed connection replaces an older one (closed with 1000, in the
   background): a phone that changed networks reconnects before the old socket
   has noticed it is dead. A refused connection replaces nothing.
@@ -58,7 +61,11 @@ class Hub:
         answer: Callable[[p.Request], p.Reply | Awaitable[p.Reply]] | None = None,
         corpus: CorpusStore | None = None,
         deliver: Callable[[p.Send], Awaitable[p.Sent]] | None = None,
+        items: Callable[[], tuple[p.Item, ...]] = tuple,
+        spoken: Callable[[str], object] = lambda item_id: None,
     ):
+        self._items = items
+        self._spoken = spoken
         self._token = token.encode()
         self._descriptors = descriptors
         self._answer = answer or Buckets().answer
@@ -134,22 +141,33 @@ class Hub:
         self._subscriber = ws if "descriptors" in answer.capabilities else None
         if self._subscriber is ws:
             await ws.send(p.encode(p.Descriptors(buckets=self._descriptors())))
+        for item in self._items():
+            await ws.send(p.encode(item))
         return answer
 
     def buckets_changed(self) -> None:
         """On the event loop: a Bucket came, went or changed; the welcomed phone gets a new snapshot."""
-        ws = self._subscriber
-        if ws is None:
-            return
-        task = asyncio.create_task(self._send_snapshot(ws))
+        if self._subscriber is not None:
+            self._push(self._subscriber, p.Descriptors(buckets=self._descriptors()))
+
+    def item_raised(self, item: p.Item) -> None:
+        """On the event loop: a new Item; the welcomed phone, if any, gets it now, and any later one on its
+        welcome (`items`) until it has been spoken."""
+        if self._current is not None:
+            self._push(self._current, item)
+
+    def _push(self, ws: ServerConnection, message: p.Message) -> None:
+        """Sends `message` to `ws` in the background; a phone that has gone misses it."""
+
+        async def send() -> None:
+            try:
+                await ws.send(p.encode(message))
+            except ConnectionClosed:
+                pass
+
+        task = asyncio.create_task(send())
         self._sending.add(task)
         task.add_done_callback(self._sending.discard)
-
-    async def _send_snapshot(self, ws: ServerConnection) -> None:
-        try:
-            await ws.send(p.encode(p.Descriptors(buckets=self._descriptors())))
-        except ConnectionClosed:
-            pass
 
     def _replace_current(self, ws: ServerConnection) -> None:
         previous, self._current = self._current, ws
@@ -204,6 +222,9 @@ class Hub:
                     task = asyncio.create_task(self._send(ws, message))
                     self._delivering.add(task)
                     task.add_done_callback(self._delivering.discard)
+                elif isinstance(message, p.ItemSpoken):
+                    log.info("the phone has spoken item %s", message.id)
+                    self._spoken(message.id)
                 elif receiver is not None and isinstance(message, (p.TurnOffer, p.TurnAudio)):
                     await ws.send(p.encode(await _receive(receiver, message)))
         finally:

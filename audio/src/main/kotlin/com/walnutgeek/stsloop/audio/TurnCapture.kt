@@ -19,12 +19,15 @@ import com.walnutgeek.stsloop.core.hub.Drafts
 import com.walnutgeek.stsloop.core.hub.HubRequests
 import com.walnutgeek.stsloop.core.hub.Send
 import com.walnutgeek.stsloop.core.hub.Sent
+import com.walnutgeek.stsloop.core.hub.Item
+import com.walnutgeek.stsloop.core.hub.ItemSpoken
 import com.walnutgeek.stsloop.core.hub.Message
 import com.walnutgeek.stsloop.core.hub.Reply
 import com.walnutgeek.stsloop.core.hub.Request
 import com.walnutgeek.stsloop.core.speech.StreamingRecognizer
 import com.walnutgeek.stsloop.core.testmode.TestConfig
 import com.walnutgeek.stsloop.core.testmode.TurnTest
+import com.walnutgeek.stsloop.core.turn.AttentionQueue
 import com.walnutgeek.stsloop.core.turn.CorpusSink
 import com.walnutgeek.stsloop.core.turn.Focus
 import com.walnutgeek.stsloop.core.turn.HalfDuplex
@@ -60,6 +63,9 @@ import java.util.concurrent.TimeUnit
  * Bucket's Focus, Turns make its Draft ([Drafts], #45); "send" reads it back
  * and then sends it through `hubSend`, and the hub's answer, handed to
  * [sent], is said; [welcomed] resends whatever the hub has not answered.
+ * An Item the hub raises (a blocked agent), handed to [item], waits in the
+ * Session's [AttentionQueue] and is said after an earcon in the next
+ * Silence; once it has been said, the hub is told (`item_spoken`).
  *
  * It also notices the loop's silent failures (#15) and says them the same
  * way, once each ([FailureAnnouncer]): a mic stream that stays digitally
@@ -76,7 +82,7 @@ import java.util.concurrent.TimeUnit
  * being fed and is written without a transcript; its audio is always kept.
  *
  * Not thread-safe: call [accept] and [finish] from the capture thread;
- * [hurry], [spoken], [clientSilenced] and [played] may be called from any thread.
+ * [hurry], [spoken], [item], [clientSilenced] and [played] may be called from any thread.
  */
 class TurnCapture(
     writer: CorpusWriter,
@@ -151,6 +157,10 @@ class TurnCapture(
             }
         },
     )
+
+    private val attention = AttentionQueue()
+    private val hubSend = hubSend
+    private val hasSpeaker = speaker != null
     private val sink: CorpusSink = CorpusSink(
         writer, sessionId, sessionStartedAtMs, SAMPLE_RATE_HZ, appVersion, grammar, focus,
         testOf = testOf,
@@ -239,7 +249,12 @@ class TurnCapture(
             override fun unspoken(count: Int) {
                 Log.i(TAG, "Session $sessionId: $count echoes never spoken, the Session ended first")
             }
+
+            override fun itemsSpoken(items: List<Item>) {
+                for (i in items) tellSpoken(i, "said")
+            }
         },
+        attention,
     )
     private val failures = FailureAnnouncer(
         clockMs = SystemClock::elapsedRealtime,
@@ -314,6 +329,29 @@ class TurnCapture(
 
     /** Any thread: the hub has welcomed the phone; every send it has not answered goes again, with its key. */
     fun welcomed() = drafts.welcomed()
+
+    /**
+     * Any thread: the hub raised [item]; it is said after an earcon in the
+     * next Silence, unless it has been already. Without a speaker nothing is
+     * said, and the hub is not told: it sends the Item again next time.
+     */
+    fun item(item: Item) {
+        if (!hasSpeaker || ending) {
+            val why = if (ending) "the Session is ending" else "no echo in this Session"
+            Log.i(TAG, "Session $sessionId: item ${item.id} not said, $why: ${item.say}")
+            return
+        }
+        when (attention.offer(item)) {
+            AttentionQueue.Offered.QUEUED -> Log.i(TAG, "Session $sessionId: item ${item.id} waits for Silence: ${item.say}")
+            AttentionQueue.Offered.DUPLICATE -> Log.i(TAG, "Session $sessionId: item ${item.id} is already waiting")
+            AttentionQueue.Offered.SPOKEN -> tellSpoken(item, "already said")
+        }
+    }
+
+    private fun tellSpoken(item: Item, why: String) {
+        val told = hubSend(ItemSpoken(item.id))
+        Log.i(TAG, "Session $sessionId: item ${item.id} $why; " + if (told) "told the hub" else "the hub is offline, it will send it again")
+    }
 
     /** Any thread: the hub answered a request; its reply is said into the next Silence. */
     fun replied(reply: Reply) = requests.replied(reply)

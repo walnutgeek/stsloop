@@ -30,4 +30,8 @@ tasks.test {
     val protocol = rootProject.file("protocol")
     inputs.dir(protocol).withPropertyName("protocol").withPathSensitivity(PathSensitivity.RELATIVE)
     systemProperty("stsloop.protocol", protocol.absolutePath)
+    // The earcon the phone ships, generated from core's Earcon and checked against it.
+    val earcon = rootProject.file("audio/src/main/res/raw/stsloop_earcon.wav")
+    inputs.file(earcon).withPropertyName("earcon").withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty("stsloop.earcon", earcon.absolutePath)
 }

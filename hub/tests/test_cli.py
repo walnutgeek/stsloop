@@ -7,6 +7,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from stsloop_hub import cli, config, tailnet
@@ -157,24 +158,36 @@ class ServeTest(unittest.TestCase):
         self.assertEqual(self.run.pollers, [[]])
 
     def test_with_herdr_serve_publishes_its_agents_and_polls_it(self):
-        fake = FakeHerdr([agent("w8:p1", "stsloop", "blocked")])
+        fake = FakeHerdr([agent("w8:p1", "stsloop", "working")])
         run = Run(self.home, herdr=fake)
         run("init")
         run("serve")
         [(hub, _, _)] = run.served
         [[poll]] = run.pollers
         self.assertEqual([d.id for d in hub._descriptors()], ["hub"], "nothing before the first poll")
-        changed = []
+        changed, items = [], []
+        hub.buckets_changed = lambda: changed.append(True)
+        hub.item_raised = items.append
 
-        async def one_poll():
-            task = asyncio.create_task(poll(lambda: changed.append(True)))
-            while not changed:
+        async def polls():
+            task = asyncio.create_task(poll())
+            while fake.calls < 2:
+                await asyncio.sleep(0.01)
+            fake.agents_now = [agent("w8:p1", "stsloop", "blocked", seq=2)]
+            while not items:
                 await asyncio.sleep(0.01)
             task.cancel()
 
-        asyncio.run(one_poll())
+        with mock.patch("stsloop_hub.agents.POLL_S", 0.01):
+            asyncio.run(polls())
+        self.assertEqual(changed, [True], "one new snapshot: the agent came")
         self.assertEqual([d.id for d in hub._descriptors()], ["hub", "herdr:w8:p1"])
         self.assertEqual(hub._descriptors()[0].commands[0].id, "blocked")
+        self.assertEqual([i.say for i in items], ["stsloop agent is blocked."])
+        self.assertEqual(hub._items(), tuple(items), "outstanding until spoken")
+        hub._spoken(items[0].id)
+        self.assertEqual(hub._items(), ())
+
     def test_summaries_use_claude_by_default(self):
         run = Run(self.home, herdr=FakeHerdr())
         run("init")
