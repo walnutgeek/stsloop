@@ -574,7 +574,7 @@ Design notes worth keeping:
   ground truth never get confused in the same field.
 - `model` and `app_version` are recorded on every Turn, so the Corpus remains
   interpretable after the engine changes underneath it.
-- `kind` is one of `note`, `command`, `unclassified`. Until the phrase
+- `kind` is one of `note`, `command`, `unclassified` (and, from #45, `draft`). Until the phrase
   grammar exists, every Turn is `unclassified`. With it, only a Declared Turn is
   a `note`; an undeclared one stays `unclassified` (unlabelled test data), with
   `declaration`, `bucket`, `bucket_source` and `content` written as `null`. A
@@ -631,7 +631,7 @@ Design notes worth keeping:
   was always null, and `jq` reads a missing key as null too.
 - `command` is present only on a command Turn: `name` is permanent once
   written (`scratch_that`, `repeat`, `what_bucket`, `stop_listening`; from
-  #40 `where_am_i` and `focus`; from #43 `request`), `matched` the phrase
+  #40 `where_am_i` and `focus`; from #43 `request`; from #45 `read_back`, `send`, `cancel`), `matched` the phrase
   as heard, normalised.
   A name keeps its meaning: `what_bucket` (the previous Turn's Bucket) is no
   longer written, because "what bucket" now says the focused Bucket and is
@@ -660,6 +660,19 @@ Design notes worth keeping:
   `"request": { "bucket": <name>, "bucket_id": <Descriptor id>, "command": <command id> }`.
   The hub's reply is not recorded: it is the hub's state at that moment, not
   something the person said.
+- **Drafts (#45, additive within `schema: 1`).** `kind` gains a fourth
+  value, `draft`: a Turn appended to an agent Bucket's Draft, under its
+  Focus. It is written like a Note filed by Focus (`declaration: null`,
+  `bucket` the Bucket's name, `bucket_source: "focus"`, `content` its words,
+  fillers at either end left out) plus a top-level `bucket_id`, the
+  Descriptor id. The Draft's commands are command Turns with `command.name`
+  `read_back`, `send` or `cancel`, and a top-level
+  `"draft": { "bucket": <name>, "bucket_id": <Descriptor id>, "text": <the Draft as it stood, or null> }`;
+  a `send` adds `"key"`, the idempotency key it went to the hub under, or
+  `null` when nothing was sent (no Draft, the hub offline, or the last send
+  still waiting). "Scratch that" on a Draft Turn takes its words back out of
+  the Draft. Whether the hub delivered a send is not recorded in the Corpus:
+  the hub keeps every key and its answer in `sends.jsonl`.
 
 ## Modules
 

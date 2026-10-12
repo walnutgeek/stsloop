@@ -37,6 +37,7 @@ import com.walnutgeek.stsloop.core.Transition
 import com.walnutgeek.stsloop.core.turn.SttTiming
 import com.walnutgeek.stsloop.core.Wav
 import com.walnutgeek.stsloop.core.hub.HubStore
+import com.walnutgeek.stsloop.core.hub.HubStatus
 import com.walnutgeek.stsloop.core.testmode.TestConfig
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -307,6 +308,9 @@ class SessionService : Service() {
                 this, hubStore, "Session $sessionId",
                 onDescriptors = { d -> turnCapture?.bucketsChanged(TurnCapture.registry(buckets, d, hubAliases)) },
                 onReply = { r -> turnCapture?.replied(r) },
+                onSent = { s -> turnCapture?.sent(s) },
+                // The welcome resends every Draft the hub has not answered, with its key: delivered at most once.
+                onStatus = { s -> if (s is HubStatus.Online) turnCapture?.welcomed() },
                 corpus = corpusDir(this),
             )
             hub = hubLink

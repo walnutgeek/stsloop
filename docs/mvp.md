@@ -172,9 +172,10 @@ adb. v0.1 adds one screen with:
 
 ## Open questions
 
-- The Corpus format for Drafts. Additive to `schema: 1` if possible. Focus
-  changes and Notes filed by Focus (#40), and `request` commands (#43), are
-  settled: `docs/phase0.md`, "Corpus format".
+- ~~The Corpus format for Drafts.~~ Settled in #45, additive to `schema: 1`
+  (`kind: "draft"`, and a `draft` block on its commands), like Focus
+  changes and Notes filed by Focus (#40) and `request` commands (#43):
+  `docs/phase0.md`, "Corpus format".
 - ~~How the hub detects "blocked" from herdr alone, without hooks.~~ Settled
   in #43: herdr's own agent detection state (`agent_status: "blocked"` in
   `herdr api snapshot`), polled every 2 s. herdr does not say how long a

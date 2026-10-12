@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stsloop:protocol:v1:send",
+  "title": "send",
+  "description": "Phone to hub, once welcomed: deliver a Draft to an agent Bucket (the `draft` Primitive's \"send\"). The hub answers with one `sent` carrying the same `key`. Unlike a `request`, a send changes the world, so it carries an idempotency key: the hub tries to deliver each key at most once, ever, and answers a key it has seen before with the answer it gave the first time, without trying again. The phone sends the same key again, unchanged, after a reconnect when no `sent` came, and a new key for every new \"send\". No capability is needed: a hub that declares a `draft` command answers it.",
+  "type": "object",
+  "required": ["type", "key", "bucket", "text"],
+  "properties": {
+    "type": { "const": "send" },
+    "key": {
+      "description": "The idempotency key, chosen by the phone and never reused: at least 128 random bits. The `sent` carries it back.",
+      "type": "string",
+      "minLength": 16
+    },
+    "bucket": {
+      "description": "The Descriptor `id` of the agent Bucket the Draft is for.",
+      "type": "string",
+      "minLength": 1
+    },
+    "text": {
+      "description": "The Draft, as the person heard it read back: the prompt the agent is to receive.",
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

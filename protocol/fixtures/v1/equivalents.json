@@ -6,6 +6,8 @@
     { "fixture": "request/extras.json", "reads_as": "request/status.json" },
     { "fixture": "reply/extras.json", "reads_as": "reply/status.json" },
     { "fixture": "turn_offer/extras.json", "reads_as": "turn_offer/basic.json" },
-    { "fixture": "turn_ack/extras.json", "reads_as": "turn_ack/send.json" }
+    { "fixture": "turn_ack/extras.json", "reads_as": "turn_ack/send.json" },
+    { "fixture": "send/extras.json", "reads_as": "send/basic.json" },
+    { "fixture": "sent/extras.json", "reads_as": "sent/delivered.json" }
   ]
 }

@@ -22,6 +22,7 @@ import com.walnutgeek.stsloop.core.hub.Message
 import com.walnutgeek.stsloop.core.hub.Pairing
 import com.walnutgeek.stsloop.core.hub.Reply
 import com.walnutgeek.stsloop.core.hub.Scheduler
+import com.walnutgeek.stsloop.core.hub.Sent
 import com.walnutgeek.stsloop.core.hub.TurnAck
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -64,6 +65,8 @@ class HubConnection(
     private val onDescriptors: (Descriptors) -> Unit = {},
     /** The hub answered a request; called on OkHttp's thread with the link's lock held, so it must return at once. */
     private val onReply: (Reply) -> Unit = {},
+    /** The hub answered a send; called like [onReply]. */
+    private val onSent: (Sent) -> Unit = {},
     /** The Corpus to upload; null uploads nothing. */
     corpus: File? = null,
 ) {
@@ -130,6 +133,8 @@ class HubConnection(
         }
 
         override fun reply(reply: Reply) = onReply(reply)
+
+        override fun sent(sent: Sent) = onSent(sent)
 
         override fun ignored(why: String) {
             Log.w(TAG, "$owner: ignored $why from the hub")

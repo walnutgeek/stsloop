@@ -106,6 +106,9 @@ class HubLink(
         /** The hub answered a Corpus upload message. */
         fun turnAck(ack: TurnAck) {}
 
+        /** The hub answered a send. */
+        fun sent(sent: Sent) {}
+
         /** A frame was ignored, and why; for the log. */
         fun ignored(why: String) {}
     }
@@ -263,6 +266,7 @@ class HubLink(
                 message is Descriptors && status is HubStatus.Online -> listener.descriptors(message)
                 message is Reply && status is HubStatus.Online -> listener.reply(message)
                 message is TurnAck && status is HubStatus.Online -> listener.turnAck(message)
+                message is Sent && status is HubStatus.Online -> listener.sent(message)
                 else -> listener.ignored(if (message == null) "a message of a type the phone does not know" else "an unexpected ${message::class.simpleName}")
             }
         }

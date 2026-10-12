@@ -16,10 +16,13 @@
       "name": "woodglue agent",
       "aliases": ["woodglue"],
       "type": "agent",
-      "primitives": ["request"],
+      "primitives": ["draft", "request"],
       "commands": [
         { "id": "status", "phrases": ["status"], "primitive": "request" },
-        { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 }
+        { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 },
+        { "id": "read_back", "phrases": ["read it back"], "primitive": "draft" },
+        { "id": "send", "phrases": ["send"], "primitive": "draft" },
+        { "id": "cancel", "phrases": ["cancel"], "primitive": "draft" }
       ]
     },
     {
@@ -27,10 +30,13 @@
       "name": "stsloop agent",
       "aliases": ["stsloop"],
       "type": "agent",
-      "primitives": ["request"],
+      "primitives": ["draft", "request"],
       "commands": [
         { "id": "status", "phrases": ["status"], "primitive": "request" },
-        { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 }
+        { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 },
+        { "id": "read_back", "phrases": ["read it back"], "primitive": "draft" },
+        { "id": "send", "phrases": ["send"], "primitive": "draft" },
+        { "id": "cancel", "phrases": ["cancel"], "primitive": "draft" }
       ]
     },
     {
@@ -38,10 +44,13 @@
       "name": "stsloop agent two",
       "aliases": [],
       "type": "agent",
-      "primitives": ["request"],
+      "primitives": ["draft", "request"],
       "commands": [
         { "id": "status", "phrases": ["status"], "primitive": "request" },
-        { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 }
+        { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 },
+        { "id": "read_back", "phrases": ["read it back"], "primitive": "draft" },
+        { "id": "send", "phrases": ["send"], "primitive": "draft" },
+        { "id": "cancel", "phrases": ["cancel"], "primitive": "draft" }
       ]
     }
   ]

@@ -3,6 +3,7 @@ package com.walnutgeek.stsloop.core.hub
 import com.walnutgeek.stsloop.core.corpus.Json
 import com.walnutgeek.stsloop.core.corpus.JsonException
 import com.walnutgeek.stsloop.core.corpus.JsonWriter
+import java.security.SecureRandom
 import java.util.Base64
 
 /** A protocol version, `{major, minor}` on the wire. */
@@ -101,6 +102,22 @@ data class TurnAck(
 }
 
 /**
+ * Phone to hub: deliver the Draft [text] to the agent Bucket whose Descriptor
+ * id is [bucket], at most once for its idempotency [key]. The same [Send],
+ * key and all, goes again after a reconnect until a [Sent] answers it.
+ */
+data class Send(val key: String, val bucket: String, val text: String) : Message {
+    override fun toString() = "Send(key=$key, bucket=$bucket, ${text.length} chars)" // keeps the Draft out of logs
+}
+
+/**
+ * Hub to phone: the answer to the [Send] [key], to be spoken as it is.
+ * [reason] is null when the Draft was delivered; with any reason it was not,
+ * or may not have been, and the phone keeps the Draft.
+ */
+data class Sent(val key: String, val say: String, val reason: String? = null) : Message
+
+/**
  * A frame that is not a message, or a message of a known type that breaks its
  * schema. [messageType] is the frame's `type` when it had one.
  */
@@ -126,6 +143,14 @@ object Protocol {
 
     /** What the phone says first on every connection. */
     val HELLO = Hello(VERSION, CAPABILITIES)
+
+    /** The shortest idempotency key a [Send] may carry; the phone's are 32 hex digits ([newKey]). */
+    const val MIN_KEY = 16
+
+    private val keys = SecureRandom()
+
+    /** A new idempotency key for a [Send]: 128 random bits, as 32 lowercase hex digits. */
+    fun newKey(): String = ByteArray(16).also { keys.nextBytes(it) }.joinToString("") { "%02x".format(it) }
 
     private val URL = Regex("^wss?://.+")
     private val TOKEN = Regex("^[A-Za-z0-9_-]{32,}$")
@@ -157,6 +182,12 @@ object Protocol {
                 "descriptors" -> Descriptors(o.list("buckets").map(::descriptor))
                 "request" -> Request(o.string("id"), o.string("bucket"), o.string("command"))
                 "reply" -> Reply(o.string("id"), o.string("say"), if ("reason" in obj) o.string("reason") else null)
+                "send" -> {
+                    val key = o.string("key")
+                    if (key.length < MIN_KEY) throw BadMessage("send needs a key of at least $MIN_KEY characters")
+                    Send(key, o.string("bucket"), o.string("text"))
+                }
+                "sent" -> Sent(o.string("key"), o.string("say"), if ("reason" in obj) o.string("reason") else null)
                 "pairing" -> {
                     val url = o.string("url")
                     val token = o.string("token")
@@ -217,6 +248,13 @@ object Protocol {
         is Reply -> buildMap {
             put("type", "reply")
             put("id", message.id)
+            message.reason?.let { put("reason", it) }
+            put("say", message.say)
+        }
+        is Send -> mapOf("type" to "send", "key" to message.key, "bucket" to message.bucket, "text" to message.text)
+        is Sent -> buildMap {
+            put("type", "sent")
+            put("key", message.key)
             message.reason?.let { put("reason", it) }
             put("say", message.say)
         }

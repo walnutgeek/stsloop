@@ -6,6 +6,7 @@ import com.walnutgeek.stsloop.core.Command
 import com.walnutgeek.stsloop.core.CommandInvocation
 import com.walnutgeek.stsloop.core.Declaration
 import com.walnutgeek.stsloop.core.DeclarationPosition
+import com.walnutgeek.stsloop.core.DraftCommand
 
 /**
  * The phrase grammar (`docs/phase0.md`, "Phrase grammar"): pure string matching
@@ -59,7 +60,14 @@ import com.walnutgeek.stsloop.core.DeclarationPosition
  * whole utterance, fillers aside), after the fixed commands: first the
  * commands of the Bucket that has Focus ([classify]'s `focused`), then the
  * commands every Bucket declares `anywhere` ("what's blocked"), then Bucket
- * aliases. Each is a [Command.REQUEST] naming its Bucket and command.
+ * aliases. Each is a [Command.REQUEST] naming its Bucket and command, or,
+ * for a command of the `draft` Primitive ("read it back", "send",
+ * "cancel"), the [Command] its id names, with a [DraftCommand].
+ *
+ * **Drafts** (#45): under the Focus of an agent Bucket that uses the `draft`
+ * Primitive ([BucketRegistry.takesDrafts]), a Turn that is neither a command
+ * nor Declared is a Draft Turn ([Classification.drafted]), its content cut as
+ * a focused Note's is.
  *
  * The Buckets come from a [BucketRegistry]: any Bucket in it may be focused,
  * and those using [Primitive.NOTE] (the Inbox aside) may be Declared into.
@@ -110,7 +118,11 @@ class PhraseGrammar(buckets: BucketRegistry) {
         val c = compiled
         command(transcript, c, focused)?.let { return Classification.command(it) }
         declaration(transcript, c)?.let { return Classification.declared(it.declaration, it.content) }
-        if (focus == null) return Classification.UNCLASSIFIED
+        if (focus == null) {
+            val agent = focused?.let(c.buckets::named)?.takeIf(c.buckets::takesDrafts) ?: return Classification.UNCLASSIFIED
+            val content = content(transcript) ?: return Classification.UNCLASSIFIED
+            return Classification.drafted(agent.name, agent.id!!, content)
+        }
         val content = content(transcript) ?: return Classification.UNCLASSIFIED
         return Classification.focused(focus, content)
     }
@@ -131,6 +143,10 @@ class PhraseGrammar(buckets: BucketRegistry) {
         (own ?: c.buckets.anywhereForms[said])?.let { (name, command) ->
             val bucket = c.buckets.named(name)
             val id = bucket?.id ?: return@let
+            if (command.primitive == Primitive.DRAFT) {
+                val draft = Command.draftOf(command.id) ?: return@let
+                return CommandInvocation(draft, matched, draft = DraftCommand(name, id))
+            }
             return CommandInvocation(Command.REQUEST, matched, request = BucketRequest(name, id, command.id, command.replyWithinMs))
         }
         val bucket = c.buckets.focusForms[said] ?: return null

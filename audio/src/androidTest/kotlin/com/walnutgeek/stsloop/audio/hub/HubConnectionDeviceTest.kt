@@ -10,6 +10,8 @@ import com.walnutgeek.stsloop.core.hub.Pairing
 import com.walnutgeek.stsloop.core.hub.Protocol
 import com.walnutgeek.stsloop.core.hub.Reply
 import com.walnutgeek.stsloop.core.hub.Request
+import com.walnutgeek.stsloop.core.hub.Send
+import com.walnutgeek.stsloop.core.hub.Sent
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -160,6 +162,42 @@ class HubConnectionDeviceTest {
         assertTrue("no reply within ${HubRequests.REPLY_TIMEOUT_MS} ms", answered.await(HubRequests.REPLY_TIMEOUT_MS, TimeUnit.MILLISECONDS))
         assertEquals("d1", reply!!.id)
         assertTrue(reply!!.say.isNotBlank())
+    }
+
+    /**
+     * A Draft's send and its answer, over OkHttp, and the same key again on a
+     * new connection gets the same answer. It goes to an agent no hub has, so
+     * it can never reach a real one, whatever hub the test runs against; the
+     * hub's tests cover a delivery (`hub/tests/test_sends.py`).
+     */
+    @Test
+    fun aSendIsAnsweredAndTheSameKeyAgainGetsTheSameAnswer() {
+        val p = pairing
+        assumeTrue("no hubUrl and hubToken arguments", p != null)
+        store.pair(p!!)
+        val send = Send(Protocol.newKey(), "herdr:device-test-no-such-agent", "a draft for nobody")
+        fun sendOnce(): Sent {
+            val welcomed = CountDownLatch(1)
+            val answered = CountDownLatch(1)
+            var answer: Sent? = null
+            val c = HubConnection(
+                context, store, "device test",
+                onDescriptors = { welcomed.countDown() },
+                onSent = { answer = it; answered.countDown() },
+            )
+            connection = c
+            c.start()
+            assertTrue("not welcomed within 10 s; status ${c.status}", welcomed.await(10, TimeUnit.SECONDS))
+            assertTrue(c.send(send))
+            assertTrue("no answer within 10 s", answered.await(10, TimeUnit.SECONDS))
+            c.stop()
+            connection = null
+            return answer!!
+        }
+        val first = sendOnce()
+        assertEquals(send.key, first.key)
+        assertEquals("unknown_bucket", first.reason)
+        assertEquals(first, sendOnce())
     }
 
     @Test

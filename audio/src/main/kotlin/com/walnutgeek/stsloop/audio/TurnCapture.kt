@@ -15,7 +15,10 @@ import com.walnutgeek.stsloop.core.hub.Descriptors
 import com.walnutgeek.stsloop.core.BucketRequest
 import com.walnutgeek.stsloop.core.hub.HubAliases
 import com.walnutgeek.stsloop.core.hub.HubProvider
+import com.walnutgeek.stsloop.core.hub.Drafts
 import com.walnutgeek.stsloop.core.hub.HubRequests
+import com.walnutgeek.stsloop.core.hub.Send
+import com.walnutgeek.stsloop.core.hub.Sent
 import com.walnutgeek.stsloop.core.hub.Message
 import com.walnutgeek.stsloop.core.hub.Reply
 import com.walnutgeek.stsloop.core.hub.Request
@@ -53,7 +56,10 @@ import java.util.concurrent.TimeUnit
  * when `focus_timeout_ms` pass with no speech it returns to the Inbox and
  * the loop says so, into the next Silence like any reply. A command a hub
  * Bucket declares ("status") goes to the hub through `hubSend` ([HubRequests]),
- * and its reply, handed to [replied], is said the same way.
+ * and its reply, handed to [replied], is said the same way. Under an agent
+ * Bucket's Focus, Turns make its Draft ([Drafts], #45); "send" reads it back
+ * and then sends it through `hubSend`, and the hub's answer, handed to
+ * [sent], is said; [welcomed] resends whatever the hub has not answered.
  *
  * It also notices the loop's silent failures (#15) and says them the same
  * way, once each ([FailureAnnouncer]): a mic stream that stays digitally
@@ -127,12 +133,42 @@ class TurnCapture(
             }
         },
     )
+    private val drafts = Drafts(
+        send = hubSend,
+        say = { text -> if (!ending) loop.announce(text) },
+        clockMs = SystemClock::elapsedRealtime,
+        listener = object : Drafts.Listener {
+            override fun sent(send: Send, again: Boolean) {
+                Log.i(TAG, "Session $sessionId: ${if (again) "sent again" else "sent"} the Draft for ${send.bucket} (${send.key}, ${send.text.length} chars)")
+            }
+
+            override fun answered(send: Send, sent: Sent, afterMs: Long) {
+                Log.i(TAG, "Session $sessionId: the hub answered the send ${send.key} in $afterMs ms${sent.reason?.let { " ($it)" } ?: ""}: ${sent.say}")
+            }
+
+            override fun ignored(sent: Sent) {
+                Log.w(TAG, "Session $sessionId: ignored an answer to the send ${sent.key}, which nothing is waiting for")
+            }
+        },
+    )
     private val sink: CorpusSink = CorpusSink(
         writer, sessionId, sessionStartedAtMs, SAMPLE_RATE_HZ, appVersion, grammar, focus,
         testOf = testOf,
         hubOnline = hubOnline,
         request = requests::request,
+        drafts = drafts,
         listener = object : CorpusSink.Listener {
+            override fun readBack(turn: Turn, say: String, send: () -> Unit, withdraw: () -> Unit) {
+                // Read back, then sent: a readback the Session ends before is never heard, so nothing is sent,
+                // and neither is anything in a Session with no echo (test mode), where nothing is read back.
+                if (speaker == null) {
+                    Log.w(TAG, "Session $sessionId: a Draft is never sent without its readback, and this Session speaks nothing; kept")
+                    withdraw()
+                    return
+                }
+                loop.echo(say) { if (ending) withdraw() else send() }
+            }
+
             override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) {
                 // Persist, then speak (phase0.md's loop): a Turn that failed to write is not echoed. A command
                 // Turn says its reply ("dropped.") instead of its transcript.
@@ -267,10 +303,17 @@ class TurnCapture(
         position += count
         if (focus.tick(position * 1000 / SAMPLE_RATE_HZ, capturing = loop.state == LoopState.CAPTURING) && !ending) {
             Log.i(TAG, "Session $sessionId: Focus timed out back to the Inbox")
-            loop.announce(Focus.TIMED_OUT)
+            loop.announce(drafts.timedOut(focus.left))
         }
         requests.tick()
+        drafts.tick()
     }
+
+    /** Any thread: the hub answered a send; its answer is said into the next Silence. */
+    fun sent(sent: Sent) = drafts.sent(sent)
+
+    /** Any thread: the hub has welcomed the phone; every send it has not answered goes again, with its key. */
+    fun welcomed() = drafts.welcomed()
 
     /** Any thread: the hub answered a request; its reply is said into the next Silence. */
     fun replied(reply: Reply) = requests.replied(reply)
@@ -314,6 +357,9 @@ class TurnCapture(
             if (!finished) {
                 finished = true
                 drain()
+                for (s in drafts.unanswered()) {
+                    Log.w(TAG, "Session $sessionId: the hub never answered the send ${s.key} for ${s.bucket}; it may or may not have arrived")
+                }
             }
         }
     }

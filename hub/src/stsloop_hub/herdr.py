@@ -1,10 +1,11 @@
-"""Reading herdr, the terminal multiplexer for coding agents, read-only.
+"""herdr, the terminal multiplexer for coding agents, as the hub uses it.
 
 The hub's herdr Provider (`agents.py`) sees herdr only through `Herdr`, so its
-tests run against a fake. `HerdrCli` is the real one, and it runs two herdr
-commands only, both reads: `herdr api snapshot` for the agents, and `herdr
-agent read` for one agent's recent output ("what does it say"). The hub never
-sends keys or prompts, renames, focuses, starts or stops anything in herdr.
+tests run against a fake. `HerdrCli` is the real one, and it runs three herdr
+commands only: two reads, `herdr api snapshot` for the agents and `herdr
+agent read` for one agent's recent output ("what does it say"), and `herdr
+agent prompt <pane> <text>`, to submit a Draft the person sent (rung 4). The
+hub never sends keys, renames, focuses, starts or stops anything in herdr.
 
 herdr's agent detection states are `idle`, `working`, `blocked`, `done` and
 `unknown` (`herdr api schema`, `AgentStatus`): `blocked` means herdr sees an
@@ -26,14 +27,20 @@ from typing import Protocol
 
 log = logging.getLogger("stsloop.herdr")
 
-#: The herdr commands the hub runs: the snapshot, and an agent's recent output
-#: (`AGENT_READ` + its pane id + `AGENT_READ_AS`).
+#: The herdr commands the hub runs: the snapshot, an agent's recent output
+#: (`AGENT_READ` + its pane id + `AGENT_READ_AS`), and submitting a Draft (`PROMPT` + pane id + text).
 SNAPSHOT = ("api", "snapshot")
 AGENT_READ = ("agent", "read")
 AGENT_READ_AS = ("--source", "recent", "--format", "text")
+PROMPT = ("agent", "prompt")
 TIMEOUT_S = 5.0
 #: A pane id as herdr writes them ("w8:p1"); anything else is never passed to herdr.
 _PANE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9:_.\-]*")
+#: herdr's error codes for a prompt it refused before writing anything to the agent. Any other
+#: failure may have come after the text was written, so it is not known whether the agent got it.
+NOT_SENT = frozenset({"agent_blocked", "agent_not_found", "protocol_mismatch"})
+#: herdr's exit status for a command line it could not parse: nothing was sent.
+USAGE = 2
 
 
 @dataclass(frozen=True)
@@ -51,7 +58,16 @@ class Agent:
 
 
 class HerdrError(Exception):
-    """herdr is installed but did not answer: its server is down, or speaks another protocol."""
+    """herdr is installed but did not answer: its server is down, or speaks another protocol. For a prompt:
+    it is not known whether the agent got it."""
+
+
+class HerdrRefused(HerdrError):
+    """herdr refused a prompt before writing anything to the agent; `code` is herdr's reason."""
+
+    def __init__(self, code: str, message: str = ""):
+        super().__init__(f"herdr: {code}: {message}" if message else f"herdr: {code}")
+        self.code = code
 
 
 class Herdr(Protocol):
@@ -61,6 +77,11 @@ class Herdr(Protocol):
 
     def read(self, pane_id: str, lines: int) -> str:
         """The last `lines` lines of the agent's terminal, as text. Raises HerdrError when herdr cannot read it."""
+        ...
+
+    def prompt(self, pane_id: str, text: str) -> None:
+        """Submits `text` to the agent in `pane_id`, as typed and then Enter. Blocking. Raises HerdrRefused
+        when herdr sent nothing, and HerdrError when it is not known whether the agent got it."""
         ...
 
 
@@ -137,6 +158,28 @@ class HerdrCli:
         except (OSError, subprocess.TimeoutExpired) as e:
             raise HerdrError(f"cannot run {self.path}: {e}") from None
 
+    def prompt(self, pane_id: str, text: str) -> None:
+        if not _PANE_ID.fullmatch(pane_id):
+            raise HerdrRefused("not_a_pane", repr(pane_id))
+        # herdr reads an argument starting with "-" as an option, so such a text is given a leading space.
+        argv = [self.path, *PROMPT, pane_id, f" {text}" if text.startswith("-") else text]
+        try:
+            result = self._run(
+                argv, capture_output=True, text=True, timeout=self._timeout, stdin=subprocess.DEVNULL,
+            )
+        except subprocess.TimeoutExpired:
+            raise HerdrError(f"herdr agent prompt did not finish in {self._timeout:g} s") from None
+        except (OSError, ValueError) as e:  # herdr never ran (a NUL in the text is a ValueError)
+            raise HerdrRefused("not_run", str(e)) from None
+        if result.returncode == 0:
+            return
+        if result.returncode == USAGE:
+            raise HerdrRefused("usage", (result.stderr or "").strip())
+        code, message = prompt_error(result.stderr or result.stdout)
+        if code in NOT_SENT:
+            raise HerdrRefused(code, message)
+        raise HerdrError(f"herdr agent prompt: {code}: {message}")
+
 
 def _error(text: str) -> str:
     """herdr's JSON error as "code: message", or its text as it is."""
@@ -147,3 +190,14 @@ def _error(text: str) -> str:
     if isinstance(error, dict):
         return f"{error.get('code', 'error')}: {error.get('message', '')}"
     return str(error)
+
+
+def prompt_error(text: str) -> tuple[str, str]:
+    """herdr's error code and message from a failed command's output; ("unknown", the text) when unreadable."""
+    try:
+        error = json.loads(text).get("error")
+    except (ValueError, AttributeError):
+        error = None
+    if not isinstance(error, dict) or not isinstance(error.get("code"), str):
+        return "unknown", (text or "").strip()
+    return error["code"], str(error.get("message", ""))

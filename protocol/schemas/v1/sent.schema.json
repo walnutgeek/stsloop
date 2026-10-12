@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stsloop:protocol:v1:sent",
+  "title": "sent",
+  "description": "Hub to phone: the answer to one `send`, and to every later `send` with the same `key`. The phone speaks `say` as it is. Without a `reason` the Draft was delivered, and the phone drops it; with any `reason`, one it does not know included, the phone keeps the Draft.",
+  "type": "object",
+  "required": ["type", "key", "say"],
+  "properties": {
+    "type": { "const": "sent" },
+    "key": {
+      "description": "The `key` of the send this answers. A phone ignores a `sent` for a key it is not waiting on.",
+      "type": "string",
+      "minLength": 1
+    },
+    "say": {
+      "description": "One short sentence for a person, fit to be spoken.",
+      "type": "string",
+      "minLength": 1
+    },
+    "reason": {
+      "description": "Absent when the Draft was delivered. Known in v1.0: `unknown_bucket` (no Bucket has that id now, or it takes no Drafts: not sent), `refused` (the agent's Provider refused it before sending anything, say because the agent is waiting on a question: not sent), `uncertain` (the Provider did not confirm it: it may or may not have arrived, and the hub will not try that key again).",
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

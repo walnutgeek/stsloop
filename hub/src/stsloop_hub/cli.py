@@ -10,7 +10,9 @@ Bucket per herdr agent when herdr is installed (`$HERDR_BIN_PATH`, else
 "what does it say" is summarised by the backend `hub.json` names (`claude -p`
 by default; see `config.py`). It stores the
 Turns the phone uploads in DIR (default: `config.corpus_dir`), as
-`scripts/corpus_load.py` reads them.
+`scripts/corpus_load.py` reads them. Every Draft the phone sends is recorded
+in `sends.jsonl` in the config directory, which keeps each delivered at most
+once across restarts (`sends.py`).
 """
 
 from __future__ import annotations
@@ -29,6 +31,8 @@ from . import config, herdr, pairing, summary, tailnet
 from .agents import HerdrProvider
 from .buckets import Buckets
 from .corpus import CorpusStore
+from .sends import FILE as SENDS_FILE
+from .sends import Deliveries, SendLog
 from .hub import Hub
 
 #: Background work that runs while the hub serves, told when the Buckets change.
@@ -166,7 +170,13 @@ def main(
     if not found:
         logging.getLogger("stsloop.hub").info("herdr is not installed; no agent Buckets")
     buckets = Buckets(providers)
-    hub = Hub(token=saved.token, descriptors=buckets.descriptors, answer=buckets.answer, corpus=corpus)
+    try:
+        sends = SendLog(directory / SENDS_FILE)
+    except OSError as e:
+        print(f"stsloop-hub: cannot read {directory / SENDS_FILE}: {e}", file=err)
+        return 1
+    hub = Hub(token=saved.token, descriptors=buckets.descriptors, answer=buckets.answer, corpus=corpus,
+              deliver=Deliveries(buckets.prepare_send, sends).deliver)
     run_hub(hub, host, args.port or saved.port, [provider.run for provider in providers])
     return 0
 
