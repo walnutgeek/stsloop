@@ -1,0 +1,744 @@
+# stsloop Phase 0 — the loop and the Corpus
+
+> **Historical spec.** Phase 0 is built and was driven. This document stays
+> the reference for what Phase 0 built (the loop, timings, the phrase grammar,
+> the Corpus format), and code comments cite it by section. The product scope
+> that follows it is [`./mvp.md`](./mvp.md) (v0.1); what driving taught is in
+> [`./brainstorm/2026-10-10-phase0-findings.md`](./brainstorm/2026-10-10-phase0-findings.md).
+
+Phase 0 was an always-on, half-duplex dictation loop on Android that records,
+transcribes, echoes and stores everything you say, assigning a Bucket when you
+name one aloud.
+
+It has two jobs, and neither of them is "be useful as a note-taking app":
+
+1. **Produce a labelled Corpus.** Recordings paired with transcripts and, where
+   declared, a known-correct Bucket. This is the training and evaluation
+   material for every classifier that follows.
+2. **Answer a behavioural question.** Does an always-on loop that speaks into
+   your silences feel natural at 70mph, or intolerable? No amount of design
+   settles this. It has to be driven.
+
+> Vocabulary: [`../CONTEXT.md`](../CONTEXT.md). Long-term shape:
+> [`./vision.md`](./vision.md).
+
+## In scope
+
+- A Session: started by a visible user action, running as a foreground service
+  with a persistent notification, ended by voice or by tapping stop.
+- Voice activity detection, utterance segmentation by trailing Silence.
+- On-device transcription of each utterance.
+- Spoken echo of the transcript (this is the whole "output" of v1).
+- A phrase grammar: Declarations plus four commands.
+- Retention of every Turn as immutable audio + JSON.
+- Sync of the Corpus to the Linux box as plain files.
+
+## Out of scope — explicitly
+
+Each of these is deferred on purpose, not forgotten:
+
+| Not in v1 | Why |
+| --- | --- |
+| Any classifier or model beyond VAD + STT | Declaration supplies Buckets deterministically; the classifier is laptop work against the Corpus until it beats Declaration |
+| Refinement (Word-list-biased transcription) | Retained audio means this is decidable with evidence later; designing it now is guessing |
+| Barge-in | Half-duplex by decision. Needs AEC or a keyword spotter |
+| The Attention Queue, push-on-silence | Nothing Inbound exists yet to queue |
+| Daily brief, podcast, Herdr, browser | Phases 2–4 |
+| Any LLM, local or remote | Nothing in v1 needs generation |
+| iOS | Phase 5 |
+| Wake word | A Session is started deliberately |
+| A real UI | Eyes-free. A notification, a stop button, and a transcript list for sanity-checking |
+
+## The loop
+
+```
+  ┌──────────────────────────── SESSION ACTIVE ───────────────────────────┐
+  │                                                                       │
+  │   LISTENING ──speech──────→ CAPTURING ──trailing silence──→ TRANSCRIBE│
+  │    ↑                            │                               │     │
+  │    │                       (max duration)                        │     │
+  │    │                            └───────────────────────────────┤     │
+  │    │                                                            ▼     │
+  │    │                                                    CLASSIFY (grammar)
+  │    │                                                            │     │
+  │    │                                                     ┌──────┴─────┐
+  │    │                                                     ▼            ▼
+  │    │                                                  command       note
+  │    │                                                     │            │
+  │    │                                                     ▼            ▼
+  │    └──── guard interval ──── SPEAKING ◄──────────── execute      persist
+  │                            (mic CLOSED)                                │
+  └───────────────────────────────────────────────────────────────────────┘
+```
+
+The microphone is open in `LISTENING` and `CAPTURING`, and closed from the
+moment `SPEAKING` begins until the guard interval after it ends. This is what
+makes self-transcription structurally impossible rather than merely unlikely.
+
+How the echo keeps that promise (#11; `:core` `HalfDuplex`):
+
+- **Closed means dropped, not stopped.** `AudioRecord` keeps running for the
+  whole Session; while the mic is closed its samples are dropped before the
+  Segmenter, so the VAD, the recognizer and the Corpus never see them. The
+  stream's sample offsets still count them, so `started_at` stays true and
+  pre-roll never reaches back into the closed span. Stopping and restarting
+  the recording instead would mean starting capture again from the
+  background, which while-in-use rules make risky.
+- **Persist, then speak.** A Turn is echoed once it is written, so a Turn that
+  failed to write is not echoed. An empty transcript is not echoed either.
+  Between the cut and the transcript (about 300 ms of TRANSCRIBE) the mic
+  stays open, so speech that starts then is not lost.
+- **Silence is the only scheduler, in both directions.** A transcript that is
+  ready while the next human Turn is already being captured (including the
+  continuation of a Turn cut at max duration) waits for that Turn's Silence;
+  the machine never cuts the human off, just as the human cannot barge in.
+  Echoes that waited are spoken back to back, in order, in one closed span,
+  with one guard interval after the last.
+- **The guard runs from the engine's end report**, on the capture clock, to
+  the exact sample. The end report comes slightly before the audio has left
+  the speaker, so the guard also covers output latency. If the engine never
+  reports an end, that echo is stopped (or dropped, if it has not started)
+  and the mic reopens a guard interval after 10 s plus 150 ms per character,
+  and that is logged.
+- **Test mode does not echo.** It deliberately records while it speaks, and
+  gating would defeat that experiment.
+
+### Timings — all tunable, none final
+
+These are starting points to be tuned in the car, and they are the most
+important numbers in the product. They should be adjustable without a
+rebuild: they are read from `files/timings.json` at Session start (see the
+README, "Tuning the timings").
+
+| Parameter | Start at | Governs |
+| --- | --- | --- |
+| Trailing silence to close an utterance | 1500 ms | How long you can pause mid-thought before being cut off |
+| Guard interval after TTS | 300 ms | Whether speaker bleed re-opens capture |
+| Max utterance duration | 60 s | Runaway capture |
+| Min utterance duration | 300 ms | Rejecting coughs, road noise, door slams |
+
+The first one is the one that will annoy you. Expect to change it.
+
+## Speech
+
+The engine is **sherpa-onnx for VAD and STT, Android's offline `TextToSpeech`
+for speech out**. All claims below are verified against primary sources in
+[`./research/speech-stack-verification.md`](./research/speech-stack-verification.md);
+read it before changing anything in this section.
+
+### One microphone, software tee
+
+```
+AudioRecord (16 kHz mono, ENCODING_PCM_16BIT — the app owns the mic)
+   │
+   ├──→ Silero VAD          (sherpa-onnx)
+   ├──→ streaming STT       (sherpa-onnx)
+   └──→ Corpus writer       ← the same int16 bytes
+```
+
+This is what the shipped sherpa-onnx Android examples do. int16 is the native
+capture format and the `/32768` float conversion happens **downstream** of the
+tee, so byte-identical retention is natural rather than contrived. The JNI
+layer does not mutate the caller's buffer, so one array can serve both
+consumers. `SpeechSegment(start, samples)` gives a sample offset, so each VAD
+utterance maps to an exact byte range in the retained stream.
+
+### TRANSCRIBE: streamed while capturing, published once
+
+Each utterance gets its own recognizer stream, opened at its first sample
+(pre-roll included) and fed while it is still being captured. Samples go to
+it once the VAD has judged them, so a stream never receives audio past the
+cut. When trailing Silence closes the utterance, almost all of it is already
+decoded; the only work left is the final flush (1.2 s of zero padding,
+`inputFinished`, the last decode). That is what gates the echo, so it is kept
+as small as possible; the shipped model loses a Turn's last word with less
+padding (#30).
+
+```
+capture thread                         STT thread (one per Session)
+AudioRecord → Segmenter ─ opened ───→  recognizer.open()       (one stream per Turn)
+              (VAD cuts) ─ captured ─→  stream.accept + decode
+                         ─ closed ───→  stream.finish → transcript
+                                        → CorpusSink → FileCorpusWriter (one atomic publish)
+```
+
+- **Capture never waits on decoding.** The capture thread only posts work to
+  the Session's STT thread. The recognizer, its streams and the Corpus writes
+  all live there, so the mic is never starved.
+- **Audio is never lost to recognition.** A transcript may be missing, but a
+  Turn's audio is always written. The Turn goes out without a `transcript`
+  block in four cases:
+  - the model fails to load, or any recognizer call throws (an `Error` also
+    stops recognition for the rest of the Session);
+  - decoding falls more than 10 s of audio behind capture. The Turn then stops
+    being fed and its queued samples are skipped, so memory and latency stay
+    bounded even at RTF > 1 (thermal throttling);
+  - a Stop has waited 30 s for decoding;
+  - the system tears the service down. `onDestroy` hurries the capture so only
+    the writes remain, within its 5 s join.
+
+  Each case is logged, and the Session end logs the count. The Recording is the
+  primary record, and transcription can be re-run later.
+- **One recognizer per Session**, loaded on the STT thread when the Session
+  starts, so the mic opens without waiting about 3.3 s for the model. It is
+  never reloaded per Turn, and it is released when the Session ends.
+- **A Turn is published once, transcript included.** `audio.wav` and
+  `turn.json` are staged and renamed into the Corpus only after the transcript
+  is final, so a Turn directory never changes after it appears.
+- **Latency is stored per Turn as `transcript.latency_ms`.** It runs on one
+  monotonic clock (`elapsedRealtimeNanos`), from when the Turn's last sample
+  was captured (the time of the `AudioRecord.read` that returned it, placed by
+  the sample rate) to when the text was final. `finished_at - ended_at` is not
+  used, because it mixes the wall clock with the sample-offset clock, which
+  absorbs AudioRecord buffering and drifts over a long Session. How the
+  latency splits into queued decoding and the final flush, and the RTF
+  (recognizer time over audio time), are logged per Turn under
+  `stsloop.Session`.
+
+Measured on the Pixel 10 Pro (#10), with upstream test wavs fed at real time
+through the service's pipeline, `latency_ms` was 281–332 ms per Turn
+(158–221 ms of decoding still queued at the cut, 44–47 ms of final flush,
+and the rest the close being seen: 100 ms chunks, 32 ms VAD windows). An
+earlier run, measured as `finished_at - ended_at`, gave 313–352 ms (202–225
+ms queued). Paced at real time the recognizer's RTF is about 0.47–0.52; in a
+batch it is 0.08–0.12. That gap is probably CPU frequency scaling between chunks, and it
+is where any further latency would come from. Decoding only on close would
+cost about 0.6 s for a 7.5 s Turn even at the batch RTF, so streaming stays.
+
+Those figures are for the zipformer. With nemotron (#30, ADR-0004) and its
+1.2 s flush, `SttBenchmarkDeviceTest` on 20 wavs (18 of them drive
+Recordings) gave a median `latency_ms` of 325 ms (p90 547 ms) against the
+zipformer's 152 ms, an RTF of 0.23 in a batch and 0.57 paced, a 3.3 s load
+and 757 MB of memory.
+
+### Never run the system recognizer concurrently
+
+This is the sharpest finding of the research, and it is a hard rule.
+`android.speech.SpeechRecognizer` runs its own `AudioRecord` in the recognizer
+service's process — a different UID — and **two ordinary apps can never
+capture audio at the same time. The loser receives silence, not an error.**
+
+There is no exception thrown, no callback, no log. The outcome is a recording
+of silence, or a transcript of silence, with the app none the wiser. For a
+Corpus whose entire value rests on audio being provably the audio that produced
+the transcript, that is the worst available failure mode.
+
+So: if a system-recognizer path is ever added, it must be **exclusive** with
+the sherpa path, never concurrent. Any code that touches both should register
+an `AudioManager.AudioRecordingCallback` and check `isClientSilenced()`
+defensively.
+
+### Model: forced, not preferred
+
+> **Since #30 the app ships `sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25`**
+> (~660 MB, `greedy_search`), for recognition quality, and has no hotwords
+> until a sherpa-onnx bump; see [ADR-0004](./adr/0004-nemotron-streaming-stt.md).
+> The zipformer below is now the device tests' baseline only. This section
+> records the original reasoning.
+
+Use **`sherpa-onnx-streaming-zipformer-en-2023-06-26`**, int8,
+`chunk-16-left-128` (~70 MB on disk), configured from day one as:
+
+```kotlin
+decodingMethod = "modified_beam_search"   // required for hotwords
+modelingUnit   = "bpe"
+bpeVocab       = "<path>/bpe.vocab"
+```
+
+The reason this is forced rather than chosen: **hotwords are transducer-only.**
+Any CTC model — including Zipformer2-CTC, which would otherwise be the
+attractive modern streaming option — permanently forecloses Refinement. And
+this is the only streaming English transducer in the project that ships a BPE
+model, so it is the only one where English hotwords work without sourcing extra
+files upstream. See [ADR-0003](./adr/0003-streaming-transducer-for-hotwords.md).
+
+Three build-time consequences, all cheap now and annoying later:
+
+- **`bpe.model` is not `bpe.vocab`.** The released tarball ships the former;
+  sherpa-onnx requires the latter (it deliberately avoids the sentencepiece C++
+  dependency). Add `scripts/export_bpe_vocab.py` to the build now.
+- **There is no Maven artifact and no prebuilt AAR.** The native libraries must
+  be built with the NDK and vendored as `jniLibs`, and the Kotlin API files
+  copied in. Pin a sherpa-onnx commit and decide once where those files come
+  from — the repo duplicates them per example app.
+- **Benchmark in the final decoding configuration.** Every published RTF figure
+  used `greedy_search`, on unstated hardware. There is **no** published RTF for
+  `modified_beam_search`, and no latency, RTF or RAM figure for Pixel-class
+  hardware for any sherpa-onnx streaming model. These numbers have to be
+  measured on the actual phone, early.
+
+### `_Exit(-1)` is a safety constraint
+
+Passing a non-empty hotwords string to a non-transducer recognizer calls
+`_Exit(-1)` — an uncatchable process kill. No Java exception, no crash report.
+Put a **single chokepoint** in front of stream creation that refuses to pass
+hotwords unless the loaded model is a transducer configured for
+`modified_beam_search`.
+
+The inverse failure is also silent: *malformed* hotwords are logged and
+skipped, with no runtime signal. Bucket Word lists must therefore be validated
+at authoring time, not at use time.
+
+Two API details worth writing down before they cause a confusing afternoon: the
+per-stream hotword separator is `/`, not newline; and per-stream hotwords are
+**unioned with** any config-time defaults, so leave `hotwordsFile` and
+`hotwordsBuf` empty if a Bucket's list should be the only vocabulary in play.
+
+### Refinement is already well-shaped for later
+
+Not needed in v1, but worth knowing the path exists and costs little:
+
+```kotlin
+fun createStream(hotwords: String = ""): OnlineStream
+```
+
+One recognizer instance, N streams, one per utterance, each with its own Bucket
+Word list, **with no model reload**. This is exactly the shape a two-pass
+Refinement needs. The offline transducer path has the same support if a slower,
+better second pass is wanted. Note that Whisper and Moonshine support no
+hotwords at all, so neither can serve Refinement.
+
+### Platform constraints on the loop
+
+Two Android behaviours directly shape the Session lifecycle:
+
+- **The loop must be started from the foreground.** `RECORD_AUDIO` is a
+  while-in-use permission, so creating a `microphone` foreground service from
+  the background throws `SecurityException`, and it cannot be launched from a
+  `BOOT_COMPLETED` receiver. Any restart path must use a documented exemption —
+  a notification action, an app widget, or a `PendingIntent` from a visible app.
+  Verified on one Pixel 10 Pro / Android 17 build (#5): a notification action
+  whose `PendingIntent` is `getForegroundService(...)` aimed straight at the
+  Session service starts the `microphone` FGS with the app in the background,
+  with its process killed, and from the shade pulled over the keyguard
+  (`reasonCode:NOTIFICATION_SERVICE`, `allowWiu`). Whether the action is
+  reachable on the lock screen itself depends on the user's lock-screen
+  notification setting. Per the docs (not tested here): a direct activity
+  `PendingIntent` also works but shows UI and needs an unlock on the
+  keyguard; a service or receiver that then starts an activity (a
+  trampoline) is blocked since Android 12.
+- **Android 17 hardens background audio playback** — `AudioTrack.write()`,
+  audio focus and volume APIs — for **all apps regardless of targetSdk**,
+  requiring a visible activity or a non-`SHORT_SERVICE` foreground service. A
+  correctly-typed `microphone` FGS is a while-in-use type and should satisfy
+  this, but it must be registered as such and must not be a `SHORT_SERVICE`.
+  The failure mode here is silent too: the playback and volume APIs "fail
+  silently without throwing an exception."
+
+Three silent failure modes in one subsystem is a theme. Instrument deliberately:
+if a Turn produces an all-zero Recording, or TTS reports success with no audible
+output, the loop should notice and say so rather than quietly filling the Corpus
+with silence.
+
+How the loop does it (#15; `:core` `failure`, `:audio` `TurnCapture`):
+
+- **Effectively silent** means a 100 ms window below 1.5 RMS (about
+  -90 dBFS): exact zeros, which is what a silenced client gets, or one LSB of
+  dither. A working mic never gets there. The owner's drive Corpus (#8, 270
+  Recordings, phone mic and the car's Bluetooth SCO mic, parked and driving)
+  has noise floors of 3–90 RMS, and its quietest 100 ms window anywhere is
+  2.1 RMS, so a quiet but working SCO mic is never flagged.
+- **A silent mic stream.** What the loop listens to is watched (not the
+  Half-duplex closed spans, where a route may zero the mic during our own
+  speech): 3 s of effectively silent windows back to back is a failure (long
+  enough for an SCO link to come up at Session start). This is the detector
+  that matters, because a mic delivering zeros never wakes the VAD, so it
+  produces no Turns at all.
+- **A silent Recording.** Each Recording is measured as it is written, and
+  `audio.silent` in `turn.json` says whether its loudest window is
+  effectively silent (see Corpus format).
+- **A silenced client.** An `AudioRecordingCallback` watches the Session's
+  own recording (matched by audio session id) for `isClientSilenced()`, in
+  every Session, test mode included.
+- **TTS success without output.** Where feasible means a heuristic, checked
+  per echo: the engine reported done, yet it never reported a start, or no
+  player with the echo's usage was ever active while it played, or the
+  stream volume was 0. It cannot hear the speaker, so it catches a playback
+  the platform refused, not a car stereo turned down; and announcing it goes
+  through the same TTS, so it is heard only if the failure was partial.
+- **Saying it.** Each failure is spoken as a machine Turn through the echo
+  path, under the same Half-duplex rules (into Silence, mic closed). It is
+  said once when it starts, never again while it lasts, and not again within
+  a minute however it flaps. A failure another one already explains is not
+  said (a silenced client is also a silent stream and a silent Recording).
+  Its end is logged, not said: the next echo is the proof the loop hears you
+  again. Test mode has no echo, so there it is only logged.
+- **A crash mid-Turn.** Turns are staged under their Session
+  (`corpus-staging/<session_id>/<turn>`). Before the first Session of each
+  process, whatever a dead process left there is recovered, not discarded:
+  a complete Turn is published as it is; one without `turn.json` has its WAV
+  header rewritten from the samples on disk and is published with
+  `"recovered": true` and no transcript (the Recording is what matters, and
+  it can be transcribed again later); one with no samples is deleted.
+
+## Phrase grammar
+
+Pure string matching against the transcript. No inference, no model, no
+thresholds.
+
+### Declaration
+
+A Bucket named at the **start** or **end** of an utterance, optionally
+separated by a filler word:
+
+```
+"errands, order roofing screws"           → bucket=errands,  note="order roofing screws"
+"order roofing screws, errands"           → bucket=errands,  note="order roofing screws"
+"house project — check the joist spacing" → bucket=house-project
+"order roofing screws"                    → bucket=null (unlabelled; test data)
+```
+
+Buckets are declared in a user-editable config, each with a canonical name and
+spoken aliases, because STT output varies and "house project" may arrive as
+"house-project" or "houseproject":
+
+```json
+{
+  "buckets": [
+    { "name": "errands",      "aliases": ["errands", "errand", "shopping"] },
+    { "name": "house-project", "aliases": ["house project", "house", "the house"] },
+    { "name": "work",          "aliases": ["work", "worklog", "work log"] },
+    { "name": "ideas",         "aliases": ["idea", "ideas", "thought"] }
+  ]
+}
+```
+
+Matching is case-insensitive, punctuation-insensitive, and anchored — a Bucket
+alias occurring mid-utterance is **not** a Declaration. "I need to work on the
+roof" must not land in `work`.
+
+The rules in full (`:core` `PhraseGrammar`, `BucketConfig`):
+
+- The transcript is read as words: runs of letters, digits and apostrophes,
+  lower-cased, apostrophes dropped. Everything else — spaces, commas, dashes,
+  colons, full stops — only separates words. So "House-Project:" reads as
+  `house project`.
+- A Bucket's canonical name is always one of its aliases. An alias of several
+  words also matches run together, so `house project` covers "house project",
+  "house-project" and "houseproject".
+- Grammar: `[fillers] ALIAS [fillers] content` (leading) or
+  `content [fillers] ALIAS [fillers]` (trailing). The fillers are
+  `um umm uh uhm er erm ah hmm mm so okay ok`. Fillers inside the content stay.
+- When several aliases fit at one end, the one with the most words wins
+  ("house project" over "house"), then the longer spelling.
+- Corpus labels are permanent training data, so anything short of a clear
+  Declaration stays unlabelled. Aliases of **different** Buckets at the two
+  ends are not a Declaration. The **same** Bucket at both ends is one leading
+  Declaration, with both aliases taken out of the content. An utterance that is
+  **only** aliases and fillers, such as "errands", is not a Declaration either.
+- Before matching, the transcript and every alias are put in Unicode NFC, and
+  every apostrophe (’, ʼ) becomes `'`.
+- `content` is the transcript with the Declaration and its fillers taken out.
+  It runs from its first word to its last, so punctuation around it is dropped.
+  It is cut from the NFC text, so a cased or punctuated engine keeps its casing
+  and inner punctuation. An all-caps engine (the current one) is lower-cased.
+  `transcript.text` is never changed.
+- Config errors fall back per Bucket, not for the whole file. A broken Bucket
+  or alias is dropped and logged. An alias claimed by two Buckets is dropped
+  from **both**, because either could be meant, and an unlabelled Turn is
+  better than a wrong one. An alias equal to another Bucket's name loses to
+  the name. Only a file that is not strict JSON (a duplicate key counts as
+  malformed) or has no `buckets` array falls back to the defaults above.
+
+### Commands
+
+Four, chosen because the loop is unusable in a car without them:
+
+| Said | Effect |
+| --- | --- |
+| "scratch that" / "discard that" | Tombstone the previous Turn (its audio is kept, see Corpus format). Say "dropped." |
+| "repeat" / "say that again" | Re-speak the previous transcript |
+| "stop listening" / "end session" | Say "stopped listening.", then end the Session cleanly |
+| "what bucket" / "which bucket" | Speak the Bucket assigned to the previous Turn |
+
+Commands are recognised only as a **whole utterance**, not as a substring. A
+Note that happens to contain the words "repeat" must be stored, not obeyed.
+Ambiguity resolves toward storing — losing a thought is worse than ignoring a
+command.
+
+Every command invocation is itself persisted as a Turn with `kind: "command"`,
+because command phrasing is also something the eventual classifier must learn,
+and these are labelled examples too.
+
+The rules in full (`:core` `PhraseGrammar`, `Command`, `SessionCommands`):
+
+- A command is its phrase read as words (as for Declarations: case,
+  punctuation and dashes ignored), with nothing else around it but the
+  Declaration fillers (`um`, `okay`, `so`, ...). "Okay, scratch that." is a
+  command; "scratch that idea about the roof" is a Note, and so is
+  "errands, scratch that". Commands are matched before Declarations, so a
+  Bucket alias that is also a command phrase cannot shadow the command.
+- A command is persisted first and carried out after: its Turn records what
+  it did. If the command Turn fails to write, it did nothing and the loop says
+  nothing, so saying it again is safe.
+- Its reply goes through the echo path (`HalfDuplex`), so it is Half-duplex
+  like any echo: spoken into the next Silence, with the mic closed. The
+  command's own transcript is not echoed.
+
+"Scratch that", "repeat" and "what bucket" act on the **previous Turn**: **what
+the loop last read back to you** (or is about to: an echo still waiting for
+Silence counts, and so does every Turn when there is no echo, as in test
+mode), the most recent Turn of the current Session that is not a command and
+has a transcript worth echoing. At the edges:
+
+| Situation | Effect |
+| --- | --- |
+| Turns with no or an empty transcript since (noise, a recognizer failure) | Skipped: never echoed, so not what "that" means |
+| Command Turns since (e.g. "repeat") | Skipped, so "repeat" twice repeats the same Turn |
+| That Turn is already tombstoned | No command reaches a Turn further back. "Scratch that" says "nothing to drop."; "repeat" and "what bucket" say "that was dropped." |
+| No such Turn in this Session (including the very first Turn) | Never reaches into an earlier Session. "Scratch that" says "nothing to drop.", "repeat" "nothing to repeat.", "what bucket" "nothing said yet." |
+| Nothing to drop | The command Turn is still written, with `tombstones: null` |
+| A Turn cut at max duration and continued | Only the last piece is the previous Turn |
+
+What each one says (#14):
+
+- **"Repeat"** says the previous Turn's transcript again, as it was echoed.
+- **"What bucket"** says the previous Turn's Bucket by its name, read as
+  words (`house-project` → "house project."), or "no bucket." for a Turn
+  that was not Declared.
+- **"Stop listening"** says "stopped listening." and then ends the Session
+  as the Stop button does: the foreground service leaves, the mic and the
+  route are released, and anything still being transcribed is written. The
+  acknowledgement comes first because the loop is eyes-free: without it, a
+  misheard "stop listening" and a Session that ended look the same. The
+  Session ends once the engine reports the reply's end (or the reply is
+  lost); with no echo (test mode) it ends as soon as the command Turn is
+  written. If you are already speaking again, the reply, and so the end,
+  waits for your Silence like any echo, and what you said is still a Turn;
+  noise the VAD keeps hearing as speech holds it off too, as it does every
+  echo (the Stop button still works). A "stop listening" that fails to write
+  ends nothing and says nothing, like any command.
+
+## Corpus format
+
+Immutable, append-only, one directory per Turn. Nothing is ever edited;
+"scratch that" writes a tombstone rather than deleting in place, so the Corpus
+stays append-only and the tombstone itself is data. The tombstone **is** the
+command Turn: it names its target by directory name in its own `turn.json`
+(`tombstones`, below), and the target's directory is never touched.
+
+```
+corpus/
+  2026-10-06T14:22:07.431Z-a3f1c9/
+    audio.wav      16 kHz mono PCM — immutable
+    turn.json
+```
+
+```json
+{
+  "schema": 1,
+  "id": "a3f1c9",
+  "session_id": "0f22ab",
+  "started_at": "2026-10-06T14:22:07.431Z",
+  "ended_at": "2026-10-06T14:22:12.411Z",
+  "audio": { "file": "audio.wav", "sha256": "…", "sample_rate": 16000, "duration_ms": 4980, "silent": false },
+  "vad": { "speech_ms": 3180, "trailing_silence_ms": 1500 },
+  "transcript": {
+    "text": "ERRANDS ORDER ROOFING SCREWS",
+    "engine": "sherpa-onnx",
+    "model": "…",
+    "finished_at": "2026-10-06T14:22:12.650Z",
+    "latency_ms": 239
+  },
+  "kind": "note",
+  "declaration": { "bucket": "errands", "position": "leading", "matched": "errands" },
+  "bucket": "errands",
+  "bucket_source": "declaration",
+  "content": "order roofing screws",
+  "app_version": "0.1.0"
+}
+```
+
+A "scratch that" Turn (#13), naming the Turn it tombstones:
+
+```json
+{
+  "schema": 1,
+  "id": "b4e2d0",
+  …
+  "transcript": { "text": "SCRATCH THAT", … },
+  "kind": "command",
+  "declaration": null,
+  "bucket": null,
+  "bucket_source": null,
+  "content": null,
+  "command": { "name": "scratch_that", "matched": "scratch that" },
+  "tombstones": "2026-10-06T14:22:07.431Z-a3f1c9",
+  "app_version": "0.1.0"
+}
+```
+
+Design notes worth keeping:
+
+- `bucket_source` will later take the value `classifier`, so predictions and
+  ground truth never get confused in the same field.
+- `model` and `app_version` are recorded on every Turn, so the Corpus remains
+  interpretable after the engine changes underneath it.
+- `kind` is one of `note`, `command`, `unclassified`. Until the phrase
+  grammar exists, every Turn is `unclassified`. With it, only a Declared Turn is
+  a `note`; an undeclared one stays `unclassified` (unlabelled test data), with
+  `declaration`, `bucket`, `bucket_source` and `content` written as `null`. A
+  whole-utterance command is `command`, with those four fields `null` too.
+- `transcript.text` is exactly what the engine produced. The current model
+  emits upper case with no punctuation. A
+  future cased or punctuated model must not be flattened, so normalisation is
+  left to readers (the phrase grammar does its own). `transcript.model` names the
+  model directory, encoder variant and decoding method. The block is absent
+  when no recognizer was available for the Turn.
+- `transcript.latency_ms` is the end-of-utterance to transcript latency: from
+  when the Turn's last sample was captured to when the text was final, on one
+  monotonic clock (see "TRANSCRIBE" above).
+- A Turn's audio is pre-roll + speech + trailing Silence, so `duration_ms` is
+  `pre_roll_ms` (300 above) + `vad.speech_ms` + `vad.trailing_silence_ms`, less
+  any pre-roll clipped by the previous Turn. `speech_ms` spans first to last
+  speech window, gaps shorter than the trailing Silence included.
+- A Turn recorded in Bluetooth test mode (#27, debug builds only,
+  `docs/test-drive.md`) also has a `test` block: the test configuration
+  (`label`, `mic_source`, `mic_input`, `audio_mode`, `tts_interval_ms`,
+  `tts_usage`), the `input_devices` routed while it was captured, and
+  `tts_overlap` / `tts_overlap_ms` / `tts_phrases`: whether, how long and
+  which test phrases (ids `tts-N`, `announce`) were playing during its audio
+  span. These key names are permanent once written.
+- **One carve-out from "one immutable directory per Turn", for test mode
+  only:** each test Session writes
+  `corpus/sessions/<started_at>-<session_id>.jsonl`, its route-event log. It
+  is not a Turn, and it is appended to in place while the Session runs (one
+  flushed JSON line per event), so a sync can see it grow and a reader must
+  drop an incomplete last line. It is never rewritten. Nothing outside test
+  mode writes there, and readers of Turns skip `sessions/`.
+- `audio.silent` (#15) is `true` when the Recording is effectively silent:
+  none of its 100 ms windows (a partial last one included) reaches 1.5 RMS,
+  which a working mic never fails to (see "Platform constraints on the
+  loop"). It is written on every Turn from #15 on; a Turn without it was not
+  measured. It is a flag for readers, not a filter: the Turn is kept.
+- `recovered: true` (#15) marks a Turn published after a crash from what
+  its Session had staged. It has no `vad`, `transcript` or classification,
+  `app_version` is the version that recovered it, and a Turn staged before
+  #15 has `session_id` `"unknown"`. The key is absent on every other Turn.
+- A tombstoned Turn keeps its audio. "Scratch that" usually means *I misspoke*,
+  and the misspeaking is training data.
+- **Tombstones are derived on read.** A Turn can only be tombstoned after it
+  is published, so it can never say so in its own `turn.json`. Instead the
+  command Turn's `tombstones` holds the target's **directory name**
+  (`<started_at>-<id>`: unique, where a 6-hex id is not), and a reader builds
+  `target directory → command directory` from every `kind: "command"` Turn's
+  `tombstones` (`:core` `TranscriptList.tombstonedBy`; with `jq`:
+  `select(.kind == "command" and .tombstones)`). Should two name the same
+  Turn, the earlier one tombstoned it.
+- `tombstoned_by` is no longer written. Turns written before #13 carry
+  `"tombstoned_by": null`; that never meant more than "not known here", and a
+  reader that finds a non-null one still honours it. No schema bump: the field
+  was always null, and `jq` reads a missing key as null too.
+- `command` is present only on a command Turn: `name` is permanent once
+  written (`scratch_that`, `repeat`, `what_bucket`, `stop_listening`),
+  `matched` the phrase as heard, normalised. `tombstones` is present only on
+  a `scratch_that` Turn, `null` when there was nothing to drop. The other
+  command Turns record nothing more: what "repeat" and "what bucket" said
+  follows from the Turns before them in the Session.
+
+## Modules
+
+```
+:app      Android. Session UI, notification, stop button, transcript list.
+:audio    Android. AudioRecord, foreground service, Bluetooth route handling,
+          sherpa-onnx VAD + STT bindings, system TextToSpeech.
+:core     Pure Kotlin — no android.* imports, enforced.
+            turn state machine
+            silence / guard policy
+            Declaration + command grammar
+            Bucket config
+            Corpus record types + writer interface
+```
+
+`:core` having no Android dependency is what makes the Phase 5 KMP lift cheap,
+and it also makes the state machine and grammar unit-testable on the JVM
+without an emulator — which matters, because those are the parts that need
+dozens of small tests.
+
+## Egress
+
+The phone writes the layout above to app storage. An off-the-shelf folder sync
+(Syncthing, or `rsync` over Tailscale) mirrors it to the Linux box. No protocol
+is built, because the Corpus is immutable and append-only — there is nothing to
+reconcile, no conflicts, and order does not matter.
+
+On the Linux side it is a directory of files that `jq` and a Python script can
+read directly. That is the entire Phase 1 toolchain.
+
+Step by step, and what works today (the Corpus is in app-private storage, so
+only `adb` reaches it until the app exports it): `docs/corpus-sync.md`. The
+loader, with sha256 checks, tombstones and stats: `scripts/corpus_load.py`.
+
+## Done when
+
+The MVP is finished when it has answered its two questions, not when a feature
+list is ticked off:
+
+- [ ] Two weeks of real driving use, with Sessions started without reluctance.
+- [ ] Several hundred Turns in the Corpus, a healthy share of them declared.
+- [ ] **Zero** instances of the loop transcribing its own TTS.
+- [ ] Trailing-silence threshold tuned to a value that does not cut you off
+      mid-thought, and it is written down.
+- [ ] A Bucket taxonomy that emerged from use rather than from this document —
+      including Buckets not listed here, and the removal of ones that were.
+- [ ] Battery cost over a commute is known and acceptable.
+- [ ] Transcription latency measured on-device in the **final** model and
+      decoding configuration, in real Sessions, and recorded. (The final
+      configuration is now nemotron with `greedy_search`, ADR-0004. Its
+      benchmark gave a median `latency_ms` of 325 ms, but that ran in the test
+      process; the `latency_ms` from real in-car Sessions is still to be read
+      from the Corpus.)
+- [ ] The Corpus is readable on the Linux box with a script, and a first
+      classifier experiment has been run against it even if it performs badly.
+
+The last point is the real gate. Phase 1 cannot start until the Corpus has
+proven itself usable as training data.
+
+## Known unknowns, to be settled empirically
+
+These cannot be designed away and are the reason Phase 0 exists.
+
+Settled so far (evidence on the issue named):
+
+- **Tesla Bluetooth routing (#8): settled, GO on the hands-free route.** Over
+  SCO the car's mic had about 30 dB less road noise than the phone mic while
+  driving (speech/noise 28–33 dB against 5–10 dB, and 0–29% empty transcripts
+  against 23–60%). None of the 126 machine phrases played over SCO, while
+  recording on purpose, was captured as a Turn: the car cancels the echo.
+  Call mode added nothing measurable. `unprocessed` records only silence on
+  this phone.
+- **Whether road noise defeats the VAD (#8): on the phone mic, yes.** About
+  two thirds of drive 1's driving Turns were noise only. The hands-free route
+  largely fixes it.
+- **Real-time factor, peak memory, and whether the int8 subset loads (#10, #30,
+  ADR-0004): measured.** The zipformer subset loaded standalone. It was replaced
+  for recognition quality (64–73% word error rate on the owner's voice). The
+  shipped nemotron keeps up with the mic (RTF 0.23 unpaced, 0.57 paced) at
+  757 MB of memory and a 692 MB APK.
+- **Whether the model hears the command phrases (#14, #30).** Fed the system
+  TTS voice, nemotron hears all eight exactly. The zipformer heard "end session"
+  as "IN SESSION". A real voice in the car is still to be checked.
+
+Still open:
+
+- **Does the echo help or grate?** Hearing every utterance read back may be
+  reassuring confirmation or instantly tiresome. If the latter, the echo
+  becomes an earcon plus the Bucket name.
+- **Declaration rate.** If, in practice, you rarely remember to declare, the
+  Corpus starves and Q7's bootstrap fails. The fallback is confirmation-driven
+  labelling — the loop guessing aloud and learning from the correction.
+- **Whether the 300 ms guard covers Bluetooth output latency.** The guard runs
+  from the engine's end report, and over SCO the audio leaves the car later.
+- **Why the car mic transcribes worse than the phone mic** for every strong
+  model in the A/B (#8), even parked, despite far better signal-to-noise. It is
+  not a plain 4 kHz cutoff; the SCO codec is a guess.
+- **A pause after a leading Bucket word splits the Declaration.** In drive 2,
+  "ERRANDS" and "ORDER ROOF INSCREWS" became two Turns. A Turn that is only an
+  alias is not a Declaration, so the label was lost.
+- **Some words no model hears** (#8 A/B): "errands" as errants, aarons or arens,
+  and "roofing screws" as "ruffins cross". Bucket names and aliases may need to
+  be chosen for what the recogniser emits.
+- **Whether the min-utterance filter keeps the Corpus clean** on the
+  hands-free route while driving: one SCO configuration still had 29% empty
+  transcripts.
+- **Battery cost of a 0.6B model** over a commute.

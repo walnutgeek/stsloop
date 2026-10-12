@@ -2,7 +2,7 @@ package com.walnutgeek.stsloop.core.failure
 
 /**
  * What "effectively silent" audio means, for the Recording of a Turn and for
- * the live mic stream (`docs/mvp.md`, "Platform constraints on the loop").
+ * the live mic stream (`docs/phase0.md`, "Platform constraints on the loop").
  *
  * Audio is judged in [WINDOW_MS] windows by RMS, the measure the drive report
  * uses. A window is effectively silent below [SILENT_RMS] (about -90 dBFS):

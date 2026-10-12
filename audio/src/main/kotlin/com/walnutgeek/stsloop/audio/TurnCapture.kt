@@ -87,7 +87,7 @@ class TurnCapture(
         testOf = testOf,
         listener = object : CorpusSink.Listener {
             override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) {
-                // Persist, then speak (mvp.md's loop): a Turn that failed to write is not echoed. A command
+                // Persist, then speak (phase0.md's loop): a Turn that failed to write is not echoed. A command
                 // Turn says its reply ("dropped.") instead of its transcript.
                 loop.echo(say)
                 turn.audio.silent?.let { failures.set(SilentFailure.SILENT_RECORDING, it) }
@@ -299,7 +299,7 @@ class TurnCapture(
         /**
          * The [BucketConfig] in `<dir>/buckets.json`, read at Session start so
          * Buckets and their aliases can be edited without a rebuild. A missing
-         * or unreadable file means the mvp.md defaults; otherwise each rejected
+         * or unreadable file means the phase0.md defaults; otherwise each rejected
          * Bucket or alias is logged and the rest still apply.
          */
         fun loadBuckets(dir: File): BucketConfig =

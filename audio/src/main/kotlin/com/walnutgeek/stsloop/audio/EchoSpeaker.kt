@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * The loop's voice: speaks each machine Turn with the system's offline
  * [TextToSpeech], as `USAGE_ASSISTANT` speech. It runs inside the Session's
  * `microphone` foreground service, which is what lets it play from the
- * background on Android 17 (`docs/mvp.md`, "Platform constraints on the loop").
+ * background on Android 17 (`docs/phase0.md`, "Platform constraints on the loop").
  * The output route follows [AudioRoute]: the car's hands-free path when a
  * communication device is set, otherwise A2DP or the speaker.
  *

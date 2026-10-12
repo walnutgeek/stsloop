@@ -141,7 +141,7 @@ data class Classification(
 }
 
 /**
- * A whole-utterance command (`docs/mvp.md`, "Commands"): [json] is its
+ * A whole-utterance command (`docs/phase0.md`, "Commands"): [json] is its
  * `command.name` in `turn.json`, [phrases] what may be said for it. The
  * phrase grammar obeys a phrase only when it is the whole utterance.
  *

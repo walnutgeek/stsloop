@@ -11,7 +11,7 @@ skipping `sessions/` (test-mode route logs), dot entries (Syncthing's
 
 - checks `audio.sha256` against the WAV on disk (`--no-verify` skips the
   hashing; a missing WAV is still reported);
-- applies tombstones, derived on read as `docs/mvp.md` "Corpus format" says:
+- applies tombstones, derived on read as `docs/phase0.md` "Corpus format" says:
   every `kind: "command"` Turn's `tombstones` names a target directory, the
   earliest command wins, and a Turn's own legacy non-null `tombstoned_by` is
   honoured.

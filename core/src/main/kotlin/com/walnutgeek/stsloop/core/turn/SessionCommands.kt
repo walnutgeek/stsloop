@@ -6,7 +6,7 @@ import com.walnutgeek.stsloop.core.CommandInvocation
 import com.walnutgeek.stsloop.core.Turn
 
 /**
- * Carries out whole-utterance commands (`docs/mvp.md`, "Commands") against
+ * Carries out whole-utterance commands (`docs/phase0.md`, "Commands") against
  * one Session's Turns. Confined to the thread that publishes the Session's
  * Turns, and fed every Turn it publishes, in order, through [published].
  *

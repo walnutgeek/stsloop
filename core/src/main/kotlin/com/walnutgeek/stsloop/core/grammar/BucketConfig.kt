@@ -12,7 +12,7 @@ import com.walnutgeek.stsloop.core.jsonString
 data class Bucket(val name: String, val aliases: List<String>)
 
 /**
- * The Buckets a Declaration may name (`docs/mvp.md`, "Phrase grammar").
+ * The Buckets a Declaration may name (`docs/phase0.md`, "Phrase grammar").
  * Read at Session start from `files/buckets.json` in app storage, so it can be
  * edited without a rebuild.
  *
@@ -54,7 +54,7 @@ data class BucketConfig(val buckets: List<Bucket>) {
         /** File name in app storage (`files/buckets.json`). */
         const val FILE = "buckets.json"
 
-        /** The mvp.md Buckets, used when there is no file or it cannot be read as a whole. */
+        /** The phase0.md Buckets, used when there is no file or it cannot be read as a whole. */
         val DEFAULT = BucketConfig(
             listOf(
                 Bucket("errands", listOf("errands", "errand", "shopping")),

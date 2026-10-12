@@ -3,7 +3,7 @@ package com.walnutgeek.stsloop.core
 /**
  * Writes `turn.json`. Hand-rolled rather than a serialisation library: the
  * format is small, write-only on the phone, and its field order and layout are
- * part of the spec (`docs/mvp.md`, Corpus format).
+ * part of the spec (`docs/phase0.md`, Corpus format).
  */
 object TurnJson {
     fun encode(turn: Turn): String = buildString {

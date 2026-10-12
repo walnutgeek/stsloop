@@ -7,7 +7,7 @@ import com.walnutgeek.stsloop.core.TurnKind
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
-/** Whole-utterance commands in the phrase grammar (`docs/mvp.md`, "Commands"). */
+/** Whole-utterance commands in the phrase grammar (`docs/phase0.md`, "Commands"). */
 class CommandGrammarTest {
     private val grammar = PhraseGrammar(BucketConfig.DEFAULT)
 

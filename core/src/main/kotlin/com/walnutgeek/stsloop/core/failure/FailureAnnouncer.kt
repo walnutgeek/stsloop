@@ -2,7 +2,7 @@ package com.walnutgeek.stsloop.core.failure
 
 /**
  * A failure that Android does not report by throwing, so the loop has to
- * notice it and say so (`docs/mvp.md`, "Platform constraints on the loop").
+ * notice it and say so (`docs/phase0.md`, "Platform constraints on the loop").
  * [spoken] is what the loop says when it starts.
  */
 enum class SilentFailure(val spoken: String) {

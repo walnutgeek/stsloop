@@ -43,7 +43,7 @@ class TranscriptListTest {
         }
     """.trimIndent()
 
-    // The full MVP example (docs/mvp.md, Corpus format), with the Declaration fields of #12.
+    // The full MVP example (docs/phase0.md, Corpus format), with the Declaration fields of #12.
     private val declared = """
         {
           "schema": 1,
