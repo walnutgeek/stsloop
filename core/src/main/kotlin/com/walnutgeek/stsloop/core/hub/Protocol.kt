@@ -22,9 +22,17 @@ data class Refusal(val reason: String, val message: String, val supported: List<
 
 /**
  * A phrase that is a command while its Bucket has Focus, or whatever has
- * Focus when [anywhere]; [primitive] runs it.
+ * Focus when [anywhere]; [primitive] runs it. [replyWithinMs], when set, is
+ * how long the phone waits for a `request` command's reply ("what does it
+ * say" asks a model).
  */
-data class HubCommand(val id: String, val phrases: List<String>, val primitive: String, val anywhere: Boolean = false)
+data class HubCommand(
+    val id: String,
+    val phrases: List<String>,
+    val primitive: String,
+    val anywhere: Boolean = false,
+    val replyWithinMs: Long? = null,
+)
 
 /**
  * A hub Bucket, as its Provider describes it (`descriptors.schema.json`). The
@@ -243,6 +251,7 @@ object Protocol {
                 put("phrases", c.phrases)
                 put("primitive", c.primitive)
                 if (c.anywhere) put("anywhere", true)
+                c.replyWithinMs?.let { put("reply_within_ms", it) }
             }
         },
     )
@@ -259,7 +268,10 @@ object Protocol {
             commands = o.list("commands").map { c ->
                 val cm = c as? Map<*, *> ?: throw BadMessage("${o.what}'s command is not an object")
                 val co = Obj(cm, "${o.what}'s command")
-                HubCommand(co.string("id"), co.strings("phrases", minItems = 1), co.string("primitive"), co.boolean("anywhere"))
+                HubCommand(
+                    co.string("id"), co.strings("phrases", minItems = 1), co.string("primitive"), co.boolean("anywhere"),
+                    co.positiveOrNull("reply_within_ms"),
+                )
             },
         )
         for (c in d.commands) {
@@ -288,6 +300,14 @@ object Protocol {
             val l = list(key)
             if (l.size < minItems || !l.all { it is String && it.isNotEmpty() }) throw BadMessage("$what needs $key as a list of non-empty strings")
             return l.map { it as String }
+        }
+
+        /** An optional positive integer: null when absent. */
+        fun positiveOrNull(key: String): Long? {
+            if (key !in map) return null
+            val n = map[key] as? Long ?: throw BadMessage("$what needs $key as an integer")
+            if (n < 1) throw BadMessage("$what has a $key that is not positive")
+            return n
         }
 
         /** A non-negative integer. */

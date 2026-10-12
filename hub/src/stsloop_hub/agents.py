@@ -9,9 +9,10 @@ its state when the hub first saw it has been so "for at least" that long.
   the workspace label as an alias. Further agents in the same workspace are
   "stsloop agent two", "three", and so on, without the alias. An agent keeps
   its name while it lives; a new one takes the lowest number free.
-- **Commands.** An agent's "status" says its state and for how long. The hub
-  Bucket's "what's blocked", heard whatever has Focus, lists blocked agents.
-  Both are `request` commands: the phone sends them and speaks the reply.
+- **Commands.** An agent's "status" says its state and for how long, and its
+  "what does it say" summarises its screen (`summary.py`). The hub Bucket's
+  "what's blocked", heard whatever has Focus, lists blocked agents. All are
+  `request` commands: the phone sends them and speaks the reply.
 - **Without herdr** there is no Provider at all (`cli.py`); with herdr
   installed but not answering, there are no agent Buckets, and "what's
   blocked" says herdr is not answering.
@@ -23,17 +24,24 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from . import protocol as p
 from .buckets import HUB, unknown_bucket, unknown_command
+from .config import MAX_SUMMARY_TIMEOUT_S
+from .herdr import TIMEOUT_S as HERDR_TIMEOUT_S
 from .herdr import Agent, Herdr, HerdrError
+from .summary import Summaries
 
 log = logging.getLogger("stsloop.herdr")
 
 PREFIX = "herdr:"
 STATUS = p.Command(id="status", phrases=("status",), primitive="request")
+#: A summary asks a model, so the phone waits longer for it than for other replies: long enough for herdr's
+#: read, the slowest model the config allows, and the trip, so the fallback comes before the phone gives up.
+READ_WITHIN_MS = int((HERDR_TIMEOUT_S + MAX_SUMMARY_TIMEOUT_S + 3) * 1000)
+READ = p.Command(id="read", phrases=("what does it say", "read it"), primitive="request", reply_within_ms=READ_WITHIN_MS)
 BLOCKED = p.Command(
     id="blocked", phrases=("what's blocked", "what is blocked"), primitive="request", anywhere=True,
 )
@@ -87,8 +95,10 @@ class HerdrProvider:
     `apply`s its result on the loop, where every other method runs: the state
     is only ever read and written on one thread. `refresh` does both, for tests."""
 
-    def __init__(self, herdr: Herdr, clock: Callable[[], float] = time.monotonic):
+    def __init__(self, herdr: Herdr, clock: Callable[[], float] = time.monotonic, summaries: Summaries | None = None):
         self._herdr = herdr
+        #: Without a model, "what does it say" gives the state and the last line.
+        self._summaries = summaries or Summaries(herdr, None, timeout=0)
         self._clock = clock
         self._seen: dict[str, _Seen] = {}
         self._answering = False
@@ -179,7 +189,7 @@ class HerdrProvider:
             aliases = (base,) if n == 0 else ()
             out.append(p.Descriptor(
                 id=PREFIX + pane_id, name=name, aliases=aliases, type="agent",
-                primitives=("request",), commands=(STATUS,),
+                primitives=("request",), commands=(STATUS, READ),
             ))
         return tuple(out)
 
@@ -198,7 +208,7 @@ class HerdrProvider:
     def owns(self, bucket_id: str) -> bool:
         return bucket_id.startswith(PREFIX)
 
-    def answer(self, request: p.Request) -> p.Reply:
+    def answer(self, request: p.Request) -> p.Reply | Awaitable[p.Reply]:
         if request.bucket == HUB.id:
             if request.command != BLOCKED.id:
                 return unknown_command(request)
@@ -207,9 +217,17 @@ class HerdrProvider:
         seen = self._seen.get(request.bucket.removeprefix(PREFIX))
         if name is None or seen is None:
             return unknown_bucket(request)
+        if request.command == READ.id:
+            return self._read(request, name, seen)
         if request.command != STATUS.id:
             return unknown_command(request)
         return p.Reply(id=request.id, say=self._status(name, seen) + ".")
+
+    async def _read(self, request: p.Request, name: str, seen: _Seen) -> p.Reply:
+        # What the summary needs is taken here, on the event loop; the reading and the model run off it.
+        status, state, pane_id = self._status(name, seen), seen.agent.status, seen.agent.pane_id
+        say = await asyncio.to_thread(self._summaries.say, name, state, status, pane_id)
+        return p.Reply(id=request.id, say=say)
 
     def _name(self, bucket_id: str) -> str | None:
         return next((d.name for d in self._descriptors if d.id == bucket_id), None)

@@ -1,23 +1,31 @@
 """The herdr Provider at its seam: a fake herdr and a hand-moved clock."""
 
+import asyncio
+import threading
 import unittest
 
 from stsloop_hub import protocol as p
 from stsloop_hub.agents import GRACE, HerdrProvider, duration
 from stsloop_hub.buckets import Buckets
+from stsloop_hub.summary import Summaries, SummaryError
 
-from support import Clock, FakeHerdr, agent, fixture
+from support import Clock, FakeBackend, FakeHerdr, agent, fixture
 
 
 def request(bucket: str, command: str = "status", rid: str = "r1") -> p.Request:
     return p.Request(id=rid, bucket=bucket, command=command)
 
 
+def answer(buckets: Buckets, request: p.Request) -> p.Reply:
+    return asyncio.run(buckets.answer(request))
+
+
 class Setup(unittest.TestCase):
     def setUp(self):
         self.herdr = FakeHerdr()
         self.clock = Clock()
-        self.provider = HerdrProvider(self.herdr, clock=self.clock)
+        self.backend = FakeBackend()
+        self.provider = HerdrProvider(self.herdr, clock=self.clock, summaries=Summaries(self.herdr, self.backend, timeout=20))
         self.buckets = Buckets([self.provider])
 
     def poll(self, *agents, after: float = 0):
@@ -26,7 +34,7 @@ class Setup(unittest.TestCase):
         return self.provider.refresh()
 
     def say(self, bucket: str, command: str = "status") -> str:
-        return self.buckets.answer(request(bucket, command)).say
+        return answer(self.buckets, request(bucket, command)).say
 
 
 class BucketsTest(Setup):
@@ -79,7 +87,7 @@ class BucketsTest(Setup):
             self.assertTrue(self.provider.refresh())
         self.assertEqual([d.id for d in self.buckets.descriptors()], ["hub"])
         self.assertEqual(self.say("hub", "blocked"), "herdr is not answering.")
-        self.assertEqual(self.buckets.answer(request("herdr:w8:p1")).reason, "unknown_bucket")
+        self.assertEqual(answer(self.buckets, request("herdr:w8:p1")).reason, "unknown_bucket")
 
 
 class StatusTest(Setup):
@@ -87,7 +95,7 @@ class StatusTest(Setup):
         self.poll(agent("w8:p1", "stsloop", "working"))
         self.poll(agent("w8:p1", "stsloop", "blocked", seq=2), after=30)
         self.clock.now += 180
-        reply = self.buckets.answer(request("herdr:w8:p1", rid="a3f1c9"))
+        reply = answer(self.buckets, request("herdr:w8:p1", rid="a3f1c9"))
         self.assertEqual(p.to_json(reply), fixture("v1", "reply/status.json"))
 
     def test_a_state_already_held_at_the_first_poll_is_held_for_at_least_that_long(self):
@@ -109,9 +117,62 @@ class StatusTest(Setup):
 
     def test_an_agent_that_has_gone_or_a_command_it_lacks(self):
         self.poll(agent("w8:p1", "stsloop", "working"))
-        self.assertEqual(p.to_json(self.buckets.answer(request("herdr:w9:p9", rid="a3f1cb"))), fixture("v1", "reply/unknown-bucket.json"))
-        self.assertEqual(self.buckets.answer(request("herdr:w8:p1", "read")).reason, "unknown_command")
-        self.assertEqual(self.buckets.answer(request("claude-code:x")).reason, "unknown_bucket")
+        self.assertEqual(p.to_json(answer(self.buckets, request("herdr:w9:p9", rid="a3f1cb"))), fixture("v1", "reply/unknown-bucket.json"))
+        self.assertEqual(answer(self.buckets, request("herdr:w8:p1", "write")).reason, "unknown_command")
+        self.assertEqual(answer(self.buckets, request("claude-code:x")).reason, "unknown_bucket")
+
+
+class ReadTest(Setup):
+    def test_what_does_it_say_gives_the_summary(self):
+        self.poll(agent("w8:p1", "stsloop", "working"))
+        self.poll(agent("w8:p1", "stsloop", "blocked", seq=2), after=30)
+        self.herdr.screens["w8:p1"] = "Should I rebase onto main or merge it?\n❯ 1. Rebase\n  2. Merge\n"
+        self.backend.answer = "stsloop agent is blocked: it asks whether to rebase onto main or merge."
+        reply = answer(self.buckets, request("herdr:w8:p1", "read", rid="a3f1cc"))
+        self.assertEqual(p.to_json(reply), fixture("v1", "reply/read.json"))
+        [(system, text, timeout)] = self.backend.calls
+        self.assertIn("stsloop agent", text)
+        self.assertIn("blocked", text)
+        self.assertEqual(timeout, 20)
+
+    def test_without_a_model_it_gives_the_state_and_the_last_line(self):
+        self.poll(agent("w8:p1", "stsloop", "working"))
+        self.poll(agent("w8:p1", "stsloop", "blocked", seq=2), after=30)
+        self.clock.now += 180
+        self.herdr.screens["w8:p1"] = "Should I rebase onto main or merge it?\n"
+        self.backend.error = SummaryError("claude took more than 20 s")
+        with self.assertLogs("stsloop.summary", "WARNING"):
+            reply = answer(self.buckets, request("herdr:w8:p1", "read", rid="a3f1cc"))
+        self.assertEqual(p.to_json(reply), fixture("v1", "reply/read-fallback.json"))
+
+    def test_a_provider_with_no_summariser_gives_the_fallback(self):
+        provider = HerdrProvider(self.herdr, clock=self.clock)
+        self.herdr.agents_now = [agent("w8:p1", "stsloop", "idle")]
+        provider.refresh()
+        self.herdr.screens["w8:p1"] = "All 12 tests pass.\n"
+        self.assertEqual(answer(Buckets([provider]), request("herdr:w8:p1", "read")).say,
+                         "stsloop agent is idle, for at least a few seconds. Last line: All 12 tests pass.")
+
+    def test_an_agent_that_has_gone_is_not_read(self):
+        self.poll(agent("w8:p1", "stsloop", "working"))
+        self.assertEqual(answer(self.buckets, request("herdr:w9:p9", "read")).reason, "unknown_bucket")
+        self.assertEqual(self.herdr.reads, [])
+
+    def test_a_summary_does_not_hold_up_the_event_loop(self):
+        self.poll(agent("w8:p1", "stsloop", "idle"))
+        self.herdr.screens["w8:p1"] = "done\n"
+        release = threading.Event()
+        self.backend.wait = release
+
+        async def both():
+            read = asyncio.ensure_future(self.buckets.answer(request("herdr:w8:p1", "read", rid="a")))
+            status = await self.buckets.answer(request("herdr:w8:p1", rid="b"))
+            self.assertFalse(read.done())
+            release.set()
+            return status, await read
+
+        status, read = asyncio.run(both())
+        self.assertEqual((status.id, read.id, read.say), ("b", "a", "a summary."))
 
 
 class BlockedTest(Setup):
@@ -129,7 +190,7 @@ class BlockedTest(Setup):
         self.poll(agent("w4:p1", "woodglue", "blocked"), agent("w8:p1", "stsloop", "working"))
         self.poll(agent("w4:p1", "woodglue", "blocked"), agent("w8:p1", "stsloop", "blocked", seq=2), after=60)
         self.clock.now += 180
-        reply = self.buckets.answer(request("hub", "blocked", rid="a3f1ca"))
+        reply = answer(self.buckets, request("hub", "blocked", rid="a3f1ca"))
         self.assertEqual(p.to_json(reply), fixture("v1", "reply/blocked.json"))
 
 
@@ -152,7 +213,7 @@ class WithoutHerdrTest(unittest.TestCase):
     def test_no_provider_means_only_the_stub_and_every_request_is_unknown(self):
         buckets = Buckets()
         self.assertEqual(p.to_json(p.Descriptors(buckets=buckets.descriptors())), fixture("v1", "descriptors/stub.json"))
-        self.assertEqual(p.to_json(buckets.answer(request("hub", "blocked", rid="a3f1ca"))), fixture("v1", "reply/unknown-command.json"))
+        self.assertEqual(p.to_json(answer(buckets, request("hub", "blocked", rid="a3f1ca"))), fixture("v1", "reply/unknown-command.json"))
 
 
 class FailingProviderTest(unittest.TestCase):
@@ -163,7 +224,7 @@ class FailingProviderTest(unittest.TestCase):
 
         buckets = Buckets([Broken(FakeHerdr())])
         with self.assertLogs("stsloop.hub", "ERROR"):
-            reply = buckets.answer(request("herdr:w1:p1"))
+            reply = answer(buckets, request("herdr:w1:p1"))
         self.assertEqual(reply.reason, "failed")
 
 

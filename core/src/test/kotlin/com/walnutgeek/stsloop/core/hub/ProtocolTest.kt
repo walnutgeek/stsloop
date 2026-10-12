@@ -27,6 +27,18 @@ class ProtocolTest {
     }
 
     @Test
+    fun `a command's reply_within_ms is a positive integer, or absent`() {
+        fun command(extra: String) = """{"type": "descriptors", "buckets": [{"id": "a", "name": "a", "aliases": [], "type": "agent",
+            "primitives": ["request"], "commands": [{"id": "read", "phrases": ["read it"], "primitive": "request"$extra}]}]}"""
+        fun within(extra: String) = (Protocol.decode(command(extra)) as Descriptors).buckets.single().commands.single().replyWithinMs
+        assertEquals(null, within(""))
+        assertEquals(30_000L, within(""", "reply_within_ms": 30000"""))
+        for (bad in listOf("0", "-5", "\"30000\"", "1.5", "true")) {
+            assertThrows<BadMessage>(bad) { Protocol.decode(command(""", "reply_within_ms": $bad""")) }
+        }
+    }
+
+    @Test
     fun `a pairing needs a WebSocket url and a long URL-safe token`() {
         val token = "a".repeat(32)
         Protocol.decode("""{"type": "pairing", "protocol": {"major": 1, "minor": 0}, "url": "ws://h:7717/", "token": "$token"}""")

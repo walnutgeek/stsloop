@@ -23,7 +23,7 @@ class HubProvider(private val snapshot: Descriptors?) : Provider {
         val commands = d.commands.mapNotNull { c ->
             val primitive = Primitive.of(c.primitive) ?: return@mapNotNull null
             if (degraded && primitive != Primitive.REQUEST) return@mapNotNull null
-            BucketCommand(c.id, c.phrases, primitive, c.anywhere)
+            BucketCommand(c.id, c.phrases, primitive, c.anywhere, c.replyWithinMs)
         }
         Descriptor(
             d.name, d.aliases, d.primitives.mapNotNull(Primitive::of).toSet(), hub = true,

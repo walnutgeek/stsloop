@@ -40,7 +40,11 @@ string `type`.
    speak, and a `reason` when the command could not run. A command marked
    `anywhere` is heard whatever has Focus ("what's blocked"); the hub puts
    such commands on its own `hub` Bucket. No capability is needed: a hub
-   that declares a `request` command answers it.
+   that declares a `request` command answers it. The phone waits 5 s for a
+   reply, or as long as the command's `reply_within_ms` asks (up to 60 s),
+   then says the hub did not answer. A hub answers each request as soon as
+   it can, so replies may come in another order than their requests; a
+   slow one ("what does it say", which asks a model) holds up no other.
 6. **Corpus upload.** With the `corpus` capability (a hub offers it when it
    has a Corpus directory to store into), the phone offers each Turn the hub
    has not yet acknowledged, oldest first, one at a time:
@@ -91,7 +95,8 @@ The hub's are in `hub/tests/test_fixtures.py`; a hub publishing only the stub
 Bucket, with an empty Corpus, answers every exchange exactly (an exchange with
 `after` runs on the hub the named earlier exchange left behind).
 `descriptors/herdr.json` and the `reply/` fixtures are what the hub's herdr
-Provider produces for a fake herdr (`hub/tests/test_agents.py`). The phone's
+Provider produces for a fake herdr and a fake summariser
+(`hub/tests/test_agents.py`). The phone's
 are in `core/src/test/kotlin/com/walnutgeek/stsloop/core/hub/`
 (`ProtocolFixturesTest`; `HubLinkTest`, which plays each exchange's hub steps
 to the phone and checks where it ends up: online, refused, offline and

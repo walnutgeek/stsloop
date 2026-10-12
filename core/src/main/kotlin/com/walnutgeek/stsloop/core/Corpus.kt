@@ -188,9 +188,11 @@ enum class Command(val json: String, val phrases: List<String>) {
 
 /**
  * A [Command.REQUEST] as invoked: the [command] id of the Bucket named
- * [bucket], whose Descriptor id is [bucketId].
+ * [bucket], whose Descriptor id is [bucketId]. [replyWithinMs] is how long
+ * its Descriptor asks the phone to wait for the reply; it is not written to
+ * the Turn.
  */
-data class BucketRequest(val bucket: String, val bucketId: String, val command: String)
+data class BucketRequest(val bucket: String, val bucketId: String, val command: String, val replyWithinMs: Long? = null)
 
 /**
  * A command as invoked in one Turn: which [command], the words heard

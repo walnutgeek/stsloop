@@ -25,12 +25,15 @@ enum class Primitive(val json: String) {
  * A command a Bucket declares (`docs/mvp.md`, "Commands"): the [phrases]
  * that are it while the Bucket has Focus, or whatever has Focus when
  * [anywhere], and the [primitive] that runs it. [id] names it to its Provider.
+ * [replyWithinMs] is how long a `request` command's reply may take, when its
+ * Descriptor asks for longer than the default.
  */
 data class BucketCommand(
     val id: String,
     val phrases: List<String>,
     val primitive: Primitive,
     val anywhere: Boolean = false,
+    val replyWithinMs: Long? = null,
 )
 
 /**

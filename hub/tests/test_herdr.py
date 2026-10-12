@@ -5,7 +5,7 @@ import json
 import subprocess
 import unittest
 
-from stsloop_hub.herdr import SNAPSHOT, Agent, HerdrCli, HerdrError, binary, parse_snapshot
+from stsloop_hub.herdr import AGENT_READ, AGENT_READ_AS, SNAPSHOT, Agent, HerdrCli, HerdrError, binary, parse_snapshot
 
 #: The shape of `herdr api snapshot` (herdr 0.9, protocol 22), trimmed to what the hub reads plus a few extras.
 SNAPSHOT_TEXT = json.dumps({
@@ -63,12 +63,34 @@ class Recorder:
 
 
 class CliTest(unittest.TestCase):
-    def test_it_only_ever_runs_api_snapshot(self):
+    def test_it_only_ever_runs_api_snapshot_and_agent_read(self):
         run = Recorder(stdout=SNAPSHOT_TEXT)
         cli = HerdrCli("/opt/herdr", run=run)
         self.assertEqual(len(cli.agents()), 3)
-        self.assertEqual(run.calls, [["/opt/herdr", "api", "snapshot"]])
-        self.assertEqual(SNAPSHOT, ("api", "snapshot"))
+        cli.read("w8:p1", 150)
+        self.assertEqual(run.calls, [
+            ["/opt/herdr", "api", "snapshot"],
+            ["/opt/herdr", "agent", "read", "w8:p1", "--source", "recent", "--format", "text", "--lines", "150"],
+        ])
+        # Both only read: never send-keys, prompt, rename, focus, start or stop.
+        self.assertEqual((SNAPSHOT, AGENT_READ, AGENT_READ_AS),
+                         (("api", "snapshot"), ("agent", "read"), ("--source", "recent", "--format", "text")))
+
+    def test_read_gives_the_screen_as_herdr_prints_it(self):
+        cli = HerdrCli("/opt/herdr", run=Recorder(stdout="line 1\nline 2\n"))
+        self.assertEqual(cli.read("w8:p1", 2), "line 1\nline 2\n")
+
+    def test_read_of_a_pane_herdr_does_not_know_raises(self):
+        run = Recorder(returncode=1, stderr='{"error":{"code":"agent_not_found","message":"agent target w9:p9 not found"}}')
+        with self.assertRaisesRegex(HerdrError, "agent_not_found"):
+            HerdrCli("/opt/herdr", run=run).read("w9:p9", 10)
+
+    def test_read_never_passes_herdr_something_that_is_not_a_pane_id(self):
+        run = Recorder()
+        for pane in ("--help", "", "w8:p1 --x", "-w8"):
+            with self.subTest(pane=pane), self.assertRaises(HerdrError):
+                HerdrCli("/opt/herdr", run=run).read(pane, 10)
+        self.assertEqual(run.calls, [])
 
     def test_an_error_on_stderr_raises(self):
         run = Recorder(returncode=1, stderr='{"error":{"code":"server_unavailable","message":"no server"}}')

@@ -222,6 +222,51 @@ class RequestPrimitiveTest {
     }
 
     @Test
+    fun `what does it say, focused on an agent, waits as long as its Descriptor asks`() {
+        val s = Session()
+        s.hear("STSLOOP")
+        s.hear("What does it say?")
+        assertEquals(Fixtures.json("v1", "request/read.json"), Json.parse(Protocol.encode((s.sent.single() as Request).copy(id = "a3f1cc"))))
+        val command = s.turns.last().classification!!.command!!
+        assertEquals(BucketRequest("stsloop agent", "herdr:w8:p1", "read", replyWithinMs = 30_000), command.request)
+        s.nowMs = HubRequests.REPLY_TIMEOUT_MS
+        s.requests.tick()
+        assertEquals(listOf("stsloop agent."), s.said, "a summary takes longer than other replies")
+        s.requests.replied(Reply("r1", "stsloop agent is blocked: it asks whether to rebase or merge."))
+        assertEquals("stsloop agent is blocked: it asks whether to rebase or merge.", s.said.last())
+        s.hear("READ IT")
+        s.nowMs += 30_000 - 1
+        s.requests.tick()
+        assertEquals(1, s.requests.pending)
+        s.nowMs += 1
+        s.requests.tick()
+        assertEquals(HubRequests.NO_ANSWER, s.said.last())
+    }
+
+    @Test
+    fun `a Descriptor cannot make the phone wait without end, nor less than its default`() {
+        val s = Session()
+        s.requests.request(BucketRequest("a", "x:1", "slow", replyWithinMs = 3_600_000))
+        s.requests.request(BucketRequest("a", "x:1", "quick", replyWithinMs = 1))
+        s.nowMs = HubRequests.REPLY_TIMEOUT_MS
+        s.requests.tick()
+        assertEquals(1, s.requests.pending, "the quick one waits the default")
+        s.nowMs = HubRequests.MAX_REPLY_TIMEOUT_MS
+        s.requests.tick()
+        assertEquals(0, s.requests.pending)
+    }
+
+    @Test
+    fun `reply_within_ms is not written to the Turn`() {
+        val s = Session()
+        s.hear("STSLOOP")
+        s.hear("READ IT")
+        val json = com.walnutgeek.stsloop.core.TurnJson.encode(s.turns.last())
+        assertTrue("\"bucket_id\": \"herdr:w8:p1\"" in json, json)
+        assertTrue("reply_within" !in json && "30000" !in json, json)
+    }
+
+    @Test
     fun `several requests given up on at once say so once`() {
         val s = Session()
         s.hear("WHAT IS BLOCKED")

@@ -75,6 +75,11 @@
         "anywhere": {
           "description": "True: the phrase is a command whatever has Focus (\"what's blocked\"), not only while this Bucket has it. Absent means false. A phone that does not know this field hears the command only under the Bucket's Focus.",
           "type": "boolean"
+        },
+        "reply_within_ms": {
+          "description": "For a `request` command: how long the phone waits for its `reply`, in milliseconds, before it says the hub did not answer. Absent means the phone's default (5 s). The hub sets it for a command that takes longer to answer (\"what does it say\", which asks a model). A phone waits at least its default whatever the value, and may wait less than a long value asks (the v1 phone caps it at 60 s); one that does not know this field waits its default.",
+          "type": "integer",
+          "minimum": 1
         }
       }
     }

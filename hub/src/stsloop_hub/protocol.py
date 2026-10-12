@@ -68,6 +68,8 @@ class Command:
     primitive: str
     #: A command whatever has Focus, not only while its Bucket has it.
     anywhere: bool = False
+    #: How long the phone waits for this command's reply, when longer than its default (a summary).
+    reply_within_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -260,7 +262,17 @@ def _command(obj, what: str) -> Command:
         phrases=_strings(obj, "phrases", what, min_items=1),
         primitive=_string(obj, "primitive", what),
         anywhere=_get(obj, "anywhere", bool, what) if "anywhere" in obj else False,
+        reply_within_ms=_reply_within(obj, what),
     )
+
+
+def _reply_within(obj: dict, what: str) -> int | None:
+    if "reply_within_ms" not in obj:
+        return None
+    value = _get(obj, "reply_within_ms", int, what)
+    if value < 1:
+        raise BadMessage(f"{what}'s reply_within_ms is not positive")
+    return value
 
 
 def _descriptor(obj) -> Descriptor:
@@ -393,6 +405,8 @@ def _command_json(c: Command) -> dict:
     obj = {"id": c.id, "phrases": list(c.phrases), "primitive": c.primitive}
     if c.anywhere:
         obj["anywhere"] = True
+    if c.reply_within_ms is not None:
+        obj["reply_within_ms"] = c.reply_within_ms
     return obj
 
 

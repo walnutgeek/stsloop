@@ -18,7 +18,8 @@
       "type": "agent",
       "primitives": ["request"],
       "commands": [
-        { "id": "status", "phrases": ["status"], "primitive": "request" }
+        { "id": "status", "phrases": ["status"], "primitive": "request" },
+        { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 }
       ]
     },
     {
@@ -28,7 +29,8 @@
       "type": "agent",
       "primitives": ["request"],
       "commands": [
-        { "id": "status", "phrases": ["status"], "primitive": "request" }
+        { "id": "status", "phrases": ["status"], "primitive": "request" },
+        { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 }
       ]
     },
     {
@@ -38,7 +40,8 @@
       "type": "agent",
       "primitives": ["request"],
       "commands": [
-        { "id": "status", "phrases": ["status"], "primitive": "request" }
+        { "id": "status", "phrases": ["status"], "primitive": "request" },
+        { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 }
       ]
     }
   ]
