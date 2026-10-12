@@ -1,0 +1,16 @@
+{
+  "type": "descriptors",
+  "buckets": [
+    {
+      "id": "podcast:show-1",
+      "name": "the daily show",
+      "aliases": ["daily show"],
+      "type": "podcast",
+      "primitives": ["request", "seek"],
+      "commands": [
+        { "id": "status", "phrases": ["status"], "primitive": "request" },
+        { "id": "skip", "phrases": ["skip"], "primitive": "seek" }
+      ]
+    }
+  ]
+}

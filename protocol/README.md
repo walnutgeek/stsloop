@@ -1,0 +1,65 @@
+# The stsloop protocol
+
+The contract between the phone and the hub
+([ADR-0006](../docs/adr/0006-protocol-contract-and-versioning.md)): one JSON
+Schema per message, and golden fixtures that every implementation's tests
+parse. Neither side shares code with the other; they agree here.
+
+```
+schemas/v1/<type>.schema.json      one per message type, JSON Schema 2020-12
+fixtures/v1/<type>/<case>.json     canonical messages; "type" equals the directory
+fixtures/v1/message/<case>.json    messages of types no schema knows (to be ignored)
+fixtures/v1/exchanges.json         conversations: who sends which fixture, in order
+fixtures/v1/equivalents.json       fixtures with extra fields, and the fixture each reads as
+```
+
+`uv run scripts/validate_protocol.py` checks every fixture against its schema
+and the manifests against the fixtures; CI runs it.
+
+## The wire, v1
+
+One WebSocket, phone to hub, one JSON object per text frame, each with a
+string `type`.
+
+1. **Pairing.** `stsloop-hub init` shows a QR code holding a `pairing` message
+   as compact JSON: the hub's `url` and a `token`.
+2. **Authorisation.** The phone opens `url` with the header
+   `Authorization: Bearer <token>`. A wrong or missing token gets HTTP 401, and
+   no WebSocket.
+3. **Handshake.** The phone sends `hello` (its `protocol` major and minor, and
+   its `capabilities`). The hub answers `welcome` (the version and the
+   capabilities it will use) or `refusal` (a `reason`, a sentence fit to be
+   spoken, and the versions it supports), and after a refusal closes with code
+   1008. A hub that gets no `hello` within 10 s closes with 1008 too.
+4. **Descriptors.** With the `descriptors` capability, the hub then sends a
+   `descriptors` snapshot, and a new one whenever a Bucket comes, goes or
+   changes. Each snapshot replaces the last.
+
+The hub serves one phone at a time: a new authorised connection closes the
+older one (code 1000).
+
+## Rules for every receiver
+
+- **Ignore fields you do not know**, at any depth. `equivalents.json` pairs a
+  fixture carrying extras with the fixture it must read as.
+- **Ignore messages whose type you do not know**, before and after the
+  handshake. Fixtures under `message/` are such messages.
+- An unknown Primitive, Bucket type or refusal reason is not an error: see the
+  schema descriptions for how each degrades.
+- Within a major, changes are additive only. When a major is bumped, the
+  previous major's fixtures are frozen in `fixtures/v<N-1>/` and the hub keeps
+  passing them.
+
+## Conformance tests
+
+Every implementation's tests load every fixture and:
+
+- parse each message of a known type; re-encoding a fixture that is not on the
+  left of `equivalents.json` gives the fixture back, compared as parsed JSON
+  (key order and whitespace do not matter);
+- parse each `equivalents.json` pair to equal values;
+- for each message they send, produce output equal, as parsed JSON, to the
+  fixture `exchanges.json` names for that step.
+
+The hub's are in `hub/tests/test_fixtures.py`. A hub publishing only the stub
+Bucket answers every exchange exactly.

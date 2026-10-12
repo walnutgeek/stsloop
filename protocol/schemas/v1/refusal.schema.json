@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stsloop:protocol:v1:refusal",
+  "title": "refusal",
+  "description": "Hub to phone, instead of `welcome`. The hub closes the connection right after it (close code 1008). The phone does not retry until something changes, and can speak `message` as it is.",
+  "type": "object",
+  "required": ["type", "reason", "message"],
+  "properties": {
+    "type": { "const": "refusal" },
+    "reason": {
+      "description": "Machine-readable. Known in v1.0: `unsupported_protocol` (the hello's major is not one the hub supports), `bad_hello` (a hello without a usable protocol or capabilities). A receiver treats a reason it does not know as a plain refusal.",
+      "type": "string",
+      "minLength": 1
+    },
+    "message": {
+      "description": "One short sentence for a person, fit to be spoken.",
+      "type": "string",
+      "minLength": 1
+    },
+    "supported": {
+      "description": "With `unsupported_protocol`: every version the hub speaks, newest first, one per major.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["major", "minor"],
+        "properties": {
+          "major": { "type": "integer", "minimum": 0 },
+          "minor": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

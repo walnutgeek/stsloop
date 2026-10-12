@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stsloop:protocol:v1:descriptors",
+  "title": "descriptors",
+  "description": "Hub to phone, after `welcome` when both sides have the `descriptors` capability, and again whenever a hub Bucket comes, goes or changes. Each one is a full snapshot: it replaces every Descriptor the hub sent before. The phone caches the latest snapshot.",
+  "type": "object",
+  "required": ["type", "buckets"],
+  "properties": {
+    "type": { "const": "descriptors" },
+    "buckets": {
+      "description": "Every Bucket the hub's Providers publish, one Descriptor each. Ids are unique within a snapshot.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/descriptor" }
+    }
+  },
+  "$defs": {
+    "descriptor": {
+      "description": "One Bucket, described for the phone. The phone never runs Provider code; it runs the Primitives named here.",
+      "type": "object",
+      "required": ["id", "name", "aliases", "type", "primitives", "commands"],
+      "properties": {
+        "id": {
+          "description": "Stable across connections and hub restarts; the key the phone caches the Bucket under and addresses it by.",
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "description": "What the loop says for the Bucket. It always counts as an alias.",
+          "type": "string",
+          "minLength": 1
+        },
+        "aliases": {
+          "description": "Further phrases that name the Bucket.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "type": {
+          "description": "The kind of Bucket. Known in v1.0: `agent`, `hub`. A phone treats a type it does not know like any other Bucket, by its Primitives.",
+          "type": "string",
+          "minLength": 1
+        },
+        "primitives": {
+          "description": "The Primitives this Bucket uses. Known in v1.0: `note`, `draft`, `speak_item`, `request`. A phone that does not know one of them keeps only the Bucket's `request` commands, and the loop says so once.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "commands": {
+          "description": "The phrases that are commands while the Bucket has Focus, in a deterministic grammar.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/command" }
+        }
+      }
+    },
+    "command": {
+      "type": "object",
+      "required": ["id", "phrases", "primitive"],
+      "properties": {
+        "id": {
+          "description": "Unique within the Descriptor; what the phone sends back to name the command.",
+          "type": "string",
+          "minLength": 1
+        },
+        "phrases": {
+          "description": "What the person says. The first is the canonical phrase.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "primitive": {
+          "description": "The Primitive that runs the command, one of the Descriptor's `primitives`.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

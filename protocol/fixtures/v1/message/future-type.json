@@ -1,0 +1,5 @@
+{
+  "type": "teleport",
+  "destination": "mars",
+  "protocol": { "major": 1, "minor": 9 }
+}

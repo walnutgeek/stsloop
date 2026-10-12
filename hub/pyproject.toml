@@ -1,0 +1,24 @@
+[project]
+name = "stsloop-hub"
+version = "0.1.0.dev0"
+description = "The stsloop hub: publishes Buckets to the stsloop phone over one WebSocket on your tailnet"
+requires-python = ">=3.11"
+dependencies = [
+    "segno>=1.6",
+    "websockets>=15",
+]
+
+[project.scripts]
+stsloop-hub = "stsloop_hub.cli:main"
+
+[project.urls]
+Repository = "https://github.com/walnutgeek/stsloop"
+
+[dependency-groups]
+dev = [
+    "jsonschema>=4.23",
+]
+
+[build-system]
+requires = ["uv_build>=0.8,<0.13"]
+build-backend = "uv_build"

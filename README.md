@@ -30,6 +30,7 @@ To build and install it, see [Development setup](#development-setup).
 | [`docs/mvp.md`](./docs/mvp.md) | v0.1 scope: the hub, agent Buckets, Drafts, alerts, onboarding, done-criteria |
 | [`docs/phase0.md`](./docs/phase0.md) | Phase 0 spec, as built: the loop, timings, phrase grammar, corpus format |
 | [`docs/corpus-sync.md`](./docs/corpus-sync.md) | Getting the Corpus onto the Linux box, and loading it with `scripts/corpus_load.py` |
+| [`protocol/`](./protocol/) | The phone ↔ hub contract: a JSON Schema per message and golden fixtures |
 | [`docs/adr/`](./docs/adr/) | Architectural decisions and the alternatives rejected |
 | [`docs/research/`](./docs/research/) | Primary-source verification of load-bearing technical claims |
 | [`docs/brainstorm/`](./docs/brainstorm/) | The original exploratory session, and Phase 0 findings that push on the vision. **Inputs, not requirements** |
@@ -57,6 +58,36 @@ echoes and stores everything you say, assigning a Bucket when you name one
 aloud. Because a named Bucket is known with certainty, every declaration is a
 free labelled training example — the system bootstraps the classifier that
 eventually makes declaring optional.
+
+## The hub
+
+`stsloop-hub` runs on the machine where your agents run, and publishes Buckets
+to the phone over one WebSocket on your tailnet
+([ADR-0008](./docs/adr/0008-python-hub.md)). So far it pairs and publishes one
+stub Bucket, "hub"; the herdr and Claude Code Providers come next. It is not on
+PyPI yet, so install it from the repo with [uv](https://docs.astral.sh/uv/):
+
+```sh
+uv tool install "git+https://github.com/walnutgeek/stsloop#subdirectory=hub"   # or, in a clone: uv tool install ./hub
+stsloop-hub init     # writes a pairing token, prints the pairing QR code
+stsloop-hub serve    # serves the phone's WebSocket
+```
+
+`init` keeps its token in `~/.config/stsloop-hub/hub.json` (mode 0600;
+`$STSLOOP_HUB_HOME` or `$XDG_CONFIG_HOME` move it). Running it again shows the
+same QR code; `--new-token` replaces the token, and phones must pair again.
+Both commands use this machine's tailnet address (`tailscale ip -4`) and port
+7717, so the hub listens on the tailnet only. `--host` and `--port` choose
+another address the phone can reach; given to `init`, they are kept for
+`serve`. A phone with the wrong token gets HTTP 401; one speaking a protocol
+major the hub does not support gets a refusal, in a sentence the phone can speak.
+
+The messages are specified in [`protocol/`](./protocol/README.md).
+
+```sh
+uv run scripts/validate_protocol.py                          # every fixture against its schema
+cd hub && uv run python -m unittest discover -s tests -t tests   # the hub's tests
+```
 
 ## Development setup
 

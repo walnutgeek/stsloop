@@ -1,0 +1,31 @@
+{
+  "type": "descriptors",
+  "buckets": [
+    {
+      "id": "herdr:stsloop",
+      "name": "stsloop agent",
+      "aliases": ["stsloop", "the loop agent"],
+      "type": "agent",
+      "primitives": ["draft", "request", "speak_item"],
+      "commands": [
+        { "id": "status", "phrases": ["status"], "primitive": "request" },
+        { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request" },
+        { "id": "read_back", "phrases": ["read it back"], "primitive": "draft" },
+        { "id": "send", "phrases": ["send"], "primitive": "draft" },
+        { "id": "cancel", "phrases": ["cancel"], "primitive": "draft" },
+        { "id": "mute", "phrases": ["quiet"], "primitive": "speak_item" },
+        { "id": "unmute", "phrases": ["unmute"], "primitive": "speak_item" }
+      ]
+    },
+    {
+      "id": "claude-code:house-site",
+      "name": "house site",
+      "aliases": [],
+      "type": "agent",
+      "primitives": ["request", "speak_item"],
+      "commands": [
+        { "id": "status", "phrases": ["status"], "primitive": "request" }
+      ]
+    }
+  ]
+}

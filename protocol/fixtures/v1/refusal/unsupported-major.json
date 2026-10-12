@@ -1,0 +1,6 @@
+{
+  "type": "refusal",
+  "reason": "unsupported_protocol",
+  "message": "The hub speaks protocol 1 and the phone speaks 2. Upgrade the hub.",
+  "supported": [{ "major": 1, "minor": 0 }]
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stsloop:protocol:v1:pairing",
+  "title": "pairing",
+  "description": "What `stsloop-hub init` puts in its QR code, as compact JSON. Not sent over the WebSocket: the phone scans it, stores `url` and `token`, and connects to `url` with the header `Authorization: Bearer <token>`.",
+  "type": "object",
+  "required": ["type", "protocol", "url", "token"],
+  "properties": {
+    "type": { "const": "pairing" },
+    "protocol": {
+      "description": "The newest version the hub speaks. A phone whose major is lower can still try; the hub may speak the previous major too.",
+      "type": "object",
+      "required": ["major", "minor"],
+      "properties": {
+        "major": { "type": "integer", "minimum": 0 },
+        "minor": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "url": {
+      "description": "The hub's WebSocket, by default on its tailnet address.",
+      "type": "string",
+      "pattern": "^wss?://"
+    },
+    "token": {
+      "description": "The shared secret. URL-safe base64, at least 32 characters.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{32,}$"
+    }
+  }
+}
