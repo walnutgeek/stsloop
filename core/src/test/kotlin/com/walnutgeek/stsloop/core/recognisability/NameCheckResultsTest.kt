@@ -55,16 +55,23 @@ class NameCheckResultsTest {
     }
 
     @Test
-    fun `the misheard Bucket phrases are announced once, then never again`() {
+    fun `the flagged Bucket phrases are announced once, then never again`() {
         val r = allChecked(mapOf("stsloop" to "St. Loop.", "errands" to "Errants.", "which bucket" to "Rich bucket."))
             .with("errand", model, heard("errand", "Erin."), 1_000L)
         val say = r.toAnnounce(probes, model)
-        // Commands are not the person's to rename, so the loop does not nag about them; a phrase
-        // heard some of the time is only shown on the settings screen.
-        assertEquals(listOf("errands", "stsloop"), say)
-        assertEquals("hard to hear: errands, stsloop. try other aliases in settings.", NameCheckResults.announcement(say))
-        val after = r.announced(say)
+        // Commands are not the person's to rename, so the loop does not nag about them.
+        assertEquals(listOf("errands", "errand", "stsloop"), say)
+        assertEquals("hard to hear: errands, errand, stsloop. try other aliases in settings.", NameCheckResults.announcement(say))
+        val after = r.announced(say, model)
         assertEquals(emptyList<String>(), after.toAnnounce(probes, model))
+    }
+
+    @Test
+    fun `a phrase announced for one model is announced again when another model cannot hear it either`() {
+        val other = "another-model greedy_search"
+        val r = allChecked(mapOf("stsloop" to "St. Loop.")).announced(listOf("stsloop"), model)
+            .with("stsloop", other, heard("St. Loop."), 2_000L)
+        assertEquals(listOf("stsloop"), r.toAnnounce(probes, other))
     }
 
     @Test
@@ -78,12 +85,13 @@ class NameCheckResultsTest {
     fun `an unchecked phrase is not announced, and neither is one heard`() {
         val r = NameCheckResults.EMPTY.with("errands", model, heard("errands", "errands"), 1_000L)
         assertEquals(emptyList<String>(), r.toAnnounce(probes, model))
+        assertTrue(r.pending(probes, model).isNotEmpty())
         assertNull(NameCheckResults.announcement(emptyList()))
     }
 
     @Test
     fun `round-trips through its file, announcements included`() {
-        val r = allChecked(mapOf("stsloop" to "St. Loop.")).announced(listOf("stsloop"))
+        val r = allChecked(mapOf("stsloop" to "St. Loop.")).announced(listOf("stsloop"), model)
         val parsed = NameCheckResults.parse(r.toJson())
         assertEquals(emptyList<String>(), parsed.rejected)
         assertEquals(r, parsed.results)
@@ -96,12 +104,12 @@ class NameCheckResultsTest {
             {"schema": 1, "results": [
               {"phrase": "errands", "model": "m", "heard": [{"variant": "a", "text": "errands"}], "checked_at": "2026-10-12T10:00:00.000Z"},
               {"phrase": "work", "model": "m", "heard": "nope"}
-            ], "announced": ["stsloop", 7]}
+            ], "announced": [{"phrase": "stsloop", "model": "m"}, 7]}
         """.trimIndent()
         val parsed = NameCheckResults.parse(text)
         assertEquals(Level.HEARD, parsed.results.verdict("errands", "m")!!.level)
         assertNull(parsed.results.verdict("work", "m"))
-        assertEquals(setOf("stsloop"), parsed.results.announcedPhrases)
+        assertEquals(setOf(NameCheckResults.Announced("stsloop", "m")), parsed.results.announced)
         assertEquals(2, parsed.rejected.size)
     }
 

@@ -13,9 +13,9 @@ enum class ProbeKind { BUCKET, COMMAND }
  * not read a dash aloud), and [key] is how results are filed (its words as
  * the grammar reads them, see [Words]). [owner] is the Bucket's name for a
  * [ProbeKind.BUCKET] phrase, else the command's (`where_am_i`, or a hub
- * command's id); [hub] says the Bucket is the hub's.
+ * command's id): phrases with the same kind and owner mean the same thing.
  */
-data class Probe(val spoken: String, val key: String, val kind: ProbeKind, val owner: String, val hub: Boolean = false)
+data class Probe(val spoken: String, val key: String, val kind: ProbeKind, val owner: String)
 
 /** Every phrase the loop listens for, as the check speaks it. */
 object Probes {
@@ -33,20 +33,20 @@ object Probes {
         }
         for (b in registry.buckets) {
             if (b === registry.inbox) continue
-            for (phrase in listOf(b.name) + b.aliases) add(probe(phrase, ProbeKind.BUCKET, b.name, b.hub))
+            for (phrase in listOf(b.name) + b.aliases) add(probe(phrase, ProbeKind.BUCKET, b.name))
         }
         for (c in Command.entries) for (phrase in c.phrases) add(probe(phrase, ProbeKind.COMMAND, c.json))
         add(probe(registry.inbox.name, ProbeKind.COMMAND, registry.inbox.name))
-        for (b in registry.buckets) for (c in b.commands) for (phrase in c.phrases) add(probe(phrase, ProbeKind.COMMAND, c.id, b.hub))
+        for (b in registry.buckets) for (c in b.commands) for (phrase in c.phrases) add(probe(phrase, ProbeKind.COMMAND, c.id))
         return out.values.toList()
     }
 
     /** [phrase] as a probe; null when it has no words. */
-    fun probe(phrase: String, kind: ProbeKind = ProbeKind.BUCKET, owner: String = phrase, hub: Boolean = false): Probe? {
+    fun probe(phrase: String, kind: ProbeKind = ProbeKind.BUCKET, owner: String = phrase): Probe? {
         val text = Words.prepare(phrase)
         val words = Words.of(text)
         if (words.isEmpty()) return null
-        return Probe(words.joinToString(" ") { text.substring(it.start, it.end) }, key(phrase), kind, owner, hub)
+        return Probe(words.joinToString(" ") { text.substring(it.start, it.end) }, key(phrase), kind, owner)
     }
 
     /** How a phrase is filed: its words, as the grammar reads them, separated by spaces. */

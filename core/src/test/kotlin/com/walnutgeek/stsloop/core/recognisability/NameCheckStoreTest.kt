@@ -23,10 +23,10 @@ class NameCheckStoreTest {
         val check = NameCheckStore(files)
         val session = NameCheckStore(files)
         check.update { it.with("stsloop", "m", listOf(Heard("v", "St. Loop.")), 1L) }
-        session.update { it.announced(listOf("stsloop")) }
+        session.update { it.announced(listOf("stsloop"), "m") }
         check.update { it.with("errands", "m", listOf(Heard("v", "errands")), 2L) }
         val r = NameCheckStore(files).read()
-        assertEquals(setOf("stsloop"), r.announcedPhrases)
+        assertEquals(setOf(NameCheckResults.Announced("stsloop", "m")), r.announced)
         assertEquals(listOf("stsloop", "errands"), r.results.map { it.phrase })
     }
 
@@ -35,7 +35,7 @@ class NameCheckStoreTest {
         File(files, NameCheckResults.FILE).writeText("{oops")
         val s = NameCheckStore(files)
         assertEquals(NameCheckResults.EMPTY, s.read())
-        s.update { it.announced(listOf("work")) }
-        assertEquals(setOf("work"), s.read().announcedPhrases)
+        s.update { it.announced(listOf("work"), "m") }
+        assertEquals(setOf(NameCheckResults.Announced("work", "m")), s.read().announced)
     }
 }

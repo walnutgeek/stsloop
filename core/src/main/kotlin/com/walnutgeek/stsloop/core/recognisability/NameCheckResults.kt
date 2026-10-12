@@ -8,22 +8,24 @@ import com.walnutgeek.stsloop.core.corpus.JsonWriter
 /**
  * What the name-recognisability check has heard, and which flagged phrases
  * the loop has already announced. Kept in `files/recognisability.json`, so a
- * phrase is checked once per recogniser model and announced once ever:
+ * phrase is checked, and announced, once per recogniser model:
  * ```json
- * { "schema": 1,
- *   "results": [ { "phrase": "stsloop", "model": "…/int8 greedy_search",
+ * { "results": [ { "phrase": "stsloop", "model": "…/int8 greedy_search",
  *                  "heard": [ { "variant": "en-us-x-iol-local@1.0", "text": "St. Loop." } ],
  *                  "checked_at": "2026-10-12T10:00:00.000Z" } ],
- *   "announced": [ "stsloop" ] }
+ *   "announced": [ { "phrase": "stsloop", "model": "…/int8 greedy_search" } ] }
  * ```
  * The file keeps what was heard, not a verdict, so the policy ([Verdict]) can
  * change without checking again. A result is filed by its phrase's
  * [Probes.key] and the model (`transcript.model`): a new model checks every
  * phrase again. Immutable; each change returns a new value.
  */
-data class NameCheckResults(val results: List<Result>, val announcedPhrases: Set<String>) {
+data class NameCheckResults(val results: List<Checked>, val announced: Set<Announced>) {
     /** What [model] heard for [phrase] (a [Probes.key]), in each variant, at [checkedAtMs]. */
-    data class Result(val phrase: String, val model: String, val heard: List<Heard>, val checkedAtMs: Long)
+    data class Checked(val phrase: String, val model: String, val heard: List<Heard>, val checkedAtMs: Long)
+
+    /** A [phrase] (a [Probes.key]) the loop has said [model] cannot reliably hear. */
+    data class Announced(val phrase: String, val model: String)
 
     /** The judgment of [phrase] (as written anywhere) on [model], or null when it has not been checked there. */
     fun verdict(phrase: String, model: String): Verdict? {
@@ -45,24 +47,24 @@ data class NameCheckResults(val results: List<Result>, val announcedPhrases: Set
     /** With [heard] filed for [phrase] on [model], replacing any earlier result for both. */
     fun with(phrase: String, model: String, heard: List<Heard>, checkedAtMs: Long): NameCheckResults {
         val key = Probes.key(phrase)
-        val result = Result(key, model, heard, checkedAtMs)
+        val result = Checked(key, model, heard, checkedAtMs)
         val at = results.indexOfFirst { it.phrase == key && it.model == model }
         return copy(results = if (at < 0) results + result else results.toMutableList().apply { set(at, result) })
     }
 
     /**
-     * The Bucket phrases of [probes] that [model] misheard in every variant
-     * and the loop has not announced yet, as spoken. Commands are left out:
-     * the person cannot rename them. So is a phrase heard only some of the
-     * time ([Level.SOMETIMES]): both are shown on the settings screen, and
-     * the loop speaks up only for a name it will not hear at all.
+     * The Bucket phrases of [probes] that [model] cannot reliably hear
+     * ([Verdict.flagged]) and the loop has not announced for it yet, as
+     * spoken. Commands are left out: the person cannot rename them, so they
+     * are only shown on the settings screen.
      */
     fun toAnnounce(probes: List<Probe>, model: String): List<String> = probes
-        .filter { it.kind == ProbeKind.BUCKET && it.key !in announcedPhrases && verdict(it, probes, model)?.level == Level.MISHEARD }
+        .filter { it.kind == ProbeKind.BUCKET && Announced(it.key, model) !in announced && verdict(it, probes, model)?.flagged == true }
         .map { it.spoken }
 
-    /** With [phrases] marked as announced, so no later Session says them again. */
-    fun announced(phrases: List<String>): NameCheckResults = copy(announcedPhrases = announcedPhrases + phrases.map(Probes::key))
+    /** With [phrases] marked as announced for [model], so no later Session says them again. */
+    fun announced(phrases: List<String>, model: String): NameCheckResults =
+        copy(announced = announced + phrases.map { Announced(Probes.key(it), model) })
 
     /**
      * One line for the settings screen about [probes] (a Bucket's name and
@@ -75,27 +77,25 @@ data class NameCheckResults(val results: List<Result>, val announcedPhrases: Set
         val verdicts = unique.map { it.spoken to verdict(it, unique, model) }
         val parts = mutableListOf<String>()
         verdicts.filter { it.second?.level == Level.MISHEARD }.takeIf { it.isNotEmpty() }?.let { l ->
-            parts += "Hard to hear: " + l.joinToString(", ") { (p, v) -> "${q(p)} (heard as ${v!!.misheardAs.joinToString(", ") { as_(it) }})" } + "."
+            parts += "Hard to hear: " + l.joinToString(", ") { (p, v) -> "${quoted(p)} (heard as ${misheard(v!!)})" } + "."
         }
         verdicts.filter { it.second?.level == Level.SOMETIMES }.takeIf { it.isNotEmpty() }?.let { l ->
-            parts += "Sometimes misheard: " + l.joinToString(", ") { (p, v) ->
-                "${q(p)} (${v!!.passes} of ${v.heard.size}, as ${v.misheardAs.joinToString(", ") { as_(it) }})"
-            } + "."
+            parts += "Sometimes misheard: " + l.joinToString(", ") { (p, v) -> "${quoted(p)} (${v!!.passes} of ${v.heard.size}, as ${misheard(v)})" } + "."
         }
         verdicts.filter { it.second == null }.takeIf { it.isNotEmpty() }?.let { l ->
-            parts += "Not checked yet: " + l.joinToString(", ") { q(it.first) } + "."
+            parts += "Not checked yet: " + l.joinToString(", ") { quoted(it.first) } + "."
         }
         return parts.joinToString(" ").ifEmpty { "Heard well: all ${unique.size}." }
     }
 
-    private fun q(s: String) = "\"$s\""
+    private fun quoted(s: String) = "\"$s\""
 
-    private fun as_(text: String) = if (text.isBlank()) "nothing" else q(text)
+    /** What [v]'s phrase was heard as instead; an empty transcript is "nothing". */
+    private fun misheard(v: Verdict) = v.misheardAs.joinToString(", ") { if (it.isBlank()) "nothing" else quoted(it) }
 
     /** The file format [parse] reads. */
     fun toJson(): String = JsonWriter.pretty(
         linkedMapOf(
-            SCHEMA to 1,
             RESULTS to results.map { r ->
                 linkedMapOf(
                     PHRASE to r.phrase,
@@ -104,7 +104,7 @@ data class NameCheckResults(val results: List<Result>, val announcedPhrases: Set
                     CHECKED_AT to UtcTimestamp.format(r.checkedAtMs),
                 )
             },
-            ANNOUNCED to announcedPhrases.toList(),
+            ANNOUNCED to announced.map { linkedMapOf(PHRASE to it.phrase, MODEL to it.model) },
         ),
     )
 
@@ -117,7 +117,6 @@ data class NameCheckResults(val results: List<Result>, val announcedPhrases: Set
 
         val EMPTY = NameCheckResults(emptyList(), emptySet())
 
-        private const val SCHEMA = "schema"
         private const val RESULTS = "results"
         private const val ANNOUNCED = "announced"
         private const val PHRASE = "phrase"
@@ -143,7 +142,7 @@ data class NameCheckResults(val results: List<Result>, val announcedPhrases: Set
                 return Parsed(EMPTY, listOf("file: ${e.message}"))
             }
             val rejected = mutableListOf<String>()
-            val results = mutableListOf<Result>()
+            val results = mutableListOf<Checked>()
             for ((i, raw) in (root[RESULTS] as? List<*>).orEmpty().withIndex()) {
                 val r = raw as? Map<*, *>
                 val phrase = r?.get(PHRASE) as? String
@@ -159,11 +158,18 @@ data class NameCheckResults(val results: List<Result>, val announcedPhrases: Set
                     rejected += "$RESULTS[$i]: not a result; dropped"
                     continue
                 }
-                results += Result(phrase, model, heard.map { it!! }, at)
+                results += Checked(phrase, model, heard.map { it!! }, at)
             }
-            val announced = linkedSetOf<String>()
-            for ((i, p) in (root[ANNOUNCED] as? List<*>).orEmpty().withIndex()) {
-                if (p is String && p.isNotEmpty()) announced += Probes.key(p) else rejected += "$ANNOUNCED[$i]: not a phrase; dropped"
+            val announced = linkedSetOf<Announced>()
+            for ((i, raw) in (root[ANNOUNCED] as? List<*>).orEmpty().withIndex()) {
+                val a = raw as? Map<*, *>
+                val phrase = a?.get(PHRASE) as? String
+                val model = a?.get(MODEL) as? String
+                if (phrase.isNullOrEmpty() || model.isNullOrEmpty()) {
+                    rejected += "$ANNOUNCED[$i]: not a phrase and a model; dropped"
+                    continue
+                }
+                announced += Announced(Probes.key(phrase), model)
             }
             return Parsed(NameCheckResults(results, announced), rejected)
         }

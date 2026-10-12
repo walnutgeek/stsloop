@@ -8,7 +8,9 @@ import android.widget.TextView
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.walnutgeek.stsloop.audio.NameCheck
 import com.walnutgeek.stsloop.audio.SessionService
+import com.walnutgeek.stsloop.audio.speech.SayAloud
 import com.walnutgeek.stsloop.audio.hub.HubConnection
 import com.walnutgeek.stsloop.core.hub.BadMessage
 import com.walnutgeek.stsloop.core.hub.Descriptors
@@ -92,6 +94,7 @@ class HubPairingPane(private val activity: Activity) {
                 return@execute
             }
             lateinit var connection: HubConnection
+            val checked = java.util.concurrent.atomic.AtomicBoolean()
             connection = HubConnection( // here, off the UI thread: it reads the pairing just stored
                 activity, store, "pairing",
                 onStatus = { s ->
@@ -100,7 +103,14 @@ class HubPairingPane(private val activity: Activity) {
                         else -> Unit
                     }
                 },
-                onDescriptors = { d -> done(connection, "Paired. ${describe(d)}") },
+                onDescriptors = { d ->
+                    done(connection, "Paired. ${describe(d)}")
+                    // Onboarding step 3 (docs/mvp.md): check the new names, then say the phone is ready.
+                    if (!checked.compareAndSet(false, true)) return@HubConnection // a later snapshot of the same fetch
+                    NameCheck.request(activity, "paired with the hub") {
+                        if (!SessionService.isActive) SayAloud.once(activity, ready(d))
+                    }
+                },
             )
             activity.runOnUiThread { fetch(pairing, connection) }
         }
@@ -156,6 +166,12 @@ class HubPairingPane(private val activity: Activity) {
     }
 
     private fun say(message: String) = activity.runOnUiThread { status.text = message }
+
+    /** "ready, 2 agents.": what the phone says once a pairing's Buckets are fetched and checked. */
+    private fun ready(d: Descriptors): String = when (val n = d.buckets.count { it.type == "agent" }) {
+        1 -> "ready, 1 agent."
+        else -> "ready, $n agents."
+    }
 
     private fun describe(d: Descriptors): String = when (d.buckets.size) {
         0 -> "The hub has no Buckets."

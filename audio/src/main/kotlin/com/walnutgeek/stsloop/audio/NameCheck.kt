@@ -27,11 +27,13 @@ import java.util.concurrent.atomic.AtomicBoolean
  * phrases with no result for the installed model are checked, so a [request]
  * with nothing new returns without loading anything.
  *
- * It never competes with a Session: it does not start while one is active,
- * and stops between two variants once one starts, filing only the phrases
- * it finished; the Session's end requests it again. The recogniser takes
- * ~750 MB and a second one would also take CPU from the loop's own decoding,
- * so the check waits rather than share. It is requested whenever the phrases
+ * It stays off the loop's way: it does not start while a Session is active,
+ * and once one starts it stops before its next variant, filing only the
+ * phrases it finished; the Session's end requests it again. The recogniser
+ * takes ~750 MB and a second one would also take CPU from the loop's own
+ * decoding, so the check waits rather than share. A Session starting mid-run
+ * overlaps it by at most one variant (about a second) or, if the check is
+ * still loading its recogniser, by that load. It is requested whenever the phrases
  * may have changed: at pairing, when a Session ends (the hub may have sent
  * new Descriptors), after an alias edit, and when the app or the settings
  * screen opens.
@@ -42,6 +44,14 @@ object NameCheck {
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "name-check").apply { isDaemon = true } }
     private val queued = AtomicBoolean()
 
+    /** Callers of [request] waiting for the next run to end. */
+    private val waiting = mutableListOf<() -> Unit>()
+
+    /** When the TTS engine last could not be started; it is not tried again for [NO_TTS_RETRY_MS]. */
+    @Volatile
+    private var noTtsAtMs: Long? = null
+    private const val NO_TTS_RETRY_MS = 10 * 60_000L
+
     /** Called on the check's thread after each phrase is filed, and when a run ends. */
     @Volatile
     var listener: (() -> Unit)? = null
@@ -51,12 +61,18 @@ object NameCheck {
     var progress: Pair<Int, Int>? = null
         private set
 
-    /** Any thread: check whatever is not yet checked, now or once no Session is active. [why] is for the log. */
-    fun request(context: Context, why: String) {
+    /**
+     * Any thread: check whatever is not yet checked, now or once no Session is
+     * active. [why] is for the log. [then] is called on the check's thread
+     * when the run that follows this request ends, however it ends.
+     */
+    fun request(context: Context, why: String, then: (() -> Unit)? = null) {
         val app = context.applicationContext
+        if (then != null) synchronized(waiting) { waiting += then }
         if (!queued.compareAndSet(false, true)) return // one run queued is enough: it reads the files when it starts
         executor.execute {
             queued.set(false)
+            val done = synchronized(waiting) { waiting.toList().also { waiting.clear() } }
             try {
                 run(app, why)
             } catch (e: Throwable) {
@@ -64,6 +80,7 @@ object NameCheck {
             } finally {
                 progress = null
                 listener?.invoke()
+                for (d in done) runCatching(d).onFailure { Log.e(TAG, "a caller's follow-up failed", it) }
             }
         }
     }
@@ -77,14 +94,17 @@ object NameCheck {
     /**
      * Session start: the announcement for the Bucket phrases of [registry]
      * that [models] cannot reliably hear and no Session has announced,
-     * marking them announced; null when there are none.
+     * marking them announced; null when there are none. They are marked
+     * before they are said: a Session stopped before its first Silence never
+     * says them, which is better than saying them every Session.
      */
     fun announceOnce(files: File, models: InstalledModels, registry: BucketRegistry): String? {
         val probes = Probes.of(registry)
+        val model = models.modelId
         var say = emptyList<String>()
         NameCheckStore(files).update { r ->
-            say = r.toAnnounce(probes, models.modelId)
-            r.announced(say)
+            say = r.toAnnounce(probes, model)
+            r.announced(say, model)
         }
         return NameCheckResults.announcement(say)
     }
@@ -119,7 +139,17 @@ object NameCheck {
         if (pending.isEmpty()) return
         Log.i(TAG, "checking ${pending.size} phrase(s) ($why): ${pending.joinToString { it.key }}")
         val t0 = SystemClock.elapsedRealtime()
-        val synth = TtsSynth.open(context, File(context.cacheDir, "name-check")) ?: return
+        val noTts = noTtsAtMs
+        if (noTts != null && SystemClock.elapsedRealtime() - noTts < NO_TTS_RETRY_MS) {
+            Log.i(TAG, "not checking ($why): there was no TTS engine a moment ago")
+            return
+        }
+        val synth = TtsSynth.open(context, File(context.cacheDir, "name-check"))
+        if (synth == null) {
+            noTtsAtMs = SystemClock.elapsedRealtime()
+            return
+        }
+        noTtsAtMs = null
         synth.use {
             val variants = NameChecker.variants(synth.voices)
             Log.i(TAG, "variants: ${variants.joinToString { it.id }}")

@@ -41,7 +41,7 @@ class ProbesTest {
         val p = Probes.of(HubProvider.registry(BucketConfig.DEFAULT, herdr))
         val stsloop = p.filter { it.owner == "stsloop agent" }
         assertEquals(listOf("stsloop agent", "stsloop"), stsloop.map { it.key })
-        assertTrue(stsloop.all { it.kind == ProbeKind.BUCKET && it.hub })
+        assertTrue(stsloop.all { it.kind == ProbeKind.BUCKET })
         // "status" is declared by every agent: spoken once.
         assertEquals(1, p.count { it.key == "status" })
         val blocked = p.single { it.key == "whats blocked" }
