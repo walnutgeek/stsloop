@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 
 from stsloop_hub import protocol as p
-from stsloop_hub.agents import HerdrProvider
+from stsloop_hub.agents import AgentsProvider
 from stsloop_hub.buckets import Buckets
 from stsloop_hub.herdr import PROMPT, HerdrCli, HerdrError, HerdrRefused
 from stsloop_hub.sends import INTERRUPTED, NOT_RECORDED, Deliveries, SendLog
@@ -25,7 +25,7 @@ HELLO = json.dumps(fixture("v1", "hello/basic.json"))
 
 def herdr_with_agents() -> tuple[FakeHerdr, Buckets]:
     herdr = FakeHerdr([agent("w4:p1", "woodglue", "idle"), agent("w8:p1", "stsloop", "working")])
-    provider = HerdrProvider(herdr)
+    provider = AgentsProvider(herdr)
     provider.refresh()
     return herdr, Buckets([provider])
 

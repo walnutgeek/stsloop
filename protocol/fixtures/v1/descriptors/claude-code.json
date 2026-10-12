@@ -1,0 +1,29 @@
+{
+  "type": "descriptors",
+  "buckets": [
+    {
+      "id": "hub",
+      "name": "hub",
+      "aliases": ["the hub"],
+      "type": "hub",
+      "primitives": ["request"],
+      "commands": [
+        { "id": "blocked", "phrases": ["what's blocked", "what is blocked"], "primitive": "request", "anywhere": true }
+      ]
+    },
+    {
+      "id": "claude-code:00893aaf-19fa-41d2-8238-13269b9b3ca0",
+      "name": "woodglue agent",
+      "aliases": ["woodglue"],
+      "type": "agent",
+      "primitives": ["request", "speak_item"],
+      "commands": [
+        { "id": "status", "phrases": ["status"], "primitive": "request" },
+        { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 },
+        { "id": "send", "phrases": ["send"], "primitive": "request" },
+        { "id": "quiet", "phrases": ["quiet", "mute alerts"], "primitive": "request" },
+        { "id": "unmute", "phrases": ["unmute", "unmute alerts"], "primitive": "request" }
+      ]
+    }
+  ]
+}

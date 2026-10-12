@@ -124,3 +124,17 @@ class Clock:
 
     def __call__(self) -> float:
         return self.now
+
+
+RECORDINGS = Path(__file__).resolve().parent / "recordings"
+
+
+def recording(name: str) -> list[tuple[str | None, int | None, dict]]:
+    """A Claude Code session's hook events, in order, as `(herdr pane, pid, payload)`: `recorded-*` were
+    captured from Claude Code 2.1 itself, with paths made anonymous; `doc-*` are shaped after its hooks
+    reference, for what a `claude -p` run cannot show (dialogs and notifications)."""
+    events = []
+    for line in (RECORDINGS / f"{name}.jsonl").read_text().splitlines():
+        obj = json.loads(line)
+        events.append((obj["pane"], obj["pid"], obj["payload"]))
+    return events

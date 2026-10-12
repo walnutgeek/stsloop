@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from stsloop_hub import protocol as p
-from stsloop_hub.agents import HerdrProvider
+from stsloop_hub.agents import AgentsProvider
 from stsloop_hub.alerts import Mutes
 from stsloop_hub.buckets import Buckets
 
@@ -26,7 +26,7 @@ class Setup(unittest.TestCase):
         self.dir = Path(tempfile.mkdtemp())
         self.herdr = FakeHerdr()
         self.clock = Clock()
-        self.provider = HerdrProvider(self.herdr, clock=self.clock)
+        self.provider = AgentsProvider(self.herdr, clock=self.clock)
         self.mutes = Mutes(self.dir / "mutes.json")
         self.buckets = Buckets([self.provider], mutes=self.mutes, new_id=ids("7c1e2a90d4b3", "7c1e2a90d4b4"))
 

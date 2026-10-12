@@ -87,6 +87,14 @@ When herdr and the hooks both see the same agent, the hub merges them into one
 Bucket. An agent Bucket's name comes from its herdr workspace or its project
 directory, and its aliases can be edited in settings.
 
+Settled in #47: each hook posts its event to the hub on loopback with the
+session's herdr pane (`$HERDR_PANE_ID`) and Claude Code pid, so a session in
+a herdr pane is that pane's Bucket (`herdr:<pane>`), and one outside herdr is
+`claude-code:<session id>`, whose "send" is a `request` that says sending
+needs herdr. Where the two disagree, the state that began later wins. The
+hooks also tell why an agent is blocked (a question dialog or a permission
+prompt), which "status" says and the hub keeps for a later rung.
+
 ### Commands
 
 Commands are a deterministic grammar declared in the Descriptor, with at most

@@ -5,7 +5,7 @@ import threading
 import unittest
 
 from stsloop_hub import protocol as p
-from stsloop_hub.agents import GRACE, HerdrProvider, duration
+from stsloop_hub.agents import GRACE, AgentsProvider, duration
 from stsloop_hub.buckets import Buckets
 from stsloop_hub.summary import Summaries, SummaryError
 
@@ -25,7 +25,7 @@ class Setup(unittest.TestCase):
         self.herdr = FakeHerdr()
         self.clock = Clock()
         self.backend = FakeBackend()
-        self.provider = HerdrProvider(self.herdr, clock=self.clock, summaries=Summaries(self.herdr, self.backend, timeout=20))
+        self.provider = AgentsProvider(self.herdr, clock=self.clock, summaries=Summaries(self.herdr, self.backend, timeout=20))
         self.buckets = Buckets([self.provider])
 
     def poll(self, *agents, after: float = 0):
@@ -146,7 +146,7 @@ class ReadTest(Setup):
         self.assertEqual(p.to_json(reply), fixture("v1", "reply/read-fallback.json"))
 
     def test_a_provider_with_no_summariser_gives_the_fallback(self):
-        provider = HerdrProvider(self.herdr, clock=self.clock)
+        provider = AgentsProvider(self.herdr, clock=self.clock)
         self.herdr.agents_now = [agent("w8:p1", "stsloop", "idle")]
         provider.refresh()
         self.herdr.screens["w8:p1"] = "All 12 tests pass.\n"
@@ -218,7 +218,7 @@ class WithoutHerdrTest(unittest.TestCase):
 
 class FailingProviderTest(unittest.TestCase):
     def test_a_provider_that_raises_gets_a_failed_reply(self):
-        class Broken(HerdrProvider):
+        class Broken(AgentsProvider):
             def answer(self, request):
                 raise RuntimeError("bug")
 
