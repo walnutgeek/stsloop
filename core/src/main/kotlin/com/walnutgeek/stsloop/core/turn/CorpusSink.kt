@@ -70,7 +70,8 @@ class CorpusSink(
     /** Publishes [pcm] (exactly the [utterance]'s samples) with its [transcription], if the recognizer gave one. */
     fun closed(utterance: Utterance, pcm: ShortArray, transcription: Transcription? = null) {
         val transcript = transcription?.transcript
-        val classification = grammar.classify(transcript?.text, focus.filing)
+        val endMs = utterance.endSample * 1000 / sampleRate
+        val classification = grammar.classify(transcript?.text, focus.filing(endMs))
         val command = classification.command?.let(commands::plan)
         val turn = try {
             val inProgress = writer.begin(newId(), sessionId, utterance.startedAtMs(sessionStartedAtMs, sampleRate), sampleRate)
@@ -89,7 +90,6 @@ class CorpusSink(
         }
         published++
         commands.published(turn)
-        val endMs = utterance.endSample * 1000 / sampleRate
         val focused = turn.classification?.command?.focus
         if (focused != null) focus.set(focused, endMs) else focus.heard(endMs)
         if (command?.endsSession == true) {

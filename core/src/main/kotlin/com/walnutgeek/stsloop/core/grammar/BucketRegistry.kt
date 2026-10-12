@@ -82,9 +82,9 @@ class BucketRegistry(providers: List<Provider>) {
             if (d === inbox) continue
             val name = BucketConfig.formsOf(d.name)
             when {
-                name.isEmpty() -> problems += "${quote(d.name)}: the name has no words; Bucket dropped"
+                name.isEmpty() -> problems += "${jsonString(d.name)}: the name has no words; Bucket dropped"
                 kept.any { k -> BucketConfig.formsOf(k.name).any { it in name } } ->
-                    problems += "${quote(d.name)}: the name is already taken; Bucket dropped"
+                    problems += "${jsonString(d.name)}: the name is already taken; Bucket dropped"
                 else -> kept += d
             }
         }
@@ -94,7 +94,7 @@ class BucketRegistry(providers: List<Provider>) {
             for (phrase in listOf(d.name) + d.aliases) {
                 val forms = BucketConfig.formsOf(phrase)
                 if (d !== inbox && forms.any { it in reserved }) {
-                    problems += "${quote(d.name)}: alias ${quote(phrase)} is reserved for the Inbox; dropped"
+                    problems += "${jsonString(d.name)}: alias ${jsonString(phrase)} is reserved for the Inbox; dropped"
                     continue
                 }
                 for (f in forms) claims.getOrPut(f) { linkedSetOf() } += d.name
@@ -105,23 +105,25 @@ class BucketRegistry(providers: List<Provider>) {
             if (names.size == 1) {
                 owner[form] = names.single()
             } else {
-                problems += "${quote(form.joinToString(" "))}: claimed by ${names.joinToString(" and ")}; dropped from each"
+                problems += "${jsonString(form.joinToString(" "))}: claimed by ${names.joinToString(" and ")}; dropped from each"
             }
         }
         buckets = kept
         rejected = problems
         focusForms = owner
-        val declarable = kept.filter { it !== inbox && Primitive.NOTE in it.primitives }.map { it.name }.toSet()
+        val declarable = kept.filter(::takesNotes).map { it.name }.toSet()
         declarationForms = owner.filterValues { it in declarable }
     }
 
     /** The Bucket called [name], or null. */
     fun named(name: String): Descriptor? = buckets.firstOrNull { it.name == name }
 
+    /** Whether a Turn can be filed in [bucket] as a labelled Note: it uses [Primitive.NOTE] and is not the [inbox]. */
+    fun takesNotes(bucket: Descriptor): Boolean = bucket !== inbox && Primitive.NOTE in bucket.primitives
+
     companion object {
         /** The phone alone, with no hub: the capture Provider over [config]. */
         fun capture(config: BucketConfig) = BucketRegistry(listOf(CaptureProvider(config)))
 
-        private fun quote(s: String) = jsonString(s)
     }
 }

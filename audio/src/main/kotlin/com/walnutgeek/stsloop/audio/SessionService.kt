@@ -287,8 +287,8 @@ class SessionService : Service() {
             if (recoveryDone.compareAndSet(false, true)) recoverStaged(writer)
             val timings = TurnCapture.loadTimings(filesDir)
             Log.i(TAG, "Session $sessionId timings: ${timings.toJson().replace(Regex("\\s+"), " ")}")
-            val buckets = TurnCapture.loadRegistry(filesDir)
-            Log.i(TAG, "Session $sessionId buckets: ${buckets.buckets.joinToString { b -> "${b.name} ${b.aliases}" }}")
+            val registry = TurnCapture.loadRegistry(filesDir)
+            Log.i(TAG, "Session $sessionId buckets: ${registry.buckets.joinToString { b -> "${b.name} ${b.aliases}" }}")
             vad = SpeechModels.newVad(assets)
             val testConfig = TurnCapture.loadTestConfig(filesDir)
             if (testConfig.enabled && !testModeAllowed(this)) {
@@ -348,7 +348,7 @@ class SessionService : Service() {
                 writer, sessionId, startedAt, appVersion(), timings,
                 TurnCapture.silero(vad), SpeechModels.vadConfig().sileroVadModelConfig.windowSize,
                 recognizer = { SttRecognizer.load(assets) },
-                buckets = buckets,
+                buckets = registry,
                 testOf = testMode?.let { t -> t::turnTest },
                 speaker = echo,
                 endSession = { turn ->

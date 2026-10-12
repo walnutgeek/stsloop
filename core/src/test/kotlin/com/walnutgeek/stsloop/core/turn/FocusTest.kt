@@ -18,31 +18,49 @@ class FocusTest {
     @Test
     fun `a Session starts in the Inbox, where nothing is filed`() {
         assertEquals("inbox", focus.bucket.name)
-        assertNull(focus.filing)
+        assertNull(focus.filing(0))
     }
 
     @Test
     fun `focusing a capture Bucket files later Turns there`() {
         focus.set("errands", atMs = 5_000)
         assertEquals("errands", focus.bucket.name)
-        assertEquals("errands", focus.filing)
+        assertEquals("errands", focus.filing(0))
     }
 
     @Test
     fun `focusing the Inbox files nothing again`() {
         focus.set("errands", atMs = 0)
         focus.set("inbox", atMs = 1_000)
-        assertNull(focus.filing)
+        assertNull(focus.filing(0))
     }
 
     @Test
     fun `Focus returns to the Inbox once the timeout passes with nothing heard, once`() {
         focus.set("errands", atMs = 5_000)
         assertFalse(focus.tick(124_999, capturing = false))
-        assertEquals("errands", focus.filing)
+        assertEquals("errands", focus.filing(124_999))
         assertTrue(focus.tick(125_000, capturing = false))
         assertEquals("inbox", focus.bucket.name)
         assertFalse(focus.tick(500_000, capturing = false))
+    }
+
+    @Test
+    fun `a Turn that ended before the timeout but is published after it is still filed under the old Focus`() {
+        focus.set("errands", atMs = 0)
+        focus.heard(5_000) // speech captured until 5 s; its Turn is still being decoded
+        assertTrue(focus.tick(125_000, capturing = false))
+        assertEquals("errands", focus.filing(5_000))
+        assertNull(focus.filing(125_000))
+        focus.set("work", atMs = 130_000)
+        assertEquals("work", focus.filing(5_000))
+    }
+
+    @Test
+    fun `focusing the Inbox by name files a late Turn unlabelled`() {
+        focus.set("errands", atMs = 0)
+        focus.set("inbox", atMs = 1_000)
+        assertNull(focus.filing(500))
     }
 
     @Test
@@ -78,7 +96,7 @@ class FocusTest {
         val f = Focus(BucketRegistry(listOf(agent)), timeoutMs = 120_000)
         f.set("stsloop", atMs = 0)
         assertEquals("stsloop", f.bucket.name)
-        assertNull(f.filing)
+        assertNull(f.filing(0))
     }
 
     @Test

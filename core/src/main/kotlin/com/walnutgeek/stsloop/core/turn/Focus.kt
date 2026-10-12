@@ -2,7 +2,6 @@ package com.walnutgeek.stsloop.core.turn
 
 import com.walnutgeek.stsloop.core.grammar.BucketRegistry
 import com.walnutgeek.stsloop.core.grammar.Descriptor
-import com.walnutgeek.stsloop.core.grammar.Primitive
 
 /**
  * The current Bucket (`CONTEXT.md`, Focus; `docs/mvp.md`, "Focus"), for one
@@ -15,28 +14,40 @@ import com.walnutgeek.stsloop.core.grammar.Primitive
  * Its clock is the Session's sample stream, in milliseconds from sample 0,
  * so the Turns that keep it and the [tick]s that end it agree on time. Turns
  * are published on the STT thread and [tick] runs on the capture thread, so
- * every call is synchronised.
+ * every call is synchronised. A Turn reaches the Corpus some seconds after
+ * it was captured (decoding may lag by up to `TurnCapture.MAX_QUEUED_MS`), so
+ * it is filed by the Focus at the time its utterance ended ([filing]), even
+ * when the timeout has passed since.
  */
 class Focus(private val buckets: BucketRegistry, private val timeoutMs: Long) {
     private var current: Descriptor = buckets.inbox
     private var lastHeardMs = 0L
+
+    /** The Bucket the last timeout left, and the stream time it timed out at; null once Focus is set again. */
+    private var timedOut: Descriptor? = null
+    private var timedOutAtMs = 0L
 
     /** The focused Bucket. */
     val bucket: Descriptor
         @Synchronized get() = current
 
     /**
-     * The Bucket's name a Turn with no command and no Declaration is filed
-     * under, or null: the Inbox, where a Note is unlabelled, and a Bucket that
-     * does not take Notes file nothing.
+     * The name of the Bucket a Turn whose utterance ended at [endedAtMs], with
+     * no command and no Declaration, is filed under: the Bucket that had Focus
+     * then. Null in the Inbox, where a Note is unlabelled, and for a Bucket
+     * that does not take Notes.
      */
-    val filing: String?
-        @Synchronized get() = current.takeIf { it !== buckets.inbox && Primitive.NOTE in it.primitives }?.name
+    @Synchronized
+    fun filing(endedAtMs: Long): String? {
+        val then = timedOut?.takeIf { endedAtMs < timedOutAtMs } ?: current
+        return then.takeIf { buckets.takesNotes(it) }?.name
+    }
 
     /** Focus the Bucket called [name], heard at [atMs]. */
     @Synchronized
     fun set(name: String, atMs: Long) {
         current = requireNotNull(buckets.named(name)) { "no Bucket called \"$name\"" }
+        timedOut = null
         heard(atMs)
     }
 
@@ -55,6 +66,8 @@ class Focus(private val buckets: BucketRegistry, private val timeoutMs: Long) {
     fun tick(nowMs: Long, capturing: Boolean): Boolean {
         if (capturing) heard(nowMs)
         if (current === buckets.inbox || nowMs - lastHeardMs < timeoutMs) return false
+        timedOut = current
+        timedOutAtMs = lastHeardMs + timeoutMs
         current = buckets.inbox
         return true
     }

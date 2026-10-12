@@ -57,11 +57,7 @@ data class Timings(
         const val MAX_UTTERANCE_FLOOR_MS = 1_000
         const val PRE_ROLL_CAP_MS = 5_000
 
-        /**
-         * A Turn is filed under the Focus it was captured in, but it reaches the
-         * Corpus a few seconds later, once decoded; a focus timeout far longer
-         * than that can never expire between the two.
-         */
+        /** Shorter than this, Focus would time out between two Turns of one thought. */
         const val FOCUS_TIMEOUT_FLOOR_MS = 10_000
         const val FOCUS_TIMEOUT_CAP_MS = 3_600_000
 

@@ -49,7 +49,9 @@ import com.walnutgeek.stsloop.core.DeclarationPosition
  * aside, is [Command.FOCUS] on that Bucket, the Inbox included ("inbox").
  * It is matched after the fixed commands and before Declarations. A Turn
  * that is neither a command nor Declared is a Note in the focused Bucket,
- * when [classify] is given one, with all of its words as the content.
+ * when [classify] is given one, its content running from its first word to
+ * its last with [FILLERS] at either end left out; a Turn of only fillers
+ * ("um") stays unclassified.
  *
  * The Buckets come from a [BucketRegistry]: any Bucket in it may be focused,
  * and those using [Primitive.NOTE] (the Inbox aside) may be Declared into.
@@ -102,10 +104,10 @@ class PhraseGrammar(val buckets: BucketRegistry) {
         return CommandInvocation(Command.FOCUS, matched, focus = bucket)
     }
 
-    /** All of [transcript] from its first word to its last, as a Note's content, or null when it has no words. */
+    /** [transcript] as a Note's content: its words, fillers at either end aside, or null when nothing is left. */
     private fun content(transcript: String): String? {
         val text = Words.prepare(transcript)
-        val words = Words.of(text)
+        val words = Words.of(text).dropWhile { it.text in FILLERS }.dropLastWhile { it.text in FILLERS }
         if (words.isEmpty()) return null
         return cased(text, text.substring(words.first().start, words.last().end))
     }

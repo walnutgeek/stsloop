@@ -83,7 +83,13 @@ class FocusGrammarTest {
         assertEquals(Classification.UNCLASSIFIED, grammar.classify("", focus = "errands"))
         assertEquals(Classification.UNCLASSIFIED, grammar.classify(" . ", focus = "errands"))
         assertEquals(Classification.UNCLASSIFIED, grammar.classify(null, focus = "errands"))
+        assertEquals(Classification.UNCLASSIFIED, grammar.classify("UM", focus = "errands"))
+        assertEquals(Classification.UNCLASSIFIED, grammar.classify("okay, so", focus = "errands"))
     }
+
+    @Test
+    fun `fillers at the ends of a Note filed by Focus are left out, inside it they stay`() =
+        assertEquals("buy um milk", grammar.classify("UM BUY UM MILK OKAY", focus = "errands").content)
 
     @Test
     fun `where am I and what bucket are one command`() {

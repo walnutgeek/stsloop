@@ -20,8 +20,8 @@ const val TURN_FILE = "turn.json"
  * `bucket_source` and `content`, as `null` where unset; a command Turn also
  * writes `command` (and, for "scratch that", `tombstones`; for a lone Bucket
  * alias, `focus`). `test` is present only for Turns recorded in Bluetooth
- * test mode (#27). [recovered] marks a
- * Turn published after a crash from what its Session had staged (#15).
+ * test mode (#27). [recovered] marks a Turn published after a crash from
+ * what its Session had staged (#15).
  *
  * There is no `tombstoned_by`: a Turn directory never changes once
  * published, so a Turn cannot record that it was tombstoned later. Readers
