@@ -107,7 +107,7 @@ class RequestPrimitiveTest {
         val g = grammar(agents)
         assertEquals("status", g.classify("status", focused = "stsloop agent").command!!.request!!.command)
         assertEquals("read", g.classify("read it", focused = "stsloop agent").command!!.request!!.command)
-        assertNull(g.classify("send", focused = "stsloop agent").command, "send is a draft command, which the phone cannot run yet")
+        assertNull(g.classify("send", focused = "stsloop agent").command, "the Bucket names speak_item, which the phone does not know yet, so its draft commands go too")
     }
 
     @Test

@@ -149,7 +149,30 @@ class TurnAck:
     message: str | None = None
 
 
-Message = Union[Hello, Welcome, Refusal, Descriptors, Pairing, Request, Reply, TurnOffer, TurnAudio, TurnAck]
+@dataclass(frozen=True)
+class Send:
+    """Phone to hub: deliver the Draft `text` to the agent Bucket whose Descriptor id is `bucket`, at most once
+    for its idempotency `key` (see send.schema.json)."""
+
+    key: str
+    bucket: str
+    text: str
+
+
+@dataclass(frozen=True)
+class Sent:
+    """Hub to phone: the answer to the send `key`. `reason` is None when the Draft was delivered
+    (see sent.schema.json)."""
+
+    key: str
+    say: str
+    reason: str | None = None
+
+
+#: The shortest idempotency key the hub takes: 128 random bits as hex is 32 characters.
+MIN_KEY = 16
+
+Message = Union[Hello, Welcome, Refusal, Descriptors, Pairing, Request, Reply, TurnOffer, TurnAudio, TurnAck, Send, Sent]
 
 
 class BadMessage(ValueError):
@@ -380,7 +403,24 @@ _READERS = {
     "turn_offer": _turn_offer,
     "turn_audio": _turn_audio,
     "turn_ack": _turn_ack,
+    "send": lambda o: Send(
+        key=_key(o, "send"),
+        bucket=_string(o, "bucket", "send"),
+        text=_string(o, "text", "send"),
+    ),
+    "sent": lambda o: Sent(
+        key=_string(o, "key", "sent"),
+        say=_string(o, "say", "sent"),
+        reason=_string(o, "reason", "sent") if "reason" in o else None,
+    ),
 }
+
+
+def _key(obj: dict, what: str) -> str:
+    key = _string(obj, "key", what)
+    if len(key) < MIN_KEY:
+        raise BadMessage(f"{what} needs a key of at least {MIN_KEY} characters")
+    return key
 
 
 # --- encoding ----------------------------------------------------------------
@@ -443,6 +483,14 @@ def to_json(message: Message) -> dict:
             for key, value in (("offset", offset), ("reason", reason), ("message", text)):
                 if value is not None:
                     obj[key] = value
+            return obj
+        case Send(key=key, bucket=bucket, text=text):
+            return {"type": "send", "key": key, "bucket": bucket, "text": text}
+        case Sent(key=key, say=say, reason=reason):
+            obj = {"type": "sent", "key": key}
+            if reason is not None:
+                obj["reason"] = reason
+            obj["say"] = say
             return obj
     raise TypeError(f"not a message: {message!r}")
 

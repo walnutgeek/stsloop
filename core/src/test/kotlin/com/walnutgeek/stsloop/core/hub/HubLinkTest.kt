@@ -86,9 +86,11 @@ class HubLinkTest {
         val scheduler = FakeScheduler()
         val snapshots = mutableListOf<Descriptors>()
         val replies = mutableListOf<Reply>()
+        val answers = mutableListOf<Sent>()
         val link = HubLink(pairing, transport, scheduler, object : HubLink.Listener {
             override fun descriptors(descriptors: Descriptors) { snapshots += descriptors }
             override fun reply(reply: Reply) { replies += reply }
+            override fun sent(sent: Sent) { answers += sent }
         })
         link.start()
         val socket = transport.last
@@ -108,7 +110,7 @@ class HubLinkTest {
             if (step["from"] == "phone") {
                 // After the welcome the phone's requests are its own, sent through the link: fixture for fixture.
                 val message = (step["fixture"] as String?)?.let { Protocol.decode(Fixtures.text(version, it)) }
-                if (welcomed && message is Request) {
+                if (welcomed && (message is Request || message is Send)) {
                     assertTrue(link.send(message))
                     assertEquals(Fixtures.json(version, step["fixture"] as String), Json.parse(socket.sent.last()))
                 }
@@ -144,6 +146,7 @@ class HubLinkTest {
                 val sent = hubSteps.mapNotNull { it["fixture"] as String? }.map { Protocol.decode(Fixtures.text(version, it)) }
                 assertEquals(sent.filterIsInstance<Descriptors>(), snapshots)
                 assertEquals(sent.filterIsInstance<Reply>(), replies)
+                assertEquals(sent.filterIsInstance<Sent>(), answers)
             }
         }
         assertEquals(1, transport.sockets.size)

@@ -10,7 +10,7 @@ from pathlib import Path
 from websockets.asyncio.client import connect
 
 from stsloop_hub.corpus import CorpusStore
-from stsloop_hub.herdr import Agent, HerdrError
+from stsloop_hub.herdr import Agent, HerdrError, HerdrRefused
 from stsloop_hub.hub import Hub
 from stsloop_hub.stub import STUB_BUCKETS
 
@@ -66,7 +66,8 @@ def agent(pane_id: str, workspace: str, status: str, seq: int = 1) -> Agent:
 
 
 class FakeHerdr:
-    """herdr as the hub sees it: the test sets `agents`, or `error` for a herdr that does not answer."""
+    """herdr as the hub sees it: the test sets `agents`, or `error` for a herdr that does not answer.
+    Prompts are recorded in `prompts`, never sent anywhere; `prompt_error` makes the next ones fail."""
 
     def __init__(self, agents=(), error: str | None = None):
         self.agents_now = list(agents)
@@ -75,6 +76,8 @@ class FakeHerdr:
         #: Each pane's screen, as `read` gives it; a pane not here cannot be read.
         self.screens: dict[str, str] = {}
         self.reads: list[tuple[str, int]] = []
+        self.prompts: list[tuple[str, str]] = []
+        self.prompt_error: Exception | None = None
 
     def agents(self):
         self.calls += 1
@@ -87,6 +90,13 @@ class FakeHerdr:
         if pane_id not in self.screens:
             raise HerdrError(f"agent_not_found: {pane_id}")
         return self.screens[pane_id]
+
+    def prompt(self, pane_id: str, text: str) -> None:
+        if isinstance(self.prompt_error, HerdrRefused):
+            raise self.prompt_error
+        self.prompts.append((pane_id, text))
+        if self.prompt_error is not None:
+            raise self.prompt_error
 
 
 class FakeBackend:

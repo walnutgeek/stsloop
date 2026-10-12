@@ -1,4 +1,5 @@
-"""The herdr Provider: one agent Bucket per herdr agent, answering "status" and "what's blocked".
+"""The herdr Provider: one agent Bucket per herdr agent, answering "status" and "what's blocked", and
+taking the Drafts the person sends.
 
 It polls herdr (`refresh`) and remembers since when each agent has been in its
 state, because herdr reports the state and not its age. An agent already in
@@ -13,6 +14,11 @@ its state when the hub first saw it has been so "for at least" that long.
   "what does it say" summarises its screen (`summary.py`). The hub Bucket's
   "what's blocked", heard whatever has Focus, lists blocked agents. All are
   `request` commands: the phone sends them and speaks the reply.
+- **Drafts.** Each agent Bucket declares the `draft` Primitive's commands
+  ("read it back", "send", "cancel"), which the phone runs itself. A sent
+  Draft arrives as a `send`; `prepare_send` says who it goes to, and the
+  delivery it returns submits it with `herdr agent prompt`. Each key is
+  delivered at most once by `sends.Deliveries`, not here.
 - **Without herdr** there is no Provider at all (`cli.py`); with herdr
   installed but not answering, there are no agent Buckets, and "what's
   blocked" says herdr is not answering.
@@ -28,10 +34,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from . import protocol as p
-from .buckets import HUB, unknown_bucket, unknown_command
+from .buckets import HUB, Delivery, unknown_bucket, unknown_bucket_sent, unknown_command
 from .config import MAX_SUMMARY_TIMEOUT_S
 from .herdr import TIMEOUT_S as HERDR_TIMEOUT_S
-from .herdr import Agent, Herdr, HerdrError
+from .herdr import Agent, Herdr, HerdrError, HerdrRefused
 from .summary import Summaries
 
 log = logging.getLogger("stsloop.herdr")
@@ -45,6 +51,10 @@ READ = p.Command(id="read", phrases=("what does it say", "read it"), primitive="
 BLOCKED = p.Command(
     id="blocked", phrases=("what's blocked", "what is blocked"), primitive="request", anywhere=True,
 )
+#: The `draft` Primitive's commands. The phone knows each by its id and runs it itself.
+READ_BACK = p.Command(id="read_back", phrases=("read it back",), primitive="draft")
+SEND = p.Command(id="send", phrases=("send",), primitive="draft")
+CANCEL = p.Command(id="cancel", phrases=("cancel",), primitive="draft")
 POLL_S = 2.0
 #: Polls herdr may fail in a row before its agents' Buckets go.
 GRACE = 3
@@ -73,6 +83,14 @@ def duration(seconds: float, *, at_least: bool = False) -> str:
     if minutes or not hours:
         parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
     return ("for at least " if at_least else "for ") + " ".join(parts)
+
+
+def _refused(name: str, code: str) -> str:
+    if code == "agent_blocked":
+        return f"{name} is waiting on a question, so it was not sent."
+    if code == "agent_not_found":
+        return f"{name} is gone, so it was not sent."
+    return f"herdr would not send it to {name}."
 
 
 def _spoken(label: str) -> str:
@@ -189,7 +207,7 @@ class HerdrProvider:
             aliases = (base,) if n == 0 else ()
             out.append(p.Descriptor(
                 id=PREFIX + pane_id, name=name, aliases=aliases, type="agent",
-                primitives=("request",), commands=(STATUS, READ),
+                primitives=("draft", "request"), commands=(STATUS, READ, READ_BACK, SEND, CANCEL),
             ))
         return tuple(out)
 
@@ -228,6 +246,28 @@ class HerdrProvider:
         status, state, pane_id = self._status(name, seen), seen.agent.status, seen.agent.pane_id
         say = await asyncio.to_thread(self._summaries.say, name, state, status, pane_id)
         return p.Reply(id=request.id, say=say)
+    def prepare_send(self, send: p.Send) -> Delivery:
+        """On the event loop: the delivery of `send` to its agent as the hub knows it now. The delivery
+        blocks (it runs herdr), never raises, and is run once at most."""
+        name = self._name(send.bucket)
+        pane_id = send.bucket.removeprefix(PREFIX)
+        if name is None or pane_id not in self._seen:
+            return lambda: unknown_bucket_sent(send)
+        herdr = self._herdr
+
+        def deliver() -> p.Sent:
+            try:
+                herdr.prompt(pane_id, send.text)
+            except HerdrRefused as e:
+                log.warning("herdr refused the send %s to %s: %s", send.key, pane_id, e)
+                return p.Sent(key=send.key, reason="refused", say=_refused(name, e.code))
+            except HerdrError as e:
+                log.warning("herdr did not confirm the send %s to %s: %s", send.key, pane_id, e)
+                return p.Sent(key=send.key, reason="uncertain", say=f"herdr did not confirm that {name} got it.")
+            log.info("sent %s to %s (%s)", send.key, name, pane_id)
+            return p.Sent(key=send.key, say=f"sent to {name}.")
+
+        return deliver
 
     def _name(self, bucket_id: str) -> str | None:
         return next((d.name for d in self._descriptors if d.id == bucket_id), None)

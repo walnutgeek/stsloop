@@ -129,6 +129,18 @@
         { "from": "phone", "fixture": "turn_audio/bad-sha256-last.json" },
         { "from": "hub", "fixture": "turn_ack/rejected-sha256.json" }
       ]
+    },
+    {
+      "name": "a send to a Bucket the hub does not have is answered unknown_bucket, and the same key again gets the same answer",
+      "steps": [
+        { "from": "phone", "fixture": "hello/basic.json" },
+        { "from": "hub", "fixture": "welcome/basic.json" },
+        { "from": "hub", "fixture": "descriptors/stub.json" },
+        { "from": "phone", "fixture": "send/unknown-bucket.json" },
+        { "from": "hub", "fixture": "sent/unknown-bucket.json" },
+        { "from": "phone", "fixture": "send/unknown-bucket.json" },
+        { "from": "hub", "fixture": "sent/unknown-bucket.json" }
+      ]
     }
   ]
 }

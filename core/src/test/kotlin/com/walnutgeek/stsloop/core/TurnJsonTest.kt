@@ -99,7 +99,7 @@ class TurnJsonTest {
     @Test
     fun `command names are permanent`() {
         // what_bucket (#14) is retired, never reused: "what bucket" is now an alias of where_am_i (#40).
-        assertEquals(listOf("scratch_that", "repeat", "where_am_i", "stop_listening", "focus", "request"), Command.entries.map { it.json })
+        assertEquals(listOf("scratch_that", "repeat", "where_am_i", "stop_listening", "focus", "request", "read_back", "send", "cancel"), Command.entries.map { it.json })
     }
 
     @Test
@@ -288,7 +288,7 @@ class TurnJsonTest {
 
     @Test
     fun `kind and null labels are written without a transcript, and each kind has its spec name`() {
-        assertEquals(listOf("note", "command", "unclassified"), TurnKind.entries.map { it.json })
+        assertEquals(listOf("note", "command", "unclassified", "draft"), TurnKind.entries.map { it.json })
         val json = TurnJson.encode(turn.copy(classification = Classification.UNCLASSIFIED))
         assertTrue(
             json.contains(

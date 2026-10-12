@@ -5,6 +5,8 @@ import com.walnutgeek.stsloop.core.Classification
 import com.walnutgeek.stsloop.core.Command
 import com.walnutgeek.stsloop.core.CommandInvocation
 import com.walnutgeek.stsloop.core.Turn
+import com.walnutgeek.stsloop.core.TurnKind
+import com.walnutgeek.stsloop.core.hub.Drafts
 import com.walnutgeek.stsloop.core.grammar.Descriptor
 
 /**
@@ -52,11 +54,26 @@ import com.walnutgeek.stsloop.core.grammar.Descriptor
  *   itself; its [Outcome.request] goes to the hub once the Turn is
  *   published, and the reply is spoken when it comes ([HubRequests]).
  * - [Command.STOP_LISTENING]: says [STOPPED_LISTENING] and [Outcome.endsSession].
+ *
+ * The `draft` Primitive's commands (#45) act on the [drafts] of the agent
+ * Bucket they name, and record the Draft as it stood ([DraftCommand.text]):
+ * - [Command.READ_BACK]: says "draft for <Bucket>: <text>.", or [NO_DRAFT].
+ * - [Command.CANCEL]: drops the Draft and says [DRAFT_DROPPED], or [NO_DRAFT].
+ * - [Command.SEND]: with a Draft, the hub not known offline, and no earlier
+ *   send of that Bucket still waiting on the hub, takes a new idempotency key
+ *   ([DraftCommand.key]) and says "sending to <Bucket>: <text>."; once that
+ *   readback is over the Draft goes to the hub ([Outcome.send], [Drafts]).
+ *   Otherwise it says [NOTHING_TO_SEND], [Drafts.OFFLINE] or [STILL_SENDING],
+ *   and the Draft stays.
+ * - Focusing a Bucket that has a Draft adds [DRAFT_WAITING].
+ * - "Scratch that" on a Draft Turn takes its words back out of the Draft.
  */
 class SessionCommands(
     private val focus: Focus,
     /** Whether the hub is connected and welcomed now; must return at once. */
     private val hubOnline: () -> Boolean = { false },
+    /** This Session's Drafts. */
+    private val drafts: Drafts = Drafts(send = { false }, say = {}, clockMs = { 0L }),
 ) {
     /**
      * What a command does: the [classification] its Turn is written with, what
@@ -68,6 +85,8 @@ class SessionCommands(
         val endsSession: Boolean = false,
         /** For [Command.REQUEST]: what to send to the hub once the Turn is published. */
         val request: BucketRequest? = null,
+        /** For a [Command.SEND] that goes ahead: the key the Draft is sent under, once [say] (its readback) is over. */
+        val send: String? = null,
     )
 
     /** The previous Turn, or null. Its transcript is never null or blank: only such a Turn becomes [previous]. */
@@ -100,10 +119,30 @@ class SessionCommands(
                 val bucket = focus.named(name)
                 val degraded = bucket?.degraded == true && name !in toldDegraded
                 val said = bucket?.let(::say) ?: bucketAsWords(name)
-                Outcome(plain, if (degraded) "$said $NEEDS_NEWER_APP" else said)
+                val waiting = bucket?.id?.let(drafts::text) != null
+                Outcome(plain, listOfNotNull(said, NEEDS_NEWER_APP.takeIf { degraded }, DRAFT_WAITING.takeIf { waiting }).joinToString(" "))
             }
+            Command.READ_BACK, Command.CANCEL, Command.SEND -> draft(invocation)
             Command.REQUEST -> Outcome(plain, null, request = invocation.request)
             Command.STOP_LISTENING -> Outcome(plain, STOPPED_LISTENING, endsSession = true)
+        }
+    }
+
+    private fun draft(invocation: CommandInvocation): Outcome {
+        val d = invocation.draft!!
+        val text = drafts.text(d.bucketId)
+        val name = bucketAsWords(d.bucket).removeSuffix(".")
+        fun outcome(say: String, key: String? = null) =
+            Outcome(Classification.command(invocation.copy(draft = d.copy(text = text, key = key))), say, send = key)
+        return when (invocation.command) {
+            Command.READ_BACK -> outcome(if (text == null) NO_DRAFT else "draft for $name: $text.")
+            Command.CANCEL -> outcome(if (text == null) NO_DRAFT else DRAFT_DROPPED)
+            else -> when {
+                text == null -> outcome(NOTHING_TO_SEND)
+                !hubOnline() -> outcome(Drafts.OFFLINE)
+                drafts.sending(d.bucketId) -> outcome(STILL_SENDING)
+                else -> outcome("sending to $name: $text.", key = drafts.newKey())
+            }
         }
     }
 
@@ -115,8 +154,20 @@ class SessionCommands(
     fun published(turn: Turn) {
         val command = turn.classification?.command
         command?.focus?.let { name -> if (focus.named(name)?.degraded == true) toldDegraded += name }
+        val c = turn.classification
+        if (c?.kind == TurnKind.DRAFT) drafts.append(c.bucketId!!, c.bucket!!, turn.directoryName, c.content!!)
+        command?.draft?.let { d ->
+            when (command.command) {
+                Command.CANCEL -> drafts.cancel(d.bucketId)
+                Command.SEND -> d.key?.let { drafts.take(d.bucketId, it) }
+                else -> Unit
+            }
+        }
         when {
-            command != null -> if (command.tombstones != null) dropped = true
+            command != null -> if (command.tombstones != null) {
+                dropped = true
+                drafts.drop(command.tombstones)
+            }
             EchoText.of(turn.transcript?.text) != null -> {
                 previous = turn
                 dropped = false
@@ -142,6 +193,21 @@ class SessionCommands(
 
         /** Said once after the name of a Bucket whose Descriptor names a Primitive this app does not know. */
         const val NEEDS_NEWER_APP = "some of its commands need a newer app."
+
+        /** Said by "read it back" and "cancel" when the focused agent has no Draft. */
+        const val NO_DRAFT = "no draft."
+
+        /** Said once "cancel" has dropped the Draft. */
+        const val DRAFT_DROPPED = "draft dropped."
+
+        /** Said when "send" finds no Draft. */
+        const val NOTHING_TO_SEND = "nothing to send."
+
+        /** Said when "send" comes while the Bucket's last send is still waiting on the hub; the new Draft stays. */
+        const val STILL_SENDING = "still sending the last one; draft kept."
+
+        /** Said after the name of a Bucket focused while it has a Draft. */
+        const val DRAFT_WAITING = "a draft is waiting."
 
         /** Said before "stop listening" ends the Session. */
         const val STOPPED_LISTENING = "stopped listening."

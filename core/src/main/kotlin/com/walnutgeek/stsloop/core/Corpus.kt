@@ -94,17 +94,21 @@ data class Transcript(
 /**
  * `kind` in `turn.json`. Corpus labels are permanent training data, so a Turn
  * is a [NOTE] only when its Bucket is known: Declared, or filed by Focus.
- * Everything else, transcribed or not, is [UNCLASSIFIED].
+ * A [DRAFT] (#45) is a Turn appended to an agent Bucket's Draft, under its
+ * Focus. Everything else, transcribed or not, is [UNCLASSIFIED].
  */
 enum class TurnKind(val json: String) {
     NOTE("note"),
     COMMAND("command"),
     UNCLASSIFIED("unclassified"),
+    DRAFT("draft"),
 }
 
 /**
  * What the phrase grammar made of a Turn: its [kind] and, for a [TurnKind.NOTE],
- * the Bucket and the Note's [content]; for a [TurnKind.COMMAND], the [command].
+ * the Bucket and the Note's [content]; for a [TurnKind.DRAFT], the agent
+ * Bucket (and its Descriptor [bucketId]) and the words appended to its Draft;
+ * for a [TurnKind.COMMAND], the [command].
  *
  * A Note is assigned to exactly one Bucket (CONTEXT.md), so it always has a
  * [bucket] and [content]. [bucketSource] says where the [bucket] came from,
@@ -119,6 +123,8 @@ data class Classification(
     val bucketSource: BucketSource? = null,
     val content: String? = null,
     val command: CommandInvocation? = null,
+    /** For a [TurnKind.DRAFT]: the Descriptor id of its agent Bucket. */
+    val bucketId: String? = null,
 ) {
     init {
         require((kind == TurnKind.COMMAND) == (command != null)) { "a command Turn, and only a command Turn, has a command" }
@@ -127,8 +133,11 @@ data class Classification(
             "a Declaration sets the bucket, with bucket_source declaration"
         }
         require(bucketSource != BucketSource.DECLARATION || declaration != null) { "bucket_source declaration needs a Declaration" }
-        require(kind == TurnKind.NOTE || (bucket == null && content == null)) { "only a Note has a bucket and content" }
-        require(kind != TurnKind.NOTE || (bucket != null && content != null)) { "a Note has a bucket and content" }
+        val filed = kind == TurnKind.NOTE || kind == TurnKind.DRAFT
+        require(filed || (bucket == null && content == null)) { "only a Note or a Draft Turn has a bucket and content" }
+        require(!filed || (bucket != null && content != null)) { "a Note or a Draft Turn has a bucket and content" }
+        require((kind == TurnKind.DRAFT) == (bucketId != null)) { "a Draft Turn, and only a Draft Turn, has a bucket id" }
+        require(kind != TurnKind.DRAFT || bucketSource == BucketSource.FOCUS) { "a Draft Turn is filed by Focus" }
     }
 
     companion object {
@@ -140,6 +149,10 @@ data class Classification(
 
         /** A Note filed under the Bucket that had Focus, with no Bucket named in the Turn. */
         fun focused(bucket: String, content: String) = Classification(TurnKind.NOTE, bucket = bucket, bucketSource = BucketSource.FOCUS, content = content)
+
+        /** A Turn appended to the Draft of the agent Bucket [bucket] (Descriptor id [bucketId]), which had Focus. */
+        fun drafted(bucket: String, bucketId: String, content: String) =
+            Classification(TurnKind.DRAFT, bucket = bucket, bucketSource = BucketSource.FOCUS, content = content, bucketId = bucketId)
 
         /** A Turn that was a whole-utterance command. */
         fun command(invocation: CommandInvocation) = Classification(TurnKind.COMMAND, command = invocation)
@@ -184,7 +197,42 @@ enum class Command(val json: String, val phrases: List<String>) {
      * reply is spoken. Its phrases come from the Descriptors, not from here.
      */
     REQUEST("request", emptyList()),
+
+    /**
+     * The `draft` Primitive (#45), for the agent Bucket that has Focus: say its
+     * Draft. Its phrases come from the Descriptor (command id `read_back`).
+     */
+    READ_BACK("read_back", emptyList()),
+
+    /** Read the Draft back, then send it to the hub with an idempotency key (command id `send`). */
+    SEND("send", emptyList()),
+
+    /** Drop the Draft (command id `cancel`). */
+    CANCEL("cancel", emptyList()),
+    ;
+
+    /** Whether it is one of the `draft` Primitive's commands, which carry a [DraftCommand]. */
+    val draft: Boolean get() = this == READ_BACK || this == SEND || this == CANCEL
+
+    companion object {
+        /** The `draft` command a Descriptor's command id names, or null when the phone knows no such one. */
+        fun draftOf(id: String): Command? = when (id) {
+            "read_back" -> READ_BACK
+            "send" -> SEND
+            "cancel" -> CANCEL
+            else -> null
+        }
+    }
 }
+
+/**
+ * A `draft` command as invoked, for the agent Bucket named [bucket] whose
+ * Descriptor id is [bucketId]: the Draft's [text] as it stood (null when there
+ * was none), and for a [Command.SEND] that went to the hub, its idempotency
+ * [key] (null when nothing was sent: no Draft, the hub offline, or a send
+ * still waiting on the hub).
+ */
+data class DraftCommand(val bucket: String, val bucketId: String, val text: String? = null, val key: String? = null)
 
 /**
  * A [Command.REQUEST] as invoked: the [command] id of the Bucket named
@@ -208,12 +256,15 @@ data class CommandInvocation(
     val focus: String? = null,
     val focusId: String? = null,
     val request: BucketRequest? = null,
+    val draft: DraftCommand? = null,
 ) {
     init {
         require(tombstones == null || command == Command.SCRATCH_THAT) { "only scratch_that tombstones a Turn" }
         require((focus != null) == (command == Command.FOCUS)) { "a focus command, and only a focus command, names a Bucket" }
         require(focusId == null || focus != null) { "a focus id goes with a focus" }
         require((request != null) == (command == Command.REQUEST)) { "a request command, and only a request command, has a request" }
+        require((draft != null) == command.draft) { "a draft command, and only a draft command, has a draft" }
+        require(draft?.key == null || command == Command.SEND) { "only send has a key" }
     }
 }
 

@@ -36,6 +36,10 @@ class Focus(private val buckets: () -> BucketRegistry, private val timeoutMs: Lo
     val bucket: Descriptor
         @Synchronized get() = current
 
+    /** The Bucket the last timeout left, until Focus is set again; null when there is none. */
+    val left: Descriptor?
+        @Synchronized get() = timedOut
+
     /**
      * The name of the Bucket a Turn whose utterance ended at [endedAtMs], with
      * no command and no Declaration, is filed under: the Bucket that had Focus

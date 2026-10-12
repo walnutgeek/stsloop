@@ -5,6 +5,7 @@ import com.walnutgeek.stsloop.core.CorpusWriter
 import com.walnutgeek.stsloop.core.Ids
 import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
+import com.walnutgeek.stsloop.core.hub.Drafts
 import com.walnutgeek.stsloop.core.testmode.TurnTest
 
 /**
@@ -25,6 +26,10 @@ import com.walnutgeek.stsloop.core.testmode.TurnTest
  * utterance ended, and once its Turn is published goes to [request], which
  * sends it to the hub (the reply is spoken later) or says why it cannot.
  * Every Turn published restarts the [focus] timeout, at the end of its utterance.
+ *
+ * Under an agent Bucket's Focus a Turn that is no command goes to its Draft
+ * in [drafts] (#45). "Send" is said as a readback ([Listener.readBack]), and
+ * the Draft goes to the hub only once that readback is over.
  */
 class CorpusSink(
     private val writer: CorpusWriter,
@@ -48,6 +53,8 @@ class CorpusSink(
      * or null when it was sent and its reply will be said. Must return at once.
      */
     private val request: (BucketRequest) -> String? = { SessionCommands.HUB_OFFLINE },
+    /** This Session's Drafts; shared with whatever hears the hub's answers to their sends. */
+    private val drafts: Drafts = Drafts(send = { false }, say = {}, clockMs = { 0L }),
     private val listener: Listener,
 ) {
     interface Listener {
@@ -65,10 +72,19 @@ class CorpusSink(
          * the Session. Not called when the command Turn failed to write.
          */
         fun endSession(turn: Turn, say: String) {}
+
+        /**
+         * [turn], a "send", is in the Corpus (and went to [published] just
+         * before, with nothing to say): say [say], the Draft read back, then
+         * call [send]; or, if the readback is never heard (the Session ends
+         * first), [withdraw], which keeps the Draft. With no one to say it to,
+         * the Draft is sent at once.
+         */
+        fun readBack(turn: Turn, say: String, send: () -> Unit, withdraw: () -> Unit) = send()
         fun discarded(event: TurnEvent.Discarded) {}
     }
 
-    private val commands = SessionCommands(focus, hubOnline)
+    private val commands = SessionCommands(focus, hubOnline, drafts)
 
     /** Turns published so far. */
     var published = 0
@@ -103,9 +119,13 @@ class CorpusSink(
         commands.published(turn)
         val focused = turn.classification?.command?.focus
         if (focused != null) focus.set(focused, endMs) else focus.heard(endMs)
+        val key = command?.send
         if (command?.endsSession == true) {
             listener.published(turn, utterance, transcription?.timing, null)
             listener.endSession(turn, command.say.orEmpty())
+        } else if (key != null) {
+            listener.published(turn, utterance, transcription?.timing, null)
+            listener.readBack(turn, command.say.orEmpty(), send = { drafts.dispatch(key) }, withdraw = { drafts.withdraw(key) })
         } else {
             val say = when {
                 command == null -> transcript?.text

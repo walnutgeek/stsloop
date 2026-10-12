@@ -15,9 +15,11 @@
   background): a phone that changed networks reconnects before the old socket
   has noticed it is dead. A refused connection replaces nothing.
 - Once welcomed, each `request` gets one `reply` from `answer`, which may
-  take its time (a summary): replies are sent as they are ready, in the
-  background, while other messages go on being read. Other messages are
-  ignored. `buckets_changed` sends the welcomed phone a new
+  take its time (a summary), and each `send` one `sent` from `deliver`
+  (`sends.py`: each key is delivered at most once, so a send repeated after
+  a reconnect gets the first answer again). Both are answered as they are
+  ready, in the background, while other messages go on being read. Other
+  messages are ignored. `buckets_changed` sends the welcomed phone a new
   `descriptors` snapshot.
 """
 
@@ -38,6 +40,7 @@ from websockets.protocol import State
 from . import protocol as p
 from .buckets import Buckets, failed
 from .corpus import CorpusStore
+from .sends import Deliveries
 
 log = logging.getLogger("stsloop.hub")
 
@@ -54,10 +57,13 @@ class Hub:
         supported: tuple[p.Version, ...] = p.SUPPORTED,
         answer: Callable[[p.Request], p.Reply | Awaitable[p.Reply]] | None = None,
         corpus: CorpusStore | None = None,
+        deliver: Callable[[p.Send], Awaitable[p.Sent]] | None = None,
     ):
         self._token = token.encode()
         self._descriptors = descriptors
         self._answer = answer or Buckets().answer
+        self._deliver = deliver or Deliveries(Buckets().prepare_send).deliver
+        self._delivering: set[asyncio.Task] = set()
         #: The welcomed connection, when it asked for `descriptors`: who hears of new snapshots.
         self._subscriber: ServerConnection | None = None
         self._sending: set[asyncio.Task] = set()
@@ -194,6 +200,10 @@ class Hub:
                     task = asyncio.create_task(self._reply(ws, message))
                     self._sending.add(task)
                     task.add_done_callback(self._sending.discard)
+                elif isinstance(message, p.Send):
+                    task = asyncio.create_task(self._send(ws, message))
+                    self._delivering.add(task)
+                    task.add_done_callback(self._delivering.discard)
                 elif receiver is not None and isinstance(message, (p.TurnOffer, p.TurnAudio)):
                     await ws.send(p.encode(await _receive(receiver, message)))
         finally:
@@ -213,6 +223,15 @@ class Hub:
             await ws.send(p.encode(reply))
         except ConnectionClosed:
             log.info("request %s: the phone left before its reply", request.id)
+
+    async def _send(self, ws: ServerConnection, send: p.Send) -> None:
+        sent = await self._deliver(send)
+        log.info("send %s to %s: %s%s", send.key, send.bucket, sent.say, f" ({sent.reason})" if sent.reason else "")
+        try:
+            await ws.send(p.encode(sent))
+        except ConnectionClosed:
+            # The phone sends the key again once it reconnects, and gets this answer then.
+            log.info("send %s: the phone went before its answer", send.key)
 
 
 async def _receive(receiver, message: p.TurnOffer | p.TurnAudio) -> p.TurnAck:

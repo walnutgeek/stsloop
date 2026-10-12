@@ -48,6 +48,7 @@ object TurnJson {
             append("  \"bucket\": ").strOrNull(c.bucket).append(",\n")
             append("  \"bucket_source\": ").strOrNull(c.bucketSource?.json).append(",\n")
             append("  \"content\": ").strOrNull(c.content).append(",\n")
+            c.bucketId?.let { append("  \"bucket_id\": ").str(it).append(",\n") }
             c.command?.let { cmd ->
                 append("  \"command\": { \"name\": ").str(cmd.command.json)
                 append(", \"matched\": ").str(cmd.matched).append(" },\n")
@@ -58,6 +59,13 @@ object TurnJson {
                     append("  \"request\": { \"bucket\": ").str(r.bucket)
                     append(", \"bucket_id\": ").str(r.bucketId)
                     append(", \"command\": ").str(r.command).append(" },\n")
+                }
+                cmd.draft?.let { d ->
+                    append("  \"draft\": { \"bucket\": ").str(d.bucket)
+                    append(", \"bucket_id\": ").str(d.bucketId)
+                    append(", \"text\": ").strOrNull(d.text)
+                    if (cmd.command == Command.SEND) append(", \"key\": ").strOrNull(d.key)
+                    append(" },\n")
                 }
             }
         }

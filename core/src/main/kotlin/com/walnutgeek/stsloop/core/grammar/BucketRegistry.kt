@@ -5,7 +5,7 @@ import com.walnutgeek.stsloop.core.jsonString
 /**
  * One of the fixed behaviours the phone runs for a Bucket (`CONTEXT.md`,
  * Primitive). A Descriptor composes them; the phone never runs Provider code.
- * `draft` and `speak_item` come later.
+ * `speak_item` comes later.
  */
 enum class Primitive(val json: String) {
     /** File the Turn under the Bucket, as a Note. */
@@ -13,6 +13,13 @@ enum class Primitive(val json: String) {
 
     /** Send a named command to the Bucket's Provider and speak its reply. */
     REQUEST("request"),
+
+    /**
+     * Gather the Turns said under the Bucket's Focus into a Draft, and run its
+     * commands on the phone: read it back, send it to the hub, cancel it
+     * (`docs/mvp.md`, "Send"). A hub Bucket's only.
+     */
+    DRAFT("draft"),
     ;
 
     companion object {
@@ -167,6 +174,10 @@ class BucketRegistry(providers: List<Provider>) {
                 when {
                     words.isEmpty() -> problems += "${jsonString(d.name)}: command ${jsonString(c.id)} phrase ${jsonString(phrase)} has no words; dropped"
                     words in FIXED -> problems += "${jsonString(d.name)}: command ${jsonString(c.id)} phrase ${jsonString(phrase)} is a loop command; dropped"
+                    c.primitive == Primitive.DRAFT && com.walnutgeek.stsloop.core.Command.draftOf(c.id) == null ->
+                        problems += "${jsonString(d.name)}: draft command ${jsonString(c.id)} is not one the phone knows; dropped"
+                    c.primitive == Primitive.DRAFT && (c.anywhere || !takesDrafts(d)) ->
+                        problems += "${jsonString(d.name)}: draft command ${jsonString(c.id)} works only under its own hub Bucket's Focus; dropped"
                     forms.putIfAbsent(words, c) != null -> problems += "${jsonString(d.name)}: command phrase ${jsonString(phrase)} is declared twice; the first kept"
                 }
             }
@@ -192,6 +203,10 @@ class BucketRegistry(providers: List<Provider>) {
 
     /** Whether a Turn can be filed in [bucket] as a labelled Note: it uses [Primitive.NOTE] and is not the [inbox]. */
     fun takesNotes(bucket: Descriptor): Boolean = bucket !== inbox && Primitive.NOTE in bucket.primitives
+
+    /** Whether a Turn under [bucket]'s Focus goes to its Draft: a hub Bucket using [Primitive.DRAFT], and not [takesNotes]. */
+    fun takesDrafts(bucket: Descriptor): Boolean =
+        bucket.hub && bucket.id != null && Primitive.DRAFT in bucket.primitives && !takesNotes(bucket)
 
     companion object {
         /** The phone alone, with no hub: the capture Provider over [config]. */

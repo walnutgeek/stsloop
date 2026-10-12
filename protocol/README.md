@@ -64,6 +64,19 @@ string `type`.
    start. The hub stores the Turn as the phone wrote it,
    `<corpus>/<started_at>-<id>/{turn.json,audio.wav}`, so
    `scripts/corpus_load.py` reads the hub's Corpus unchanged.
+7. **Sends.** The `draft` Primitive's "send" delivers a Draft to an agent
+   Bucket: the phone sends `send` with the Descriptor's `id`, the `text`, and
+   an idempotency `key` (128 random bits, new for every "send"). The hub
+   answers one `sent` carrying the same `key`: a sentence to speak, and no
+   `reason` when the Draft was delivered (`unknown_bucket` or `refused`: not
+   sent; `uncertain`: it may have arrived). The hub tries each key at most
+   once, ever, recording it before it delivers (`sends.jsonl`, which survives
+   a restart), and answers a key it has seen with the answer it gave the
+   first time. So the phone sends the same `send` again on every welcome
+   until a `sent` answers it, and a reconnect never delivers a Draft twice.
+   The `draft` commands themselves ("read it back", "send", "cancel": ids
+   `read_back`, `send`, `cancel`) run on the phone. No capability is needed:
+   a hub that declares a `draft` command answers `send`.
 
 The hub serves one phone at a time: once a new connection is welcomed, the
 hub closes the older one (code 1000). A refused connection replaces nothing.
@@ -96,7 +109,8 @@ Bucket, with an empty Corpus, answers every exchange exactly (an exchange with
 `after` runs on the hub the named earlier exchange left behind).
 `descriptors/herdr.json` and the `reply/` fixtures are what the hub's herdr
 Provider produces for a fake herdr and a fake summariser
-(`hub/tests/test_agents.py`). The phone's
+(`hub/tests/test_agents.py`), and the `sent/` fixtures what it answers the
+`send/` ones with (`hub/tests/test_sends.py`). The phone's
 are in `core/src/test/kotlin/com/walnutgeek/stsloop/core/hub/`
 (`ProtocolFixturesTest`; `HubLinkTest`, which plays each exchange's hub steps
 to the phone and checks where it ends up: online, refused, offline and
@@ -104,4 +118,5 @@ retrying, or unauthorised; and `CorpusUploaderTest`, which plays the hub steps
 of each upload exchange to the uploader, with the offered Turns in its Corpus,
 and checks it sends exactly the phone steps). The phone sends one message,
 `hello/basic.json`, whatever phone a given exchange stands for, then sends the
-exchange's `request`s itself, each equal to its fixture.
+exchange's `request`s and `send`s itself, each equal to its fixture
+(`DraftPrimitiveTest` checks the phone's own send against `send/basic.json`).
