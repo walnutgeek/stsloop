@@ -1,5 +1,6 @@
 package com.walnutgeek.stsloop.core.grammar
 
+import com.walnutgeek.stsloop.core.BucketRequest
 import com.walnutgeek.stsloop.core.Classification
 import com.walnutgeek.stsloop.core.Command
 import com.walnutgeek.stsloop.core.CommandInvocation
@@ -53,6 +54,13 @@ import com.walnutgeek.stsloop.core.DeclarationPosition
  * its last with [FILLERS] at either end left out; a Turn of only fillers
  * ("um") stays unclassified.
  *
+ * **Bucket commands** (`docs/mvp.md`, "Commands") come from the Buckets'
+ * Descriptors, never from phone code. Matched like a fixed command (the
+ * whole utterance, fillers aside), after the fixed commands: first the
+ * commands of the Bucket that has Focus ([classify]'s `focused`), then the
+ * commands every Bucket declares `anywhere` ("what's blocked"), then Bucket
+ * aliases. Each is a [Command.REQUEST] naming its Bucket and command.
+ *
  * The Buckets come from a [BucketRegistry]: any Bucket in it may be focused,
  * and those using [Primitive.NOTE] (the Inbox aside) may be Declared into.
  * When the hub's Buckets change mid-Session, [replace] swaps the registry
@@ -92,14 +100,15 @@ class PhraseGrammar(buckets: BucketRegistry) {
 
     /**
      * What [transcript] (exactly as the engine produced it) is: a command when
-     * it is one as a whole (a lone Bucket alias included), a Note in its
-     * Bucket when Declared, a Note in [focus] (a Bucket's name) when there is
-     * one, otherwise unclassified.
+     * it is one as a whole (a lone Bucket alias, or a command of the [focused]
+     * Bucket or of any Bucket anywhere, included), a Note in its Bucket when
+     * Declared, a Note in [focus] (the name of the Bucket it is filed under)
+     * when there is one, otherwise unclassified.
      */
-    fun classify(transcript: String?, focus: String? = null): Classification {
+    fun classify(transcript: String?, focus: String? = null, focused: String? = focus): Classification {
         if (transcript == null) return Classification.UNCLASSIFIED
         val c = compiled
-        command(transcript, c)?.let { return Classification.command(it) }
+        command(transcript, c, focused)?.let { return Classification.command(it) }
         declaration(transcript, c)?.let { return Classification.declared(it.declaration, it.content) }
         if (focus == null) return Classification.UNCLASSIFIED
         val content = content(transcript) ?: return Classification.UNCLASSIFIED
@@ -107,9 +116,9 @@ class PhraseGrammar(buckets: BucketRegistry) {
     }
 
     /** The command [transcript] is as a whole, fillers at its ends aside, or null. */
-    internal fun command(transcript: String): CommandInvocation? = command(transcript, compiled)
+    internal fun command(transcript: String, focused: String? = null): CommandInvocation? = command(transcript, compiled, focused)
 
-    private fun command(transcript: String, c: Compiled): CommandInvocation? {
+    private fun command(transcript: String, c: Compiled, focused: String?): CommandInvocation? {
         val words = Words.normalise(transcript)
         var from = 0
         var to = words.size
@@ -118,8 +127,14 @@ class PhraseGrammar(buckets: BucketRegistry) {
         val said = words.subList(from, to)
         val matched = said.joinToString(" ")
         commands[said]?.let { return CommandInvocation(it, matched) }
+        val own = focused?.let { c.buckets.commandForms[it]?.get(said) }?.let { focused to it }
+        (own ?: c.buckets.anywhereForms[said])?.let { (name, command) ->
+            val bucket = c.buckets.named(name)
+            val id = bucket?.id ?: return@let
+            return CommandInvocation(Command.REQUEST, matched, request = BucketRequest(name, id, command.id))
+        }
         val bucket = c.buckets.focusForms[said] ?: return null
-        return CommandInvocation(Command.FOCUS, matched, focus = bucket)
+        return CommandInvocation(Command.FOCUS, matched, focus = bucket, focusId = c.buckets.named(bucket)?.id)
     }
 
     /** [transcript] as a Note's content: its words, fillers at either end aside, or null when nothing is left. */

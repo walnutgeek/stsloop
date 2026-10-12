@@ -1,5 +1,6 @@
 """`stsloop-hub init` and `stsloop-hub serve`, with the tailnet and the running hub faked."""
 
+import asyncio
 import io
 import json
 import stat
@@ -9,6 +10,9 @@ import unittest
 from pathlib import Path
 
 from stsloop_hub import cli, config, tailnet
+from stsloop_hub.stub import STUB_BUCKETS
+
+from support import FakeHerdr, agent
 
 TAILNET_IP = "100.101.102.103"
 
@@ -16,10 +20,12 @@ TAILNET_IP = "100.101.102.103"
 class Run:
     """One CLI invocation against a temporary config directory."""
 
-    def __init__(self, home: Path, tailnet_ip: str | None = TAILNET_IP):
+    def __init__(self, home: Path, tailnet_ip: str | None = TAILNET_IP, herdr=None):
         self.home = home
         self.tailnet_ip = tailnet_ip
+        self.herdr = herdr
         self.served = []
+        self.pollers = []
 
     def __call__(self, *argv):
         self.out, self.err = io.StringIO(), io.StringIO()
@@ -29,7 +35,8 @@ class Run:
             out=self.out,
             err=self.err,
             find_tailnet=lambda: self.tailnet_ip,
-            run_hub=lambda hub, host, port: self.served.append((hub, host, port)),
+            run_hub=lambda hub, host, port, pollers: (self.served.append((hub, host, port)), self.pollers.append(pollers)),
+            find_herdr=lambda: self.herdr,
         )
         return self
 
@@ -138,6 +145,33 @@ class ServeTest(unittest.TestCase):
         self.run("init", "--host", "192.168.1.5")
         self.run("serve")
         self.assertEqual(self.run.served[0][1], "192.168.1.5")
+
+    def test_without_herdr_serve_publishes_only_the_hub_bucket_and_polls_nothing(self):
+        self.run("init")
+        self.run("serve")
+        [(hub, _, _)] = self.run.served
+        self.assertEqual(hub._descriptors(), STUB_BUCKETS)
+        self.assertEqual(self.run.pollers, [[]])
+
+    def test_with_herdr_serve_publishes_its_agents_and_polls_it(self):
+        fake = FakeHerdr([agent("w8:p1", "stsloop", "blocked")])
+        run = Run(self.home, herdr=fake)
+        run("init")
+        run("serve")
+        [(hub, _, _)] = run.served
+        [[poll]] = run.pollers
+        self.assertEqual([d.id for d in hub._descriptors()], ["hub"], "nothing before the first poll")
+        changed = []
+
+        async def one_poll():
+            task = asyncio.create_task(poll(lambda: changed.append(True)))
+            while not changed:
+                await asyncio.sleep(0.01)
+            task.cancel()
+
+        asyncio.run(one_poll())
+        self.assertEqual([d.id for d in hub._descriptors()], ["hub", "herdr:w8:p1"])
+        self.assertEqual(hub._descriptors()[0].commands[0].id, "blocked")
 
     def test_a_config_that_is_not_json_is_reported(self):
         self.home.mkdir(parents=True)

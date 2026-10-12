@@ -53,6 +53,12 @@ object TurnJson {
                 append(", \"matched\": ").str(cmd.matched).append(" },\n")
                 if (cmd.command == Command.SCRATCH_THAT) append("  \"tombstones\": ").strOrNull(cmd.tombstones).append(",\n")
                 cmd.focus?.let { append("  \"focus\": ").str(it).append(",\n") }
+                cmd.focusId?.let { append("  \"focus_id\": ").str(it).append(",\n") }
+                cmd.request?.let { r ->
+                    append("  \"request\": { \"bucket\": ").str(r.bucket)
+                    append(", \"bucket_id\": ").str(r.bucketId)
+                    append(", \"command\": ").str(r.command).append(" },\n")
+                }
             }
         }
         turn.test?.let { t ->

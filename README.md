@@ -65,9 +65,11 @@ eventually makes declaring optional.
 
 `stsloop-hub` runs on the machine where your agents run, and publishes Buckets
 to the phone over one WebSocket on your tailnet
-([ADR-0008](./docs/adr/0008-python-hub.md)). So far it pairs and publishes one
-stub Bucket, "hub"; the herdr and Claude Code Providers come next. It is not on
-PyPI yet, so install it from the repo with [uv](https://docs.astral.sh/uv/):
+([ADR-0008](./docs/adr/0008-python-hub.md)). It always publishes the "hub"
+Bucket, and, with herdr (the terminal multiplexer for coding agents)
+installed, one Bucket per herdr agent; the Claude Code Provider comes next.
+It is not on PyPI yet, so install it from the repo with
+[uv](https://docs.astral.sh/uv/):
 
 ```sh
 uv tool install "git+https://github.com/walnutgeek/stsloop#subdirectory=hub"   # or, in a clone: uv tool install ./hub
@@ -92,6 +94,15 @@ focuses it even while the hub is unreachable; the loop then says "hub
 offline". While a Session runs, the phone stays connected, retries a lost
 connection, and reconnects at once when its network changes. A pairing made
 during a Session is used from the next one. **Forget hub** unpairs.
+
+With herdr, each agent is a Bucket named from its workspace ("stsloop
+agent", or just "stsloop"), and Buckets come and go as agents do. Name one,
+then say "status": the loop says whether it is blocked, working or done, and
+for how long. "What's blocked", said whatever has Focus, lists the blocked
+agents. The hub only reads herdr (`herdr api snapshot`, every 2 s); it never
+types into an agent. It runs `$HERDR_BIN_PATH` when set, else `herdr` on the
+PATH, so start `serve` where that is the herdr your server runs. Without
+herdr, the hub starts as before.
 
 ### The settings screen
 

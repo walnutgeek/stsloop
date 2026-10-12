@@ -10,6 +10,9 @@
 - A newer welcomed connection replaces an older one (closed with 1000, in the
   background): a phone that changed networks reconnects before the old socket
   has noticed it is dead. A refused connection replaces nothing.
+- Once welcomed, each `request` gets one `reply` from `answer`; other
+  messages are ignored. `buckets_changed` sends the welcomed phone a new
+  `descriptors` snapshot.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from websockets.exceptions import ConnectionClosed
 from websockets.protocol import State
 
 from . import protocol as p
+from .buckets import Buckets
 
 log = logging.getLogger("stsloop.hub")
 
@@ -39,9 +43,14 @@ class Hub:
         descriptors: Callable[[], tuple[p.Descriptor, ...]],
         hello_timeout: float = HELLO_TIMEOUT_S,
         supported: tuple[p.Version, ...] = p.SUPPORTED,
+        answer: Callable[[p.Request], p.Reply] | None = None,
     ):
         self._token = token.encode()
         self._descriptors = descriptors
+        self._answer = answer or Buckets().answer
+        #: The welcomed connection, when it asked for `descriptors`: who hears of new snapshots.
+        self._subscriber: ServerConnection | None = None
+        self._sending: set[asyncio.Task] = set()
         self._hello_timeout = hello_timeout
         self._supported = supported
         self._current: ServerConnection | None = None
@@ -72,13 +81,15 @@ class Hub:
         try:
             log.info("phone connected from %s", ws.remote_address)
             if await self._handshake(ws):
-                await self._ignore_the_rest(ws)
+                await self._serve(ws)
         except ConnectionClosed:
             pass
         finally:
             self._open.discard(ws)
             if self._current is ws:
                 self._current = None
+            if self._subscriber is ws:
+                self._subscriber = None
             log.info("phone %s disconnected", ws.remote_address)
 
     async def _handshake(self, ws: ServerConnection) -> bool:
@@ -96,9 +107,25 @@ class Hub:
         log.info("welcomed the phone: protocol %d.%d, capabilities %s",
                  answer.protocol.major, answer.protocol.minor, list(answer.capabilities))
         self._replace_current(ws)
-        if "descriptors" in answer.capabilities:
+        self._subscriber = ws if "descriptors" in answer.capabilities else None
+        if self._subscriber is ws:
             await ws.send(p.encode(p.Descriptors(buckets=self._descriptors())))
         return True
+
+    def buckets_changed(self) -> None:
+        """On the event loop: a Bucket came, went or changed; the welcomed phone gets a new snapshot."""
+        ws = self._subscriber
+        if ws is None:
+            return
+        task = asyncio.create_task(self._send_snapshot(ws))
+        self._sending.add(task)
+        task.add_done_callback(self._sending.discard)
+
+    async def _send_snapshot(self, ws: ServerConnection) -> None:
+        try:
+            await ws.send(p.encode(p.Descriptors(buckets=self._descriptors())))
+        except ConnectionClosed:
+            pass
 
     def _replace_current(self, ws: ServerConnection) -> None:
         previous, self._current = self._current, ws
@@ -126,7 +153,17 @@ class Hub:
             log.debug("ignored a %s before hello", type(message).__name__ if message else "message of unknown type")
         raise ConnectionClosed(None, None)
 
-    async def _ignore_the_rest(self, ws: ServerConnection) -> None:
-        # v1 defines nothing the phone sends after hello; receivers ignore what they do not know.
-        async for _ in ws:
-            pass
+    async def _serve(self, ws: ServerConnection) -> None:
+        """After the welcome: answer each request; ignore everything else, as receivers do."""
+        async for frame in ws:
+            if isinstance(frame, bytes):
+                continue
+            try:
+                message = p.decode(frame)
+            except p.BadMessage as e:
+                log.warning("ignored a broken %s from the phone: %s", e.message_type or "frame", e)
+                continue
+            if isinstance(message, p.Request):
+                reply = self._answer(message)
+                log.info("request %s %s/%s: %s", message.id, message.bucket, message.command, reply.say)
+                await ws.send(p.encode(reply))

@@ -15,7 +15,9 @@ import com.walnutgeek.stsloop.core.hub.HubSocket
 import com.walnutgeek.stsloop.core.hub.HubStatus
 import com.walnutgeek.stsloop.core.hub.HubStore
 import com.walnutgeek.stsloop.core.hub.HubTransport
+import com.walnutgeek.stsloop.core.hub.Message
 import com.walnutgeek.stsloop.core.hub.Pairing
+import com.walnutgeek.stsloop.core.hub.Reply
 import com.walnutgeek.stsloop.core.hub.Scheduler
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -49,6 +51,8 @@ class HubConnection(
     private val owner: String,
     private val onStatus: (HubStatus) -> Unit = {},
     private val onDescriptors: (Descriptors) -> Unit = {},
+    /** The hub answered a request; called on OkHttp's thread with the link's lock held, so it must return at once. */
+    private val onReply: (Reply) -> Unit = {},
 ) {
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val timers: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { r ->
@@ -89,6 +93,8 @@ class HubConnection(
             }
         }
 
+        override fun reply(reply: Reply) = onReply(reply)
+
         override fun ignored(why: String) {
             Log.w(TAG, "$owner: ignored $why from the hub")
         }
@@ -99,6 +105,9 @@ class HubConnection(
 
     /** Whether the loop should say "hub offline" ([HubLink.offline]). */
     val offline: Boolean get() = link.offline
+
+    /** Queues [message] for the hub; false unless it is online ([HubLink.send]). Returns at once. */
+    fun send(message: Message): Boolean = link.send(message)
 
     /** Calls [HubLink.networkChanged] when the network it is told about changes; one per watched network. */
     private inner class Watch(private val which: String) : ConnectivityManager.NetworkCallback() {

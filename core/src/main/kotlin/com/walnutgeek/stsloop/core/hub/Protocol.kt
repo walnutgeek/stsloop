@@ -19,8 +19,11 @@ data class Welcome(val protocol: Version, val capabilities: List<String>) : Mess
 /** Hub to phone, instead of [Welcome]; the hub closes with 1008 right after. [message] is fit to be spoken. */
 data class Refusal(val reason: String, val message: String, val supported: List<Version> = emptyList()) : Message
 
-/** A phrase that is a command while its Bucket has Focus; [primitive] runs it. */
-data class HubCommand(val id: String, val phrases: List<String>, val primitive: String)
+/**
+ * A phrase that is a command while its Bucket has Focus, or whatever has
+ * Focus when [anywhere]; [primitive] runs it.
+ */
+data class HubCommand(val id: String, val phrases: List<String>, val primitive: String, val anywhere: Boolean = false)
 
 /**
  * A hub Bucket, as its Provider describes it (`descriptors.schema.json`). The
@@ -38,6 +41,12 @@ data class HubDescriptor(
 
 /** Hub to phone: every hub Bucket, a full snapshot that replaces the last. */
 data class Descriptors(val buckets: List<HubDescriptor>) : Message
+
+/** Phone to hub: run the `request` command [command] of the Bucket whose Descriptor id is [bucket]. */
+data class Request(val id: String, val bucket: String, val command: String) : Message
+
+/** Hub to phone: the answer to the [Request] [id], to be spoken as it is. [reason] is null when the command ran. */
+data class Reply(val id: String, val say: String, val reason: String? = null) : Message
 
 /** What the hub's QR code holds: where the hub is, and the token to connect with. Never sent over the WebSocket. */
 data class Pairing(val protocol: Version, val url: String, val token: String) : Message {
@@ -95,6 +104,8 @@ object Protocol {
                     if ("supported" in obj) o.list("supported").map { Obj(mapOf("v" to it), "refusal's supported").version("v") } else emptyList(),
                 )
                 "descriptors" -> Descriptors(o.list("buckets").map(::descriptor))
+                "request" -> Request(o.string("id"), o.string("bucket"), o.string("command"))
+                "reply" -> Reply(o.string("id"), o.string("say"), if ("reason" in obj) o.string("reason") else null)
                 "pairing" -> {
                     val url = o.string("url")
                     val token = o.string("token")
@@ -122,6 +133,13 @@ object Protocol {
         }
         is Descriptors -> mapOf("type" to "descriptors", "buckets" to message.buckets.map(::descriptorJson))
         is Pairing -> mapOf("type" to "pairing", "protocol" to v(message.protocol), "url" to message.url, "token" to message.token)
+        is Request -> mapOf("type" to "request", "id" to message.id, "bucket" to message.bucket, "command" to message.command)
+        is Reply -> buildMap {
+            put("type", "reply")
+            put("id", message.id)
+            message.reason?.let { put("reason", it) }
+            put("say", message.say)
+        }
     }
 
     private fun v(version: Version) = mapOf("major" to version.major, "minor" to version.minor)
@@ -132,7 +150,14 @@ object Protocol {
         "aliases" to d.aliases,
         "type" to d.type,
         "primitives" to d.primitives,
-        "commands" to d.commands.map { c -> mapOf("id" to c.id, "phrases" to c.phrases, "primitive" to c.primitive) },
+        "commands" to d.commands.map { c ->
+            buildMap {
+                put("id", c.id)
+                put("phrases", c.phrases)
+                put("primitive", c.primitive)
+                if (c.anywhere) put("anywhere", true)
+            }
+        },
     )
 
     private fun descriptor(value: Any?): HubDescriptor {
@@ -147,7 +172,7 @@ object Protocol {
             commands = o.list("commands").map { c ->
                 val cm = c as? Map<*, *> ?: throw BadMessage("${o.what}'s command is not an object")
                 val co = Obj(cm, "${o.what}'s command")
-                HubCommand(co.string("id"), co.strings("phrases", minItems = 1), co.string("primitive"))
+                HubCommand(co.string("id"), co.strings("phrases", minItems = 1), co.string("primitive"), co.boolean("anywhere"))
             },
         )
         for (c in d.commands) {
@@ -162,6 +187,12 @@ object Protocol {
             val s = map[key] as? String ?: throw BadMessage("$what needs $key as a string")
             if (s.isEmpty()) throw BadMessage("$what has an empty $key")
             return s
+        }
+
+        /** An optional boolean: false when absent. */
+        fun boolean(key: String): Boolean {
+            if (key !in map) return false
+            return map[key] as? Boolean ?: throw BadMessage("$what needs $key as a boolean")
         }
 
         fun list(key: String): List<*> = map[key] as? List<*> ?: throw BadMessage("$what needs $key as a list")

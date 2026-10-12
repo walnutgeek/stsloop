@@ -51,7 +51,9 @@ class HubBucketsTest {
     @Test
     fun `only the Primitives the phone knows are kept, and the Bucket stays`() {
         val podcast = HubProvider.registry(BucketConfig.DEFAULT, future).named("the daily show")!!
-        assertEquals(emptySet<Primitive>(), podcast.primitives)
+        assertEquals(setOf(Primitive.REQUEST), podcast.primitives)
+        assertTrue(podcast.degraded)
+        assertEquals(listOf("status"), podcast.commands.map { it.id }, "only its request commands are kept")
     }
 
     @Test

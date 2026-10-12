@@ -34,6 +34,13 @@ string `type`.
 4. **Descriptors.** With the `descriptors` capability, the hub then sends a
    `descriptors` snapshot, and a new one whenever a Bucket comes, goes or
    changes. Each snapshot replaces the last.
+5. **Requests.** For a command whose Primitive is `request`, the phone sends
+   a `request` naming the Descriptor's `id` and the command's `id`, and the
+   hub answers it with one `reply` carrying the same `id`: a sentence to
+   speak, and a `reason` when the command could not run. A command marked
+   `anywhere` is heard whatever has Focus ("what's blocked"); the hub puts
+   such commands on its own `hub` Bucket. No capability is needed: a hub
+   that declares a `request` command answers it.
 
 The hub serves one phone at a time: once a new connection is welcomed, the
 hub closes the older one (code 1000). A refused connection replaces nothing.
@@ -62,9 +69,12 @@ Every implementation's tests load every fixture and:
   fixture `exchanges.json` names for that step.
 
 The hub's are in `hub/tests/test_fixtures.py`; a hub publishing only the stub
-Bucket answers every exchange exactly. The phone's are in
+Bucket answers every exchange exactly. `descriptors/herdr.json` and the
+`reply/` fixtures are what the hub's herdr Provider produces for a fake herdr
+(`hub/tests/test_agents.py`). The phone's are in
 `core/src/test/kotlin/com/walnutgeek/stsloop/core/hub/`
 (`ProtocolFixturesTest`, and `HubLinkTest`, which plays each exchange's hub
 steps to the phone and checks where it ends up: online, refused, offline and
 retrying, or unauthorised). The phone sends one message, `hello/basic.json`,
-whatever phone a given exchange stands for.
+whatever phone a given exchange stands for, then sends the exchange's
+`request`s itself, each equal to its fixture.

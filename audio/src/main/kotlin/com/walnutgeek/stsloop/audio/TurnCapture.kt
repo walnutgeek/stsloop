@@ -12,8 +12,13 @@ import com.walnutgeek.stsloop.core.grammar.BucketConfig
 import com.walnutgeek.stsloop.core.grammar.BucketRegistry
 import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
 import com.walnutgeek.stsloop.core.hub.Descriptors
+import com.walnutgeek.stsloop.core.BucketRequest
 import com.walnutgeek.stsloop.core.hub.HubAliases
 import com.walnutgeek.stsloop.core.hub.HubProvider
+import com.walnutgeek.stsloop.core.hub.HubRequests
+import com.walnutgeek.stsloop.core.hub.Message
+import com.walnutgeek.stsloop.core.hub.Reply
+import com.walnutgeek.stsloop.core.hub.Request
 import com.walnutgeek.stsloop.core.speech.StreamingRecognizer
 import com.walnutgeek.stsloop.core.testmode.TestConfig
 import com.walnutgeek.stsloop.core.testmode.TurnTest
@@ -46,7 +51,9 @@ import java.util.concurrent.TimeUnit
  * The Session keeps a [Focus] (#40), starting in the Inbox. A lone Bucket
  * alias focuses that Bucket; [accept] ticks it on the stream's clock, and
  * when `focus_timeout_ms` pass with no speech it returns to the Inbox and
- * the loop says so, into the next Silence like any reply.
+ * the loop says so, into the next Silence like any reply. A command a hub
+ * Bucket declares ("status") goes to the hub through `hubSend` ([HubRequests]),
+ * and its reply, handed to [replied], is said the same way.
  *
  * It also notices the loop's silent failures (#15) and says them the same
  * way, once each ([FailureAnnouncer]): a mic stream that stays digitally
@@ -80,6 +87,8 @@ class TurnCapture(
     buckets: BucketRegistry = BucketRegistry.capture(BucketConfig.DEFAULT),
     /** Whether the hub is online now (a volatile read): the loop says "hub offline" for hub Buckets when not. */
     hubOnline: () -> Boolean = { false },
+    /** Sends a message to the hub, false when it cannot; must return at once. Replies come back through [replied]. */
+    hubSend: (Message) -> Boolean = { false },
     /** Test mode (#27): each Turn's `test` block, computed on the STT thread; null outside test mode. */
     testOf: ((Utterance) -> TurnTest?)? = null,
     /** Speaks each Turn's echo, reporting its end through [spoken]; null means no echo, and the mic never closes. */
@@ -96,10 +105,33 @@ class TurnCapture(
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "stt-$sessionId") }
     private val grammar = PhraseGrammar(buckets)
     private val focus = Focus({ grammar.buckets }, timings.focusTimeoutMs.toLong())
+    private val requests = HubRequests(
+        send = hubSend,
+        say = { text -> if (!ending) loop.announce(text) },
+        clockMs = SystemClock::elapsedRealtime,
+        listener = object : HubRequests.Listener {
+            override fun sent(request: Request, bucket: BucketRequest) {
+                Log.i(TAG, "Session $sessionId: asked the hub ${bucket.command} of ${bucket.bucket} (${request.id})")
+            }
+
+            override fun replied(request: Request, reply: Reply, afterMs: Long) {
+                Log.i(TAG, "Session $sessionId: the hub answered ${request.id} in $afterMs ms${reply.reason?.let { " ($it)" } ?: ""}: ${reply.say}")
+            }
+
+            override fun timedOut(request: Request) {
+                Log.w(TAG, "Session $sessionId: no answer from the hub to ${request.id} in ${HubRequests.REPLY_TIMEOUT_MS} ms")
+            }
+
+            override fun ignored(reply: Reply) {
+                Log.w(TAG, "Session $sessionId: ignored a reply to ${reply.id}, which nothing is waiting for")
+            }
+        },
+    )
     private val sink: CorpusSink = CorpusSink(
         writer, sessionId, sessionStartedAtMs, SAMPLE_RATE_HZ, appVersion, grammar, focus,
         testOf = testOf,
         hubOnline = hubOnline,
+        request = requests::request,
         listener = object : CorpusSink.Listener {
             override fun published(turn: Turn, utterance: Utterance, timing: SttTiming?, say: String?) {
                 // Persist, then speak (phase0.md's loop): a Turn that failed to write is not echoed. A command
@@ -237,7 +269,11 @@ class TurnCapture(
             Log.i(TAG, "Session $sessionId: Focus timed out back to the Inbox")
             loop.announce(Focus.TIMED_OUT)
         }
+        requests.tick()
     }
+
+    /** Any thread: the hub answered a request; its reply is said into the next Silence. */
+    fun replied(reply: Reply) = requests.replied(reply)
 
     /** Any thread: from the next Turn on, the Buckets are [buckets] (the hub sent a new snapshot). */
     fun bucketsChanged(buckets: BucketRegistry) = grammar.replace(buckets)

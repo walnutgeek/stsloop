@@ -85,8 +85,10 @@ class HubLinkTest {
         val transport = FakeTransport()
         val scheduler = FakeScheduler()
         val snapshots = mutableListOf<Descriptors>()
+        val replies = mutableListOf<Reply>()
         val link = HubLink(pairing, transport, scheduler, object : HubLink.Listener {
             override fun descriptors(descriptors: Descriptors) { snapshots += descriptors }
+            override fun reply(reply: Reply) { replies += reply }
         })
         link.start()
         val socket = transport.last
@@ -101,13 +103,24 @@ class HubLinkTest {
             assertEquals(listOf(Fixtures.json(version, "hello/basic.json")), socket.sent.map(Json::parse))
         }
         var refusal: Refusal? = null
-        for (step in hubSteps) {
+        var welcomed = false
+        for (step in exchange.steps) {
+            if (step["from"] == "phone") {
+                // After the welcome the phone's requests are its own, sent through the link: fixture for fixture.
+                val message = (step["fixture"] as String?)?.let { Protocol.decode(Fixtures.text(version, it)) }
+                if (welcomed && message is Request) {
+                    assertTrue(link.send(message))
+                    assertEquals(Fixtures.json(version, step["fixture"] as String), Json.parse(socket.sent.last()))
+                }
+                continue
+            }
             when {
                 "http" in step -> socket.events.failed((step["http"] as Long).toInt(), null)
                 "close" in step -> socket.events.closed((step["close"] as Long).toInt(), "")
                 else -> {
                     val message = Protocol.decode(Fixtures.text(version, step["fixture"] as String))
                     if (message is Refusal) refusal = message
+                    if (message is Welcome) welcomed = true
                     socket.events.received(Fixtures.text(version, step["fixture"] as String))
                 }
             }
@@ -130,6 +143,7 @@ class HubLinkTest {
                 assertInstanceOf(HubStatus.Online::class.java, link.status)
                 val sent = hubSteps.mapNotNull { it["fixture"] as String? }.map { Protocol.decode(Fixtures.text(version, it)) }
                 assertEquals(sent.filterIsInstance<Descriptors>(), snapshots)
+                assertEquals(sent.filterIsInstance<Reply>(), replies)
             }
         }
         assertEquals(1, transport.sockets.size)
@@ -152,6 +166,29 @@ class HubLinkTest {
         hub("descriptors/stub.json")
         assertEquals("hub", snapshots.single().buckets.single().name)
         assertEquals(listOf(HubStatus.Connecting, HubStatus.Online(Protocol.decode(Fixtures.text("v1", "welcome/basic.json")) as Welcome)), statuses)
+    }
+
+    @Test
+    fun `a request is sent only while the hub is online, and replies reach the listener`() {
+        val replies = mutableListOf<Reply>()
+        val link = HubLink(pairing, transport, scheduler, object : HubLink.Listener {
+            override fun reply(reply: Reply) { replies += reply }
+        })
+        val request = Protocol.decode(Fixtures.text("v1", "request/status.json")) as Request
+        assertFalse(link.send(request), "not started")
+        link.start()
+        transport.last.events.opened()
+        transport.last.events.received(Fixtures.text("v1", "reply/status.json"))
+        assertFalse(link.send(request), "not welcomed yet")
+        assertEquals(1, transport.last.sent.size, "only the hello")
+        assertTrue(replies.isEmpty(), "a reply before the welcome is ignored")
+        transport.last.events.received(Fixtures.text("v1", "welcome/basic.json"))
+        assertTrue(link.send(request))
+        assertEquals(Fixtures.json("v1", "request/status.json"), Json.parse(transport.last.sent.last()))
+        transport.last.events.received(Fixtures.text("v1", "reply/extras.json"))
+        assertEquals(listOf(Protocol.decode(Fixtures.text("v1", "reply/status.json"))), replies)
+        transport.last.events.closed(1006, "gone")
+        assertFalse(link.send(request), "offline")
     }
 
     @Test

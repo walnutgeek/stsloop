@@ -6,6 +6,9 @@ import unittest
 
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
+from stsloop_hub import protocol as p
+from stsloop_hub.stub import STUB_BUCKETS
+
 from support import fixture, pairing_token, phone, running_hub
 
 HELLO = json.dumps(fixture("v1", "hello/basic.json"))
@@ -94,6 +97,68 @@ class HelloTest(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(asyncio.TimeoutError):
                     await asyncio.wait_for(ws.recv(), 0.2)
                 await ws.ping()
+
+
+class RequestTest(unittest.IsolatedAsyncioTestCase):
+    async def test_a_request_gets_the_reply_its_answer_gives(self):
+        asked = []
+
+        def answer(request):
+            asked.append(request)
+            return p.Reply(id=request.id, say="stsloop agent is working, for 2 minutes.")
+
+        async with running_hub(answer=answer) as (_, url):
+            async with phone(url, pairing_token()) as ws:
+                await ws.send(HELLO)
+                await ws.recv(), await ws.recv()
+                await ws.send(json.dumps(fixture("v1", "request/extras.json")))
+                reply = json.loads(await asyncio.wait_for(ws.recv(), 5))
+        self.assertEqual(asked, [p.Request(id="a3f1c9", bucket="herdr:w8:p1", command="status")])
+        self.assertEqual(reply, {"type": "reply", "id": "a3f1c9", "say": "stsloop agent is working, for 2 minutes."})
+
+    async def test_a_request_before_the_welcome_is_ignored(self):
+        async with running_hub(answer=lambda r: self.fail("answered before hello")) as (_, url):
+            async with phone(url, pairing_token()) as ws:
+                await ws.send(json.dumps(fixture("v1", "request/status.json")))
+                await ws.send(HELLO)
+                self.assertEqual(json.loads(await ws.recv())["type"], "welcome")
+                self.assertEqual(json.loads(await ws.recv())["type"], "descriptors")
+                with self.assertRaises(asyncio.TimeoutError):
+                    await asyncio.wait_for(ws.recv(), 0.2)
+
+    async def test_a_broken_request_is_ignored_and_the_connection_stays(self):
+        async with running_hub() as (_, url):
+            async with phone(url, pairing_token()) as ws:
+                await ws.send(HELLO)
+                await ws.recv(), await ws.recv()
+                await ws.send('{"type": "request", "id": "x"}')
+                await ws.send(json.dumps(fixture("v1", "request/unknown-bucket.json")))
+                self.assertEqual(json.loads(await asyncio.wait_for(ws.recv(), 5)), fixture("v1", "reply/unknown-bucket.json"))
+
+
+class BucketsChangedTest(unittest.IsolatedAsyncioTestCase):
+    async def test_the_welcomed_phone_gets_a_new_snapshot(self):
+        buckets = [STUB_BUCKETS]
+        async with running_hub(descriptors=lambda: buckets[0]) as (hub, url):
+            async with phone(url, pairing_token()) as ws:
+                await ws.send(HELLO)
+                await ws.recv(), await ws.recv()
+                buckets[0] = p.from_json(fixture("v1", "descriptors/herdr.json")).buckets
+                hub.buckets_changed()
+                self.assertEqual(json.loads(await asyncio.wait_for(ws.recv(), 5)), fixture("v1", "descriptors/herdr.json"))
+
+    async def test_a_phone_without_the_descriptors_capability_hears_of_no_change(self):
+        async with running_hub() as (hub, url):
+            async with phone(url, pairing_token()) as ws:
+                await ws.send('{"type": "hello", "protocol": {"major": 1, "minor": 0}, "capabilities": []}')
+                await ws.recv()
+                hub.buckets_changed()
+                with self.assertRaises(asyncio.TimeoutError):
+                    await asyncio.wait_for(ws.recv(), 0.2)
+
+    async def test_with_no_phone_a_change_goes_nowhere(self):
+        async with running_hub() as (hub, _):
+            hub.buckets_changed()
 
 
 class OnePhoneTest(unittest.IsolatedAsyncioTestCase):

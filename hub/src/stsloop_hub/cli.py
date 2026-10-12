@@ -4,7 +4,9 @@
     stsloop-hub serve [--host HOST] [--port PORT]
 
 Both listen on, or advertise, this machine's tailnet address unless a host is
-given; a host given to `init` is kept for `serve`.
+given; a host given to `init` is kept for `serve`. `serve` publishes one
+Bucket per herdr agent when herdr is installed (`$HERDR_BIN_PATH`, else
+`herdr` on the PATH), and only the hub Bucket when it is not.
 """
 
 from __future__ import annotations
@@ -14,13 +16,17 @@ import asyncio
 import logging
 import os
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from importlib.metadata import PackageNotFoundError, version
 from typing import TextIO
 
-from . import config, pairing, tailnet
+from . import config, herdr, pairing, tailnet
+from .agents import HerdrProvider
+from .buckets import Buckets
 from .hub import Hub
-from .stub import STUB_BUCKETS
+
+#: Background work that runs while the hub serves, told when the Buckets change.
+Poller = Callable[[Callable[[], None]], Awaitable[None]]
 
 NO_TAILNET = (
     "No tailnet address found: is Tailscale installed and up (`tailscale ip -4`)? "
@@ -68,11 +74,16 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run_forever(hub: Hub, host: str, port: int) -> None:
+def _run_forever(hub: Hub, host: str, port: int, pollers: Sequence[Poller] = ()) -> None:
     async def run():
         async with hub.listen(host, port):
             logging.getLogger("stsloop.hub").info("listening on %s", pairing.url(host, port))
-            await asyncio.get_running_loop().create_future()
+            tasks = [asyncio.create_task(poll(hub.buckets_changed)) for poll in pollers]
+            try:
+                await asyncio.get_running_loop().create_future()
+            finally:
+                for task in tasks:
+                    task.cancel()
 
     try:
         asyncio.run(run())
@@ -87,7 +98,8 @@ def main(
     out: TextIO | None = None,
     err: TextIO | None = None,
     find_tailnet: Callable[[], str | None] = tailnet.address,
-    run_hub: Callable[[Hub, str, int], None] = _run_forever,
+    run_hub: Callable[[Hub, str, int, Sequence[Poller]], None] = _run_forever,
+    find_herdr: Callable[[], herdr.Herdr | None] | None = None,
 ) -> int:
     out, err = out or sys.stdout, err or sys.stderr
     args = _parser().parse_args(argv)
@@ -128,5 +140,18 @@ def main(
         return 1
     _warn_if_unencrypted(host, err)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s", stream=err)
-    run_hub(Hub(token=saved.token, descriptors=lambda: STUB_BUCKETS), host, args.port or saved.port)
+    found = (find_herdr or (lambda: _herdr(os.environ if env is None else env)))()
+    providers = [HerdrProvider(found)] if found else []
+    if not found:
+        logging.getLogger("stsloop.hub").info("herdr is not installed; no agent Buckets")
+    buckets = Buckets(providers)
+    hub = Hub(token=saved.token, descriptors=buckets.descriptors, answer=buckets.answer)
+    run_hub(hub, host, args.port or saved.port, [provider.run for provider in providers])
     return 0
+
+
+def _herdr(env: Mapping[str, str]) -> herdr.Herdr | None:
+    path = herdr.binary(env)
+    if path:
+        logging.getLogger("stsloop.hub").info("herdr found at %s; one Bucket per agent", path)
+    return herdr.HerdrCli(path) if path else None

@@ -631,7 +631,8 @@ Design notes worth keeping:
   was always null, and `jq` reads a missing key as null too.
 - `command` is present only on a command Turn: `name` is permanent once
   written (`scratch_that`, `repeat`, `what_bucket`, `stop_listening`; from
-  #40 `where_am_i` and `focus`), `matched` the phrase as heard, normalised.
+  #40 `where_am_i` and `focus`; from #43 `request`), `matched` the phrase
+  as heard, normalised.
   A name keeps its meaning: `what_bucket` (the previous Turn's Bucket) is no
   longer written, because "what bucket" now says the focused Bucket and is
   recorded as `where_am_i`. `tombstones` is present only on a `scratch_that`
@@ -649,6 +650,16 @@ Design notes worth keeping:
   out while it was being decoded. A Declared Turn is unchanged, whatever has
   Focus. A timeout back to the Inbox is not a Turn and is not recorded; the
   Turns after it are simply unlabelled again.
+- **Hub Buckets (#43, additive within `schema: 1`).** Focusing a hub Bucket
+  also writes its Descriptor id in a top-level `focus_id`
+  (`"herdr:w8:p1"`), because a hub Bucket's name can change while its id
+  does not (an agent's workspace is renamed); `focus` stays the name, as for
+  a capture Bucket. A command a Bucket declares with the `request`
+  Primitive ("status", "what's blocked") is a command Turn with
+  `command.name` `request` and a top-level
+  `"request": { "bucket": <name>, "bucket_id": <Descriptor id>, "command": <command id> }`.
+  The hub's reply is not recorded: it is the hub's state at that moment, not
+  something the person said.
 
 ## Modules
 

@@ -67,8 +67,9 @@ sealed interface HubStatus {
 /**
  * The phone's connection to its paired hub, for as long as its holder needs it: a Session, or the pairing screen (`protocol/README.md`,
  * "The wire, v1"). [start] connects; once welcomed, every `descriptors`
- * snapshot goes to the [Listener]. The link never holds up the loop: the loop
- * only reads [status] (or [online]), which is a volatile field.
+ * snapshot and every `reply` goes to the [Listener], and [send] sends the
+ * phone's requests. The link never holds up the loop: the loop only reads
+ * [status] (or [online]), which is a volatile field, and [send] only queues.
  *
  * - On open it sends [Protocol.HELLO] and waits [WELCOME_TIMEOUT_MS] for the
  *   `welcome`. Messages it does not know, broken frames, and `descriptors`
@@ -96,6 +97,9 @@ class HubLink(
 
         /** A snapshot of every hub Bucket; it replaces the last one. */
         fun descriptors(descriptors: Descriptors) {}
+
+        /** The hub answered a request. */
+        fun reply(reply: Reply) {}
 
         /** A frame was ignored, and why; for the log. */
         fun ignored(why: String) {}
@@ -148,6 +152,13 @@ class HubLink(
         socket = null
         if (pairing != null) set(HubStatus.Offline("stopped"))
     }
+
+    /**
+     * Queues [message] on the connection; false, and nothing sent, unless the
+     * hub is connected and has welcomed the phone. Returns at once.
+     */
+    @Synchronized
+    fun send(message: Message): Boolean = online && socket?.send(Protocol.encode(message)) == true
 
     /** The phone's network changed: whatever the connection was bound to may be gone. */
     @Synchronized
@@ -245,6 +256,7 @@ class HubLink(
                     set(HubStatus.Refused(message))
                 }
                 message is Descriptors && status is HubStatus.Online -> listener.descriptors(message)
+                message is Reply && status is HubStatus.Online -> listener.reply(message)
                 else -> listener.ignored(if (message == null) "a message of a type the phone does not know" else "an unexpected ${message::class.simpleName}")
             }
         }
