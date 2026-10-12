@@ -141,6 +141,30 @@ adb. Trailing silence takes 0.3 to 10 s on the screen; the file still
 takes anything it allows. An alias is refused when another Bucket is already
 heard by it, since a Session would drop it from both.
 
+### The name-recognisability check
+
+The recogniser can't hear every word, so the phone checks each phrase it
+listens for: every Bucket name and alias, and every command phrase. The system
+TTS voice speaks the phrase into a file, never aloud, and the phrase goes
+through the Session's own recogniser. Each phrase is spoken in up to two
+installed en-US voices, at 0.8×, 1× and 1.25× speed. It counts as heard only
+if every variant comes back as the phrase, or as another phrase of the same
+Bucket ("worklog" heard as "work log" still focuses work). The check runs when the app or the
+settings screen opens, after pairing, after an alias edit, and when a Session
+ends, which picks up Descriptors the hub sent during it. It checks only the
+phrases it has no result for yet on the installed model. It never runs during
+a Session, and it stops, keeping the phrases it has finished, once a Session
+starts.
+
+After a pairing fetches the hub's Buckets, the phone checks their names first
+and then says "ready, N agents." Each Bucket on the settings screen shows its
+result, and so does the list of commands. A Bucket phrase that isn't reliably
+heard is announced once, at the start of the next Session ("hard to hear:
+stsloop. try other aliases in settings."), and not again unless a new model
+can't hear it either. Results and announcements are kept in
+`files/recognisability.json` by phrase and model, and logged under
+`stsloop.NameCheck`. Deleting the file checks and announces everything again.
+
 The messages are specified in [`protocol/`](./protocol/README.md).
 
 ```sh

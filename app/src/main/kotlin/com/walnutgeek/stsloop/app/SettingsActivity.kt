@@ -11,10 +11,14 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.walnutgeek.stsloop.audio.NameCheck
 import com.walnutgeek.stsloop.audio.SessionService
 import com.walnutgeek.stsloop.core.grammar.BucketConfig
 import com.walnutgeek.stsloop.core.hub.HubAliases
 import com.walnutgeek.stsloop.core.hub.HubStore
+import com.walnutgeek.stsloop.core.recognisability.NameCheckResults
+import com.walnutgeek.stsloop.core.recognisability.ProbeKind
+import com.walnutgeek.stsloop.core.recognisability.Probes
 import com.walnutgeek.stsloop.core.settings.AliasText
 import com.walnutgeek.stsloop.core.settings.BucketSettings
 import com.walnutgeek.stsloop.core.settings.Edit
@@ -44,6 +48,7 @@ class SettingsActivity : Activity() {
     private lateinit var timingsNote: TextView
     private lateinit var bucketList: LinearLayout
     private lateinit var bucketsNote: TextView
+    private lateinit var checkNote: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,7 +57,13 @@ class SettingsActivity : Activity() {
         timingsNote = note()
         bucketList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         bucketsNote = note()
-        hub = HubPairingPane(this).apply { onChanged = ::loadBuckets }
+        checkNote = note()
+        hub = HubPairingPane(this).apply {
+            onChanged = {
+                loadBuckets()
+                NameCheck.request(this@SettingsActivity, "hub pairing changed")
+            }
+        }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(heading("Settings", 24f))
@@ -68,6 +79,7 @@ class SettingsActivity : Activity() {
             addView(hub.view)
             addView(heading("Buckets"))
             addView(text("Aliases are what else a Bucket is heard by, separated by commas. Its name always counts.", 14f))
+            addView(checkNote)
             addView(bucketList)
             addView(bucketsNote)
         }
@@ -100,9 +112,12 @@ class SettingsActivity : Activity() {
         loadTimings()
         hub.refresh()
         loadBuckets()
+        NameCheck.listener = { runOnUiThread(::showRecognisability) }
+        NameCheck.request(this, "settings opened")
     }
 
     override fun onPause() {
+        NameCheck.listener = null
         hub.pause()
         super.onPause()
     }
@@ -167,6 +182,22 @@ class SettingsActivity : Activity() {
             rows = s.rows.map { r -> BucketRow(r).also { row -> typed[row.key]?.let(row::retype) } }
             for (row in rows) bucketList.addView(row.view)
             bucketsNote.text = unreadable ?: ignored("the Bucket files", s.rejected)
+            showRecognisability()
+        }
+    }
+
+    // --- name-recognisability check (#49) ---
+
+    /** Shows each Bucket's result, and the commands' and the check's own progress; reads the results file off the UI thread. */
+    private fun showRecognisability() = io.execute {
+        val results = NameCheck.results(this)
+        val model = NameCheck.modelId(this)
+        val commands = NameCheck.probes(filesDir).filter { it.kind == ProbeKind.COMMAND }
+        val progress = NameCheck.progress
+        runOnUiThread {
+            for (row in rows) row.recognised(results, model)
+            val running = progress?.let { (done, of) -> "Checking how the recogniser hears each name: $done of $of.\n" } ?: ""
+            checkNote.text = running + "Commands: " + results.summary(commands, model)
         }
     }
 
@@ -200,8 +231,14 @@ class SettingsActivity : Activity() {
         fun retype(text: String) = aliases.setText(text)
         private val status = note()
 
-        /** The name-recognisability check's result (#49); empty and hidden until that check exists. */
-        private val recognisability = note().apply { visibility = TextView.GONE }
+        /** The name-recognisability check's result for the name and each alias (#49). */
+        private val recognisability = note()
+
+        /** Shows how [results] say [model] hears the name and aliases as saved (not as typed). */
+        fun recognised(results: NameCheckResults, model: String?) {
+            val phrases = (listOf(row.name) + AliasText.parse(shown)).mapNotNull { Probes.probe(it, ProbeKind.BUCKET, row.name) }
+            recognisability.text = results.summary(phrases, model)
+        }
 
         val view = LinearLayout(this@SettingsActivity).apply {
             orientation = LinearLayout.VERTICAL
@@ -227,6 +264,8 @@ class SettingsActivity : Activity() {
                     if (outcome.saved) {
                         shown = AliasText.format(wanted)
                         aliases.setText(shown)
+                        showRecognisability()
+                        NameCheck.request(this@SettingsActivity, "aliases of ${row.name} edited")
                     }
                 }
             }
