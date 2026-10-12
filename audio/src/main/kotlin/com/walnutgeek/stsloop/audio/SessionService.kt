@@ -302,9 +302,11 @@ class SessionService : Service() {
             // The aliases given hub Buckets on the settings screen, which outlive every snapshot.
             val hubAliases = TurnCapture.loadHubAliases(filesDir)
             val registry = TurnCapture.registry(buckets, cached, hubAliases)
-            val hubLink = HubConnection(this, hubStore, "Session $sessionId", onDescriptors = { d ->
-                turnCapture?.bucketsChanged(TurnCapture.registry(buckets, d, hubAliases))
-            })
+            val hubLink = HubConnection(
+                this, hubStore, "Session $sessionId",
+                onDescriptors = { d -> turnCapture?.bucketsChanged(TurnCapture.registry(buckets, d, hubAliases)) },
+                onReply = { r -> turnCapture?.replied(r) },
+            )
             hub = hubLink
             Log.i(TAG, "Session $sessionId buckets: ${registry.buckets.joinToString { b -> "${b.name} ${b.aliases}" }}")
             // Checked at Start; gone since only if the model files were deleted underneath us.
@@ -371,6 +373,7 @@ class SessionService : Service() {
                 recognizer = models::loadStt,
                 buckets = registry,
                 hubOnline = { !hubLink.offline },
+                hubSend = hubLink::send,
                 testOf = testMode?.let { t -> t::turnTest },
                 speaker = echo,
                 endSession = { turn ->

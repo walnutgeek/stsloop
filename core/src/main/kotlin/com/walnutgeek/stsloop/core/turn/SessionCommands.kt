@@ -1,5 +1,6 @@
 package com.walnutgeek.stsloop.core.turn
 
+import com.walnutgeek.stsloop.core.BucketRequest
 import com.walnutgeek.stsloop.core.Classification
 import com.walnutgeek.stsloop.core.Command
 import com.walnutgeek.stsloop.core.CommandInvocation
@@ -45,6 +46,11 @@ import com.walnutgeek.stsloop.core.grammar.Descriptor
  * - For a hub Bucket, both add [HUB_OFFLINE] while [hubOnline] is false
  *   (ADR-0001): the Bucket still resolves from the cached Descriptors. Only a
  *   volatile status is read, so an unreachable hub never holds up a reply.
+ * - Focusing a [Descriptor.degraded] Bucket adds [NEEDS_NEWER_APP], once per
+ *   Session and Bucket (ADR-0006: "the loop says so once").
+ * - [Command.REQUEST] (a command a Bucket declares, "status"): says nothing
+ *   itself; its [Outcome.request] goes to the hub once the Turn is
+ *   published, and the reply is spoken when it comes ([HubRequests]).
  * - [Command.STOP_LISTENING]: says [STOPPED_LISTENING] and [Outcome.endsSession].
  */
 class SessionCommands(
@@ -56,13 +62,22 @@ class SessionCommands(
      * What a command does: the [classification] its Turn is written with, what
      * the loop says back, and whether the Session ends once that is said.
      */
-    data class Outcome(val classification: Classification, val say: String, val endsSession: Boolean = false)
+    data class Outcome(
+        val classification: Classification,
+        val say: String?,
+        val endsSession: Boolean = false,
+        /** For [Command.REQUEST]: what to send to the hub once the Turn is published. */
+        val request: BucketRequest? = null,
+    )
 
     /** The previous Turn, or null. Its transcript is never null or blank: only such a Turn becomes [previous]. */
     private var previous: Turn? = null
 
     /** Whether [previous] has been tombstoned. */
     private var dropped = false
+
+    /** The degraded Buckets the loop has said so for, this Session. */
+    private val toldDegraded = mutableSetOf<String>()
 
     /** The effect of [invocation], given the Turns published so far. Changes nothing until [published]. */
     fun plan(invocation: CommandInvocation): Outcome {
@@ -82,8 +97,12 @@ class SessionCommands(
             Command.WHERE_AM_I -> Outcome(plain, say(focus.bucket))
             Command.FOCUS -> {
                 val name = invocation.focus!!
-                Outcome(plain, focus.named(name)?.let(::say) ?: bucketAsWords(name))
+                val bucket = focus.named(name)
+                val degraded = bucket?.degraded == true && name !in toldDegraded
+                val said = bucket?.let(::say) ?: bucketAsWords(name)
+                Outcome(plain, if (degraded) "$said $NEEDS_NEWER_APP" else said)
             }
+            Command.REQUEST -> Outcome(plain, null, request = invocation.request)
             Command.STOP_LISTENING -> Outcome(plain, STOPPED_LISTENING, endsSession = true)
         }
     }
@@ -95,6 +114,7 @@ class SessionCommands(
     /** [turn] is in the Corpus. Call for every Turn, in order, commands included. */
     fun published(turn: Turn) {
         val command = turn.classification?.command
+        command?.focus?.let { name -> if (focus.named(name)?.degraded == true) toldDegraded += name }
         when {
             command != null -> if (command.tombstones != null) dropped = true
             EchoText.of(turn.transcript?.text) != null -> {
@@ -119,6 +139,9 @@ class SessionCommands(
 
         /** Said after a hub Bucket's name while the hub cannot be reached. */
         const val HUB_OFFLINE = "hub offline."
+
+        /** Said once after the name of a Bucket whose Descriptor names a Primitive this app does not know. */
+        const val NEEDS_NEWER_APP = "some of its commands need a newer app."
 
         /** Said before "stop listening" ends the Session. */
         const val STOPPED_LISTENING = "stopped listening."

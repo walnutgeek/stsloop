@@ -172,10 +172,13 @@ adb. v0.1 adds one screen with:
 
 ## Open questions
 
-- The Corpus format for Turns that are commands to a Bucket and Drafts.
-  Additive to `schema: 1` if possible. Focus changes and Notes filed by Focus
-  are settled (#40): `docs/phase0.md`, "Corpus format".
-- How the hub detects "blocked" from herdr alone, without hooks.
+- The Corpus format for Drafts. Additive to `schema: 1` if possible. Focus
+  changes and Notes filed by Focus (#40), and `request` commands (#43), are
+  settled: `docs/phase0.md`, "Corpus format".
+- ~~How the hub detects "blocked" from herdr alone, without hooks.~~ Settled
+  in #43: herdr's own agent detection state (`agent_status: "blocked"` in
+  `herdr api snapshot`), polled every 2 s. herdr does not say how long a
+  state has lasted, so the hub times it from when it saw the state begin.
 - The focus timeout's real value, and whether a Draft should extend it.
 - ~~The model download host and its integrity check.~~ Settled in #50: the
   upstream sherpa-onnx GitHub releases, each download and each extracted

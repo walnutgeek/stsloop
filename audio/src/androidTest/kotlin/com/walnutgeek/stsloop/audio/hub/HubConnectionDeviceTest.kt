@@ -3,10 +3,13 @@ package com.walnutgeek.stsloop.audio.hub
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.walnutgeek.stsloop.core.hub.Descriptors
+import com.walnutgeek.stsloop.core.hub.HubRequests
 import com.walnutgeek.stsloop.core.hub.HubStatus
 import com.walnutgeek.stsloop.core.hub.HubStore
 import com.walnutgeek.stsloop.core.hub.Pairing
 import com.walnutgeek.stsloop.core.hub.Protocol
+import com.walnutgeek.stsloop.core.hub.Reply
+import com.walnutgeek.stsloop.core.hub.Request
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -82,11 +85,34 @@ class HubConnectionDeviceTest {
         c.start()
         assertTrue("no Descriptors within 10 s; status ${c.status}", got.await(10, TimeUnit.SECONDS))
         assertTrue(c.online)
-        assertEquals(listOf("hub"), snapshot!!.buckets.map { it.name })
+        assertEquals("the hub Bucket comes first; herdr's agents, if any, follow", "hub", snapshot!!.buckets.first().name)
         // The cache survives the connection, as it must survive a restart.
         c.stop()
         connection = null
         assertEquals(snapshot, HubStore(root).descriptors())
+    }
+
+    @Test
+    fun aRequestIsAnsweredWithAReplyToSay() {
+        val p = pairing
+        assumeTrue("no hubUrl and hubToken arguments", p != null)
+        store.pair(p!!)
+        val welcomed = CountDownLatch(1)
+        val answered = CountDownLatch(1)
+        var reply: Reply? = null
+        val c = HubConnection(
+            context, store, "device test",
+            onDescriptors = { welcomed.countDown() },
+            onReply = { reply = it; answered.countDown() },
+        )
+        connection = c
+        c.start()
+        assertTrue("not welcomed within 10 s; status ${c.status}", welcomed.await(10, TimeUnit.SECONDS))
+        // "what's blocked": answered by herdr when the hub has it, and unknown_command when it does not.
+        assertTrue(c.send(Request("d1", "hub", "blocked")))
+        assertTrue("no reply within ${HubRequests.REPLY_TIMEOUT_MS} ms", answered.await(HubRequests.REPLY_TIMEOUT_MS, TimeUnit.MILLISECONDS))
+        assertEquals("d1", reply!!.id)
+        assertTrue(reply!!.say.isNotBlank())
     }
 
     @Test

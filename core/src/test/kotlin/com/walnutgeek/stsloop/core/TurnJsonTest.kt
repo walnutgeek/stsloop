@@ -99,7 +99,38 @@ class TurnJsonTest {
     @Test
     fun `command names are permanent`() {
         // what_bucket (#14) is retired, never reused: "what bucket" is now an alias of where_am_i (#40).
-        assertEquals(listOf("scratch_that", "repeat", "where_am_i", "stop_listening", "focus"), Command.entries.map { it.json })
+        assertEquals(listOf("scratch_that", "repeat", "where_am_i", "stop_listening", "focus", "request"), Command.entries.map { it.json })
+    }
+
+    @Test
+    fun `focusing a hub Bucket writes its Descriptor id too`() {
+        val inv = Classification.command(CommandInvocation(Command.FOCUS, "stsloop", focus = "stsloop agent", focusId = "herdr:w8:p1"))
+        val json = TurnJson.encode(turn.copy(transcript = transcript, classification = inv))
+        assertTrue(json.contains("  \"focus\": \"stsloop agent\",\n  \"focus_id\": \"herdr:w8:p1\",\n"), json)
+        val capture = Classification.command(CommandInvocation(Command.FOCUS, "errands", focus = "errands"))
+        assertFalse(TurnJson.encode(turn.copy(classification = capture)).contains("focus_id"))
+    }
+
+    @Test
+    fun `a request command writes the Bucket and the command it asked`() {
+        val inv = Classification.command(
+            CommandInvocation(Command.REQUEST, "status", request = BucketRequest("stsloop agent", "herdr:w8:p1", "status")),
+        )
+        val json = TurnJson.encode(turn.copy(transcript = transcript, classification = inv))
+        val parsed = Json.parseObject(json)
+        assertEquals(mapOf("name" to "request", "matched" to "status"), parsed["command"])
+        assertEquals(mapOf("bucket" to "stsloop agent", "bucket_id" to "herdr:w8:p1", "command" to "status"), parsed["request"])
+        for (k in listOf("declaration", "bucket", "bucket_source", "content")) assertEquals(null, parsed[k], k)
+        assertFalse(parsed.containsKey("focus"), json)
+    }
+
+    @Test
+    fun `only a request command has a request, and it always does`() {
+        assertThrows<IllegalArgumentException> { CommandInvocation(Command.REQUEST, "status") }
+        assertThrows<IllegalArgumentException> {
+            CommandInvocation(Command.REPEAT, "repeat", request = BucketRequest("a", "b", "c"))
+        }
+        assertThrows<IllegalArgumentException> { CommandInvocation(Command.REPEAT, "repeat", focusId = "herdr:x") }
     }
 
     @Test

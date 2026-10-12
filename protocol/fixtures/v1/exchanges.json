@@ -62,6 +62,26 @@
         { "from": "phone", "idle_ms": 10000 },
         { "from": "hub", "close": 1008 }
       ]
+    },
+    {
+      "name": "a request for a Bucket the hub does not have is answered unknown_bucket",
+      "steps": [
+        { "from": "phone", "fixture": "hello/basic.json" },
+        { "from": "hub", "fixture": "welcome/basic.json" },
+        { "from": "hub", "fixture": "descriptors/stub.json" },
+        { "from": "phone", "fixture": "request/unknown-bucket.json" },
+        { "from": "hub", "fixture": "reply/unknown-bucket.json" }
+      ]
+    },
+    {
+      "name": "a request for a command the Bucket does not have is answered unknown_command",
+      "steps": [
+        { "from": "phone", "fixture": "hello/basic.json" },
+        { "from": "hub", "fixture": "welcome/basic.json" },
+        { "from": "hub", "fixture": "descriptors/stub.json" },
+        { "from": "phone", "fixture": "request/blocked.json" },
+        { "from": "hub", "fixture": "reply/unknown-command.json" }
+      ]
     }
   ]
 }

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stsloop:protocol:v1:reply",
+  "title": "reply",
+  "description": "Hub to phone: the answer to one `request`. The phone speaks `say` as it is, so the Provider words the whole answer, naming the Bucket where that helps.",
+  "type": "object",
+  "required": ["type", "id", "say"],
+  "properties": {
+    "type": { "const": "reply" },
+    "id": {
+      "description": "The `id` of the request this answers. A phone ignores a reply to a request it is not waiting for.",
+      "type": "string",
+      "minLength": 1
+    },
+    "say": {
+      "description": "One or two short sentences for a person, fit to be spoken.",
+      "type": "string",
+      "minLength": 1
+    },
+    "reason": {
+      "description": "Absent when the command ran. Known in v1.0: `unknown_bucket` (no Bucket has that id now: its agent has gone, say), `unknown_command` (the Bucket has no such `request` command), `failed` (the Provider could not answer). A phone speaks `say` whatever the reason, one it does not know included.",
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

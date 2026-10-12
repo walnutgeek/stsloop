@@ -1,5 +1,6 @@
 package com.walnutgeek.stsloop.core.turn
 
+import com.walnutgeek.stsloop.core.BucketRequest
 import com.walnutgeek.stsloop.core.CorpusWriter
 import com.walnutgeek.stsloop.core.Ids
 import com.walnutgeek.stsloop.core.Turn
@@ -19,8 +20,11 @@ import com.walnutgeek.stsloop.core.testmode.TurnTest
  * out by this Session's [SessionCommands], and its Turn records what it did
  * (for "scratch that", the Turn it tombstones; for a lone Bucket alias, the
  * Bucket it focuses, which takes Focus once the Turn is published); "stop
- * listening" asks the [Listener] to end the Session. Every Turn published
- * restarts the [focus] timeout, at the end of its utterance.
+ * listening" asks the [Listener] to end the Session. A command a Bucket
+ * declares ("status") is read against the Bucket that had Focus when its
+ * utterance ended, and once its Turn is published goes to [request], which
+ * sends it to the hub (the reply is spoken later) or says why it cannot.
+ * Every Turn published restarts the [focus] timeout, at the end of its utterance.
  */
 class CorpusSink(
     private val writer: CorpusWriter,
@@ -39,6 +43,11 @@ class CorpusSink(
     private val testOf: ((Utterance) -> TurnTest?)? = null,
     /** Whether the hub is online now, for the replies that name a hub Bucket; must return at once. */
     hubOnline: () -> Boolean = { false },
+    /**
+     * Sends a Bucket's `request` command to the hub; returns what to say now,
+     * or null when it was sent and its reply will be said. Must return at once.
+     */
+    private val request: (BucketRequest) -> String? = { SessionCommands.HUB_OFFLINE },
     private val listener: Listener,
 ) {
     interface Listener {
@@ -73,7 +82,7 @@ class CorpusSink(
     fun closed(utterance: Utterance, pcm: ShortArray, transcription: Transcription? = null) {
         val transcript = transcription?.transcript
         val endMs = utterance.endSample * 1000 / sampleRate
-        val classification = grammar.classify(transcript?.text, focus.filing(endMs))
+        val classification = grammar.classify(transcript?.text, focus.filing(endMs), focused = focus.at(endMs).name)
         val command = classification.command?.let(commands::plan)
         val turn = try {
             val inProgress = writer.begin(newId(), sessionId, utterance.startedAtMs(sessionStartedAtMs, sampleRate), sampleRate)
@@ -96,9 +105,14 @@ class CorpusSink(
         if (focused != null) focus.set(focused, endMs) else focus.heard(endMs)
         if (command?.endsSession == true) {
             listener.published(turn, utterance, transcription?.timing, null)
-            listener.endSession(turn, command.say)
+            listener.endSession(turn, command.say.orEmpty())
         } else {
-            listener.published(turn, utterance, transcription?.timing, command?.say ?: transcript?.text)
+            val say = when {
+                command == null -> transcript?.text
+                command.request != null -> request(command.request)
+                else -> command.say
+            }
+            listener.published(turn, utterance, transcription?.timing, say)
         }
     }
 

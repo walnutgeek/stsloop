@@ -43,10 +43,11 @@ class Focus(private val buckets: () -> BucketRegistry, private val timeoutMs: Lo
      * that does not take Notes.
      */
     @Synchronized
-    fun filing(endedAtMs: Long): String? {
-        val then = timedOut?.takeIf { endedAtMs < timedOutAtMs } ?: current
-        return then.takeIf { buckets().takesNotes(it) }?.name
-    }
+    fun filing(endedAtMs: Long): String? = at(endedAtMs).takeIf { buckets().takesNotes(it) }?.name
+
+    /** The Bucket that had Focus when a Turn's utterance ended at [endedAtMs]: whose commands it is read against. */
+    @Synchronized
+    fun at(endedAtMs: Long): Descriptor = timedOut?.takeIf { endedAtMs < timedOutAtMs } ?: current
 
     /** The Bucket called [name] in the current registry, or null. */
     fun named(name: String): Descriptor? = buckets().named(name)

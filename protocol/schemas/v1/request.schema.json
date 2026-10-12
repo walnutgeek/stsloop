@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stsloop:protocol:v1:request",
+  "title": "request",
+  "description": "Phone to hub, once welcomed: run one of a Bucket's commands whose Primitive is `request`, as its Descriptor declares it. The hub answers every request with exactly one `reply` carrying its `id`, and soon: the phone stops waiting after a few seconds. A request reads state and changes nothing, so it is safe to send again.",
+  "type": "object",
+  "required": ["type", "id", "bucket", "command"],
+  "properties": {
+    "type": { "const": "request" },
+    "id": {
+      "description": "Chosen by the phone, unique among its requests on this connection; the `reply` carries it back.",
+      "type": "string",
+      "minLength": 1
+    },
+    "bucket": {
+      "description": "The Descriptor `id` of the Bucket the command belongs to.",
+      "type": "string",
+      "minLength": 1
+    },
+    "command": {
+      "description": "The command's `id` within that Descriptor.",
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

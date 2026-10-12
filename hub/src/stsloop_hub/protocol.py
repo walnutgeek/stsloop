@@ -59,6 +59,8 @@ class Command:
     id: str
     phrases: tuple[str, ...]
     primitive: str
+    #: A command whatever has Focus, not only while its Bucket has it.
+    anywhere: bool = False
 
 
 @dataclass(frozen=True)
@@ -83,7 +85,26 @@ class Pairing:
     token: str
 
 
-Message = Union[Hello, Welcome, Refusal, Descriptors, Pairing]
+@dataclass(frozen=True)
+class Request:
+    """Phone to hub: run the `request` command `command` of the Bucket whose Descriptor id is `bucket`."""
+
+    id: str
+    bucket: str
+    command: str
+
+
+@dataclass(frozen=True)
+class Reply:
+    """Hub to phone: the answer to the request `id`, as one or two sentences to `say`.
+    `reason` is None when the command ran (see reply.schema.json)."""
+
+    id: str
+    say: str
+    reason: str | None = None
+
+
+Message = Union[Hello, Welcome, Refusal, Descriptors, Pairing, Request, Reply]
 
 
 class BadMessage(ValueError):
@@ -190,6 +211,7 @@ def _command(obj, what: str) -> Command:
         id=_string(obj, "id", what),
         phrases=_strings(obj, "phrases", what, min_items=1),
         primitive=_string(obj, "primitive", what),
+        anywhere=_get(obj, "anywhere", bool, what) if "anywhere" in obj else False,
     )
 
 
@@ -235,6 +257,16 @@ _READERS = {
         url=_string(o, "url", "pairing"),
         token=_string(o, "token", "pairing"),
     ),
+    "request": lambda o: Request(
+        id=_string(o, "id", "request"),
+        bucket=_string(o, "bucket", "request"),
+        command=_string(o, "command", "request"),
+    ),
+    "reply": lambda o: Reply(
+        id=_string(o, "id", "reply"),
+        say=_string(o, "say", "reply"),
+        reason=_string(o, "reason", "reply") if "reason" in o else None,
+    ),
 }
 
 
@@ -252,10 +284,15 @@ def _descriptor_json(d: Descriptor) -> dict:
         "aliases": list(d.aliases),
         "type": d.type,
         "primitives": list(d.primitives),
-        "commands": [
-            {"id": c.id, "phrases": list(c.phrases), "primitive": c.primitive} for c in d.commands
-        ],
+        "commands": [_command_json(c) for c in d.commands],
     }
+
+
+def _command_json(c: Command) -> dict:
+    obj = {"id": c.id, "phrases": list(c.phrases), "primitive": c.primitive}
+    if c.anywhere:
+        obj["anywhere"] = True
+    return obj
 
 
 def to_json(message: Message) -> dict:
@@ -273,6 +310,14 @@ def to_json(message: Message) -> dict:
             return {"type": "descriptors", "buckets": [_descriptor_json(d) for d in buckets]}
         case Pairing(protocol=v, url=url, token=token):
             return {"type": "pairing", "protocol": _v(v), "url": url, "token": token}
+        case Request(id=rid, bucket=bucket, command=command):
+            return {"type": "request", "id": rid, "bucket": bucket, "command": command}
+        case Reply(id=rid, say=say, reason=reason):
+            obj = {"type": "reply", "id": rid}
+            if reason is not None:
+                obj["reason"] = reason
+            obj["say"] = say
+            return obj
     raise TypeError(f"not a message: {message!r}")
 
 

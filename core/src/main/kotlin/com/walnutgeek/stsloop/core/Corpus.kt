@@ -177,23 +177,41 @@ enum class Command(val json: String, val phrases: List<String>) {
      * has no fixed phrase; the grammar matches the Buckets' aliases instead.
      */
     FOCUS("focus", emptyList()),
+
+    /**
+     * A command a Bucket declares with the `request` Primitive ("status",
+     * "what's blocked"): sent to the Bucket's Provider on the hub, whose
+     * reply is spoken. Its phrases come from the Descriptors, not from here.
+     */
+    REQUEST("request", emptyList()),
 }
+
+/**
+ * A [Command.REQUEST] as invoked: the [command] id of the Bucket named
+ * [bucket], whose Descriptor id is [bucketId].
+ */
+data class BucketRequest(val bucket: String, val bucketId: String, val command: String)
 
 /**
  * A command as invoked in one Turn: which [command], the words heard
  * (normalised), for [Command.SCRATCH_THAT] the directory name of the Turn
- * it tombstones (null when there was nothing to drop), and for
- * [Command.FOCUS] the name of the Bucket it [focus]es.
+ * it tombstones (null when there was nothing to drop), for [Command.FOCUS]
+ * the name of the Bucket it [focus]es (and, for a hub Bucket, its
+ * Descriptor id [focusId]), and for [Command.REQUEST] the [request].
  */
 data class CommandInvocation(
     val command: Command,
     val matched: String,
     val tombstones: String? = null,
     val focus: String? = null,
+    val focusId: String? = null,
+    val request: BucketRequest? = null,
 ) {
     init {
         require(tombstones == null || command == Command.SCRATCH_THAT) { "only scratch_that tombstones a Turn" }
         require((focus != null) == (command == Command.FOCUS)) { "a focus command, and only a focus command, names a Bucket" }
+        require(focusId == null || focus != null) { "a focus id goes with a focus" }
+        require((request != null) == (command == Command.REQUEST)) { "a request command, and only a request command, has a request" }
     }
 }
 
