@@ -17,19 +17,20 @@ object Zipformer {
     const val DIR = "sherpa-onnx-streaming-zipformer-en-2023-06-26"
     private const val PREFIX = "epoch-99-avg-1-chunk-16-left-128"
 
-    fun config(numThreads: Int = 2) = OnlineRecognizerConfig(
+    /** [root]: "" for the test APK's assets, or a directory ending in `/` holding [DIR]. */
+    fun config(numThreads: Int = 2, root: String = "") = OnlineRecognizerConfig(
         featConfig = FeatureConfig(sampleRate = SAMPLE_RATE_HZ, featureDim = 80),
         modelConfig = OnlineModelConfig(
             transducer = OnlineTransducerModelConfig(
-                encoder = "$DIR/encoder-$PREFIX.int8.onnx",
-                decoder = "$DIR/decoder-$PREFIX.int8.onnx",
-                joiner = "$DIR/joiner-$PREFIX.int8.onnx",
+                encoder = "$root$DIR/encoder-$PREFIX.int8.onnx",
+                decoder = "$root$DIR/decoder-$PREFIX.int8.onnx",
+                joiner = "$root$DIR/joiner-$PREFIX.int8.onnx",
             ),
-            tokens = "$DIR/tokens.txt",
+            tokens = "$root$DIR/tokens.txt",
             numThreads = numThreads,
             modelType = "zipformer2",
             modelingUnit = "bpe",
-            bpeVocab = "$DIR/bpe.vocab",
+            bpeVocab = "$root$DIR/bpe.vocab",
         ),
         decodingMethod = HotwordsGate.MODIFIED_BEAM_SEARCH,
         hotwordsFile = "",

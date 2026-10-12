@@ -17,6 +17,8 @@ kotlin {
 }
 
 dependencies {
+    // The STT model ships upstream as a .tar.bz2 (ModelStore); the JDK has neither format.
+    implementation(libs.commons.compress)
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.launcher)

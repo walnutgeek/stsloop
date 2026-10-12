@@ -177,4 +177,6 @@ adb. v0.1 adds one screen with:
   are settled (#40): `docs/phase0.md`, "Corpus format".
 - How the hub detects "blocked" from herdr alone, without hooks.
 - The focus timeout's real value, and whether a Draft should extend it.
-- The model download host and its integrity check.
+- ~~The model download host and its integrity check.~~ Settled in #50: the
+  upstream sherpa-onnx GitHub releases, each download and each extracted
+  file checked against a SHA-256 pinned in the app.

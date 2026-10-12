@@ -15,13 +15,15 @@ android {
     }
     // sherpa-onnx reads each model asset whole into memory; storing the
     // .onnx uncompressed spares an inflate on every load (measured 1.27 s vs
-    // 1.56 s for the 70 MB zipformer; the shipped model is ~660 MB). This
-    // covers this module's test APK only; :app sets the same for the app APK.
+    // 1.56 s for the 70 MB zipformer; the bundled model is ~660 MB). Models
+    // are bundled in debug builds only (src/debug/assets). This covers this
+    // module's test APK only; :app sets the same for the app APK.
     androidResources { noCompress += "onnx" }
 }
 
 dependencies {
     api(project(":core"))
+    androidTestImplementation(libs.commons.compress) // builds a .tar.bz2 for the on-device unpack test
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.junit4)
@@ -43,3 +45,20 @@ val checkSingleChokepoint = tasks.register("checkSingleChokepoint") {
     }
 }
 tasks.named("check") { dependsOn(checkSingleChokepoint) }
+
+// A release APK bundles no models: it downloads them on first run (ModelDownloads, #50).
+// scripts/fetch-models.sh puts them in src/debug/assets, which only debug builds (and the
+// device tests) see. Fail a release build if a model sits where it would be picked up,
+// such as a checkout fetched before #50.
+val checkNoReleaseModels = tasks.register("checkNoReleaseModels") {
+    val dirs = listOf("src/main/assets", "src/release/assets").map { file(it) }
+    inputs.files(dirs.map { fileTree(it) })
+    doLast {
+        val bundled = dirs.flatMap { d -> d.walkTopDown().filter { it.isFile }.toList() }
+        check(bundled.isEmpty()) {
+            "release builds must not bundle models; run scripts/fetch-models.sh to move them to src/debug/assets: $bundled"
+        }
+    }
+}
+tasks.named("check") { dependsOn(checkNoReleaseModels) }
+tasks.configureEach { if (name == "preReleaseBuild") dependsOn(checkNoReleaseModels) }

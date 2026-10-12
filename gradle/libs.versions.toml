@@ -5,8 +5,10 @@ junit = "6.1.3"
 junit4 = "4.13.2"
 androidx-test-runner = "1.7.0"
 androidx-test-ext-junit = "1.3.0"
+commons-compress = "1.28.0"
 
 [libraries]
+commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commons-compress" }
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-launcher = { module = "org.junit.platform:junit-platform-launcher" }

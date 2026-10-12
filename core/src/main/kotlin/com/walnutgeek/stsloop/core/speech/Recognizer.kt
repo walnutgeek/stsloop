@@ -34,10 +34,12 @@ interface RecognitionStream {
  * `sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25/int8 greedy_search` or
  * `sherpa-onnx-streaming-zipformer-en-2023-06-26/epoch-99-avg-1-chunk-16-left-128.int8 modified_beam_search`.
  * Derived from the loaded config, so the Corpus records what actually ran.
+ * Only the encoder's own directory counts, so a downloaded model, loaded from
+ * an absolute path, has the same id as the bundled one.
  */
 val RecognizerSpec.modelId: String
     get() {
-        val dir = transducerEncoder.substringBeforeLast('/', "")
+        val dir = transducerEncoder.substringBeforeLast('/', "").substringAfterLast('/')
         val variant = transducerEncoder.substringAfterLast('/')
             .removePrefix("encoder-").removePrefix("encoder.").removeSuffix(".onnx")
         return (if (dir.isEmpty()) variant else "$dir/$variant") + " " + decodingMethod

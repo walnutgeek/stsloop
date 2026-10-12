@@ -112,27 +112,41 @@ class SessionMachineTest {
             SessionControls("Could not start from here. Open the app.", SessionAction.OPEN_APP),
             SessionControls.of(StartBlocked(StartRefusal.NOT_ALLOWED)),
         )
+        assertEquals(
+            SessionControls("Speech models not downloaded yet. Open the app.", SessionAction.OPEN_APP),
+            SessionControls.of(StartBlocked(StartRefusal.MODELS)),
+        )
     }
 }
 
 class StartGateTest {
     @Test
     fun `start needs the microphone`() {
-        assertEquals(StartRefusal.MICROPHONE, StartGate.check(micGranted = false, controlsVisible = true))
+        assertEquals(StartRefusal.MICROPHONE, StartGate.check(micGranted = false, controlsVisible = true, modelsReady = true))
     }
 
     @Test
     fun `start needs visible controls, or the Session could not be stopped eyes-free`() {
-        assertEquals(StartRefusal.NOTIFICATIONS, StartGate.check(micGranted = true, controlsVisible = false))
+        assertEquals(StartRefusal.NOTIFICATIONS, StartGate.check(micGranted = true, controlsVisible = false, modelsReady = true))
     }
 
     @Test
-    fun `microphone is reported first when both are missing`() {
-        assertEquals(StartRefusal.MICROPHONE, StartGate.check(micGranted = false, controlsVisible = false))
+    fun `microphone is reported first when all are missing`() {
+        assertEquals(StartRefusal.MICROPHONE, StartGate.check(micGranted = false, controlsVisible = false, modelsReady = false))
     }
 
     @Test
-    fun `start allowed with both`() {
-        assertNull(StartGate.check(micGranted = true, controlsVisible = true))
+    fun `start needs the speech models, which a release build downloads on first run`() {
+        assertEquals(StartRefusal.MODELS, StartGate.check(micGranted = true, controlsVisible = true, modelsReady = false))
+    }
+
+    @Test
+    fun `missing models are reported last, as the app fixes them unasked`() {
+        assertEquals(StartRefusal.NOTIFICATIONS, StartGate.check(micGranted = true, controlsVisible = false, modelsReady = false))
+    }
+
+    @Test
+    fun `start allowed with all three`() {
+        assertNull(StartGate.check(micGranted = true, controlsVisible = true, modelsReady = true))
     }
 }

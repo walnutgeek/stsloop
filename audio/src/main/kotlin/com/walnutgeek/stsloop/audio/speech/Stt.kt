@@ -7,6 +7,7 @@ import com.k2fsa.sherpa.onnx.OnlineStream
 import com.walnutgeek.stsloop.core.speech.HotwordsDecision
 import com.walnutgeek.stsloop.core.speech.HotwordsGate
 import com.walnutgeek.stsloop.core.speech.RecognizerSpec
+import java.io.File
 import java.io.FileNotFoundException
 
 /**
@@ -20,7 +21,8 @@ import java.io.FileNotFoundException
  * constructs an [OnlineRecognizer].
  */
 class Stt(
-    assets: AssetManager,
+    /** Where the model paths in [config] point: these assets, or files on disk when null. */
+    assets: AssetManager?,
     config: OnlineRecognizerConfig = SpeechModels.sttConfig(),
 ) : AutoCloseable {
     val spec: RecognizerSpec = specOf(config)
@@ -28,7 +30,7 @@ class Stt(
 
     init {
         HotwordsGate.configRefusal(spec)?.let { throw IllegalArgumentException(it) }
-        requireAssets(assets, assetPaths(config))
+        requireModels(assets, modelPaths(config))
         recognizer = OnlineRecognizer(assets, config)
     }
 
@@ -67,19 +69,24 @@ class Stt(
             )
         }
 
-        fun assetPaths(c: OnlineRecognizerConfig) = with(c.modelConfig) {
+        fun modelPaths(c: OnlineRecognizerConfig) = with(c.modelConfig) {
             listOf(transducer.encoder, transducer.decoder, transducer.joiner, tokens, bpeVocab)
         }.filter { it.isNotEmpty() }
     }
 }
 
 /**
- * Throw if any asset is missing. sherpa-onnx's asset loader calls `_Exit(-1)`
- * on a missing file, and its `newFromAsset` constructors skip config
- * validation, so this is the only catchable check.
+ * Throw if any model file is missing: an asset when [assets] is given, else a
+ * file. sherpa-onnx's asset loader calls `_Exit(-1)` on a missing file, and
+ * its `newFromAsset` constructors skip config validation, so this is the only
+ * catchable check.
  */
-internal fun requireAssets(assets: AssetManager, paths: List<String>) {
+internal fun requireModels(assets: AssetManager?, paths: List<String>) {
     for (path in paths) {
+        if (assets == null) {
+            check(File(path).isFile) { "missing model file '$path'; the app downloads it on first run" }
+            continue
+        }
         try {
             assets.open(path).close()
         } catch (e: FileNotFoundException) {

@@ -13,6 +13,9 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.walnutgeek.stsloop.audio.SessionService
+import com.walnutgeek.stsloop.audio.speech.ModelDownloads
+import com.walnutgeek.stsloop.core.models.DownloadStatus
+import com.walnutgeek.stsloop.core.models.NetworkKind
 import com.walnutgeek.stsloop.core.StartGate
 import com.walnutgeek.stsloop.core.StartRefusal
 import com.walnutgeek.stsloop.core.testmode.TestConfig
@@ -25,7 +28,10 @@ class MainActivity : Activity() {
     private lateinit var settings: Button
     private lateinit var transcripts: TranscriptListPane
     private lateinit var corpusCount: TextView
+    private lateinit var models: TextView
+    private lateinit var modelAction: Button
     private var testMode: TestModePane? = null
+    private val modelsChanged: () -> Unit = { refreshModels() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,6 +49,15 @@ class MainActivity : Activity() {
                 )
             }
         }
+        // A release build downloads its speech models on first run (ModelDownloads); this says how far.
+        models = TextView(this).apply { textSize = 16f; setPadding(0, 16, 0, 0) }
+        modelAction = Button(this).apply {
+            isAllCaps = false
+            setOnClickListener {
+                if (ModelDownloads.waitingForWifi) ModelDownloads.allowMobileData(this@MainActivity)
+                else ModelDownloads.retry(this@MainActivity)
+            }
+        }
         transcripts = TranscriptListPane(this, SessionService.corpusDir(this)).apply {
             onLoaded = { n -> corpusCount.text = "Corpus: $n Turn(s), newest first" }
         }
@@ -54,6 +69,8 @@ class MainActivity : Activity() {
             addView(toggle)
             addView(settings)
             addView(status)
+            addView(models)
+            addView(modelAction)
             testMode?.let { addView(it.view) }
             addView(corpusCount)
             addView(transcripts.view, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -68,11 +85,14 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        ModelDownloads.observe(modelsChanged)
+        ModelDownloads.ensure(this)
         refresh()
         transcripts.start()
     }
 
     override fun onPause() {
+        ModelDownloads.unobserve(modelsChanged)
         transcripts.stop()
         super.onPause()
     }
@@ -110,6 +130,12 @@ class MainActivity : Activity() {
                     "notification, so it will not start without one."
                 return
             }
+            StartRefusal.MODELS -> {
+                refresh()
+                status.text = "A Session needs the speech models, and they are not downloaded yet. " +
+                    "It can start once they are."
+                return
+            }
             StartRefusal.NOT_ALLOWED, null -> Unit // NOT_ALLOWED comes only from the platform, below
         }
         try {
@@ -137,13 +163,25 @@ class MainActivity : Activity() {
     private fun gate() = StartGate.check(
         micGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED,
         controlsVisible = SessionService.controlsVisible(this),
+        modelsReady = ModelDownloads.locate(this) != null,
     )
 
     private fun refresh() {
         toggle.text = if (SessionService.isActive) "Stop Session" else "Start Session"
         settings.visibility = if (SessionService.controlsVisible(this)) Button.GONE else Button.VISIBLE
         status.text = if (SessionService.isActive) "Session active." else "No Session."
+        refreshModels()
         testMode?.refresh()
+    }
+
+    /** Hidden once the models are in place; until then, how far the download is, and its one action. */
+    private fun refreshModels() {
+        val s = ModelDownloads.status
+        models.visibility = if (s == DownloadStatus.Ready) TextView.GONE else TextView.VISIBLE
+        models.text = s.describe(ModelDownloads.network)
+        val retry = s is DownloadStatus.Failed && ModelDownloads.network != NetworkKind.NONE
+        modelAction.text = if (ModelDownloads.waitingForWifi) "Download now over mobile data" else "Retry"
+        modelAction.visibility = if (ModelDownloads.waitingForWifi || retry) Button.VISIBLE else Button.GONE
     }
 
     /**
