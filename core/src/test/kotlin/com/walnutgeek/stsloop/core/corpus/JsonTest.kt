@@ -94,4 +94,19 @@ class JsonTest {
     fun `deep nesting is rejected rather than overflowing the stack`() {
         assertThrows<JsonException> { Json.parse("[".repeat(100_000)) }
     }
+
+    @Test
+    fun `a config file is laid out one entry per line, two levels deep, and reads back`() {
+        val value = mapOf(
+            "buckets" to listOf(mapOf("name" to "work", "aliases" to listOf("job")), 7L),
+            "empty" to emptyList<Any>(),
+            "n" to 0.5,
+        )
+        val text = JsonWriter.pretty(value)
+        assertEquals(
+            "{\n  \"buckets\": [\n    {\"name\":\"work\",\"aliases\":[\"job\"]},\n    7\n  ],\n  \"empty\": [],\n  \"n\": 0.5\n}\n",
+            text,
+        )
+        assertEquals(value, Json.parse(text))
+    }
 }

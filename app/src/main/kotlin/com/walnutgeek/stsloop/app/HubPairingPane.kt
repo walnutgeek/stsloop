@@ -41,8 +41,11 @@ class HubPairingPane(private val activity: Activity) {
     private val forget = Button(activity).apply {
         isAllCaps = false
         text = "Forget hub"
-        setOnClickListener { io.execute { store.forget(); show() } }
+        setOnClickListener { io.execute { store.forget(); show(changed = true) } }
     }
+
+    /** Called on the UI thread once the pairing or the cached Descriptors may have changed. */
+    var onChanged: () -> Unit = {}
     val view = LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
         addView(status)
@@ -64,7 +67,8 @@ class HubPairingPane(private val activity: Activity) {
 
     /**
      * Pairs from a pairing message as the QR code holds it. Also the debug
-     * builds' adb path: `am start -n com.walnutgeek.stsloop/.app.MainActivity --es pairing '<json>'`.
+     * builds' adb path: `am start -n com.walnutgeek.stsloop/.app.MainActivity --es pairing '<json>'`,
+     * which [MainActivity] forwards to the settings screen.
      */
     fun paired(text: String) {
         val pairing = try {
@@ -84,7 +88,7 @@ class HubPairingPane(private val activity: Activity) {
             }
             Log.i(TAG, "paired with the hub at ${pairing.url}")
             if (SessionService.isActive) {
-                say("Paired with ${pairing.url}. The hub is used from the next Session.")
+                show(note = "Paired with ${pairing.url}. The hub is used from the next Session.", changed = true)
                 return@execute
             }
             lateinit var connection: HubConnection
@@ -128,11 +132,11 @@ class HubPairingPane(private val activity: Activity) {
         if (fetching !== connection) return@runOnUiThread
         fetching = null
         connection.stop()
-        io.execute { show(note = message) }
+        io.execute { show(note = message, changed = true) }
     }
 
-    /** Background thread: reads the store and shows it, with [note] under it. */
-    private fun show(note: String? = null) {
+    /** Background thread: reads the store and shows it, with [note] under it; [changed] tells [onChanged]. */
+    private fun show(note: String? = null, changed: Boolean = false) {
         val (pairing, cached) = try {
             store.pairing() to store.descriptors()
         } catch (e: Exception) {
@@ -147,6 +151,7 @@ class HubPairingPane(private val activity: Activity) {
             status.text = if (note == null) text else "$text\n$note"
             pair.text = if (pairing == null) "Pair with hub (scan its QR code)" else "Pair again"
             forget.visibility = if (pairing == null) Button.GONE else Button.VISIBLE
+            if (changed) onChanged()
         }
     }
 

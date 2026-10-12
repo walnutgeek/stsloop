@@ -61,6 +61,10 @@ data class Timings(
         const val FOCUS_TIMEOUT_FLOOR_MS = 10_000
         const val FOCUS_TIMEOUT_CAP_MS = 3_600_000
 
+        /** The keys the settings screen edits. */
+        const val TRAILING_SILENCE_KEY = "trailing_silence_ms"
+        const val FOCUS_TIMEOUT_KEY = "focus_timeout_ms"
+
         private fun ms(key: String, range: LongRange, get: (Timings) -> Int) = Field(key, get) { v ->
             when {
                 v != floor(v) -> "must be a whole number of milliseconds, was $v"
@@ -74,14 +78,14 @@ data class Timings(
         }
 
         private val FIELDS = listOf(
-            ms("trailing_silence_ms", 1L..MAX_UTTERANCE_CAP_MS) { it.trailingSilenceMs },
+            ms(TRAILING_SILENCE_KEY, 1L..MAX_UTTERANCE_CAP_MS) { it.trailingSilenceMs },
             ms("guard_ms", 0L..60_000) { it.guardMs },
             ms("max_utterance_ms", MAX_UTTERANCE_FLOOR_MS.toLong()..MAX_UTTERANCE_CAP_MS) { it.maxUtteranceMs },
             ms("min_utterance_ms", 0L..MAX_UTTERANCE_CAP_MS) { it.minUtteranceMs },
             ms("pre_roll_ms", 0L..PRE_ROLL_CAP_MS) { it.preRollMs },
             probability("speech_threshold") { it.speechThreshold },
             probability("release_threshold") { it.releaseThreshold },
-            ms("focus_timeout_ms", FOCUS_TIMEOUT_FLOOR_MS.toLong()..FOCUS_TIMEOUT_CAP_MS.toLong()) { it.focusTimeoutMs },
+            ms(FOCUS_TIMEOUT_KEY, FOCUS_TIMEOUT_FLOOR_MS.toLong()..FOCUS_TIMEOUT_CAP_MS.toLong()) { it.focusTimeoutMs },
         )
 
         val KEYS: List<String> = FIELDS.map { it.key }

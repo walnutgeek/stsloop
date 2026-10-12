@@ -12,6 +12,7 @@ import com.walnutgeek.stsloop.core.grammar.BucketConfig
 import com.walnutgeek.stsloop.core.grammar.BucketRegistry
 import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
 import com.walnutgeek.stsloop.core.hub.Descriptors
+import com.walnutgeek.stsloop.core.hub.HubAliases
 import com.walnutgeek.stsloop.core.hub.HubProvider
 import com.walnutgeek.stsloop.core.speech.StreamingRecognizer
 import com.walnutgeek.stsloop.core.testmode.TestConfig
@@ -331,12 +332,20 @@ class TurnCapture(
             loadConfig(File(dir, BucketConfig.FILE), BucketConfig.DEFAULT) { BucketConfig.parse(it).run { config to rejected } }
 
         /**
+         * The phone's own aliases for hub Buckets ([HubAliases]) in
+         * `<dir>/hub/aliases.json`, set on the settings screen and read at
+         * Session start. A missing or unreadable file means the hub's aliases.
+         */
+        fun loadHubAliases(dir: File): HubAliases =
+            loadConfig(File(dir, HubAliases.FILE), HubAliases.NONE) { HubAliases.parse(it).run { aliases to rejected } }
+
+        /**
          * The Buckets the phone can address: the capture Provider over
          * [loadBuckets], then the hub's Buckets of [hub] (the cached or a live
-         * snapshot), if any. Each conflict is logged.
+         * snapshot), if any, with the phone's [aliases] for them. Each conflict is logged.
          */
-        fun registry(config: BucketConfig, hub: Descriptors?): BucketRegistry =
-            HubProvider.registry(config, hub).also { r -> for (p in r.rejected) Log.e(TAG, "Buckets: ignoring $p") }
+        fun registry(config: BucketConfig, hub: Descriptors?, aliases: HubAliases = HubAliases.NONE): BucketRegistry =
+            HubProvider.registry(config, aliases.applyTo(hub)).also { r -> for (p in r.rejected) Log.e(TAG, "Buckets: ignoring $p") }
 
         /**
          * The Bluetooth test mode [TestConfig] in `<dir>/testmode.json`, read at
