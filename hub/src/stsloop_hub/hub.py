@@ -14,8 +14,10 @@
 - A newer welcomed connection replaces an older one (closed with 1000, in the
   background): a phone that changed networks reconnects before the old socket
   has noticed it is dead. A refused connection replaces nothing.
-- Once welcomed, each `request` gets one `reply` from `answer`; other
-  messages are ignored. `buckets_changed` sends the welcomed phone a new
+- Once welcomed, each `request` gets one `reply` from `answer`, which may
+  take its time (a summary): replies are sent as they are ready, in the
+  background, while other messages go on being read. Other messages are
+  ignored. `buckets_changed` sends the welcomed phone a new
   `descriptors` snapshot.
 """
 
@@ -23,9 +25,10 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import inspect
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from http import HTTPStatus
 
 from websockets.asyncio.server import ServerConnection, serve
@@ -33,7 +36,7 @@ from websockets.exceptions import ConnectionClosed
 from websockets.protocol import State
 
 from . import protocol as p
-from .buckets import Buckets
+from .buckets import Buckets, failed
 from .corpus import CorpusStore
 
 log = logging.getLogger("stsloop.hub")
@@ -49,7 +52,7 @@ class Hub:
         descriptors: Callable[[], tuple[p.Descriptor, ...]],
         hello_timeout: float = HELLO_TIMEOUT_S,
         supported: tuple[p.Version, ...] = p.SUPPORTED,
-        answer: Callable[[p.Request], p.Reply] | None = None,
+        answer: Callable[[p.Request], p.Reply | Awaitable[p.Reply]] | None = None,
         corpus: CorpusStore | None = None,
     ):
         self._token = token.encode()
@@ -187,14 +190,29 @@ class Hub:
                                                          message="The hub could not read that message.")))
                     continue
                 if isinstance(message, p.Request):
-                    reply = self._answer(message)
-                    log.info("request %s %s/%s: %s", message.id, message.bucket, message.command, reply.say)
-                    await ws.send(p.encode(reply))
+                    # In the background: a summary takes seconds, and the phone's other messages must not wait on it.
+                    task = asyncio.create_task(self._reply(ws, message))
+                    self._sending.add(task)
+                    task.add_done_callback(self._sending.discard)
                 elif receiver is not None and isinstance(message, (p.TurnOffer, p.TurnAudio)):
                     await ws.send(p.encode(await _receive(receiver, message)))
         finally:
             if receiver is not None:
                 await asyncio.to_thread(receiver.close)
+
+    async def _reply(self, ws: ServerConnection, request: p.Request) -> None:
+        try:
+            reply = self._answer(request)
+            if inspect.isawaitable(reply):
+                reply = await reply
+        except Exception:  # noqa: BLE001 - a bug in answering must not leave the phone waiting in silence
+            log.exception("request %s: answering it failed", request.id)
+            reply = failed(request)
+        log.info("request %s %s/%s: %s", request.id, request.bucket, request.command, reply.say)
+        try:
+            await ws.send(p.encode(reply))
+        except ConnectionClosed:
+            log.info("request %s: the phone left before its reply", request.id)
 
 
 async def _receive(receiver, message: p.TurnOffer | p.TurnAudio) -> p.TurnAck:

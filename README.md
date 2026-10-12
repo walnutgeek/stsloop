@@ -99,10 +99,26 @@ With herdr, each agent is a Bucket named from its workspace ("stsloop
 agent", or just "stsloop"), and Buckets come and go as agents do. Name one,
 then say "status": the loop says whether it is blocked, working or done, and
 for how long. "What's blocked", said whatever has Focus, lists the blocked
-agents. The hub only reads herdr (`herdr api snapshot`, every 2 s); it never
-types into an agent. It runs `$HERDR_BIN_PATH` when set, else `herdr` on the
-PATH, so start `serve` where that is the herdr your server runs. Without
-herdr, the hub starts as before.
+agents. "What does it say" (or "read it") summarises the agent's screen in a
+sentence or two. The hub only reads herdr (`herdr api snapshot`, every 2 s,
+and `herdr agent read` for a summary); it never types into an agent. It runs
+`$HERDR_BIN_PATH` when set, else `herdr` on the PATH, so start `serve` where
+that is the herdr your server runs. Without herdr, the hub starts as before.
+
+Summaries come from `claude -p` (with Claude Code's own login, the `haiku`
+model, and every tool off) unless `hub.json` names another backend:
+
+```json
+"summariser": {"backend": "ollama", "model": "llama3.2", "url": "http://127.0.0.1:11434", "timeout_s": 20}
+```
+
+`backend` is `claude`, `pi` or `ollama`; `model`, `command` (the binary, when
+it is not on the PATH), `url` (Ollama) and `timeout_s` (1–22, default 20) are
+optional. Obvious secrets (keys, tokens, private keys, `.env` values) are
+redacted before the screen reaches the model and again before the summary
+is spoken. With a hosted model, the redacted screen leaves this machine. When
+the model fails or takes too long, the loop says the agent's state and the
+screen's last line instead.
 While the hub is online during a Session, the phone also uploads its Corpus to
 it, new and backlog Turns alike, in the background. `serve` stores them in
 `~/.local/share/stsloop-hub/corpus` (`$STSLOOP_HUB_HOME/corpus` when that is

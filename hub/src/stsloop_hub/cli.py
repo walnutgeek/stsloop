@@ -6,7 +6,9 @@
 Both listen on, or advertise, this machine's tailnet address unless a host is
 given; a host given to `init` is kept for `serve`. `serve` publishes one
 Bucket per herdr agent when herdr is installed (`$HERDR_BIN_PATH`, else
-`herdr` on the PATH), and only the hub Bucket when it is not. It stores the
+`herdr` on the PATH), and only the hub Bucket when it is not; an agent's
+"what does it say" is summarised by the backend `hub.json` names (`claude -p`
+by default; see `config.py`). It stores the
 Turns the phone uploads in DIR (default: `config.corpus_dir`), as
 `scripts/corpus_load.py` reads them.
 """
@@ -23,7 +25,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TextIO
 
-from . import config, herdr, pairing, tailnet
+from . import config, herdr, pairing, summary, tailnet
 from .agents import HerdrProvider
 from .buckets import Buckets
 from .corpus import CorpusStore
@@ -106,6 +108,7 @@ def main(
     find_tailnet: Callable[[], str | None] = tailnet.address,
     run_hub: Callable[[Hub, str, int, Sequence[Poller]], None] = _run_forever,
     find_herdr: Callable[[], herdr.Herdr | None] | None = None,
+    make_backend: Callable[[config.SummariserConfig], summary.Backend] = summary.backend,
 ) -> int:
     out, err = out or sys.stdout, err or sys.stderr
     args = _parser().parse_args(argv)
@@ -154,7 +157,12 @@ def main(
         return 1
     print(f"stsloop-hub: storing uploaded Turns in {corpus.root}", file=err)
     found = (find_herdr or (lambda: _herdr(os.environ if env is None else env)))()
-    providers = [HerdrProvider(found)] if found else []
+    providers = []
+    if found:
+        summariser = saved.summariser or config.SummariserConfig()
+        print(f"stsloop-hub: summarising agents with {summariser.backend}, within {summariser.timeout_s:g} s", file=err)
+        summaries = summary.Summaries(found, make_backend(summariser), summariser.timeout_s)
+        providers.append(HerdrProvider(found, summaries=summaries))
     if not found:
         logging.getLogger("stsloop.hub").info("herdr is not installed; no agent Buckets")
     buckets = Buckets(providers)

@@ -118,8 +118,8 @@ class TurnCapture(
                 Log.i(TAG, "Session $sessionId: the hub answered ${request.id} in $afterMs ms${reply.reason?.let { " ($it)" } ?: ""}: ${reply.say}")
             }
 
-            override fun timedOut(request: Request) {
-                Log.w(TAG, "Session $sessionId: no answer from the hub to ${request.id} in ${HubRequests.REPLY_TIMEOUT_MS} ms")
+            override fun timedOut(request: Request, afterMs: Long) {
+                Log.w(TAG, "Session $sessionId: no answer from the hub to ${request.id} in $afterMs ms")
             }
 
             override fun ignored(reply: Reply) {

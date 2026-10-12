@@ -131,7 +131,7 @@ class PhraseGrammar(buckets: BucketRegistry) {
         (own ?: c.buckets.anywhereForms[said])?.let { (name, command) ->
             val bucket = c.buckets.named(name)
             val id = bucket?.id ?: return@let
-            return CommandInvocation(Command.REQUEST, matched, request = BucketRequest(name, id, command.id))
+            return CommandInvocation(Command.REQUEST, matched, request = BucketRequest(name, id, command.id, command.replyWithinMs))
         }
         val bucket = c.buckets.focusForms[said] ?: return null
         return CommandInvocation(Command.FOCUS, matched, focus = bucket, focusId = c.buckets.named(bucket)?.id)

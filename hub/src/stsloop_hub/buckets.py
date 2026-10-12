@@ -8,8 +8,9 @@ Buckets follow, in order.
 
 from __future__ import annotations
 
+import inspect
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
 from dataclasses import replace
 from typing import Protocol
 
@@ -32,7 +33,9 @@ class Provider(Protocol):
 
     def owns(self, bucket_id: str) -> bool: ...
 
-    def answer(self, request: p.Request) -> p.Reply: ...
+    def answer(self, request: p.Request) -> p.Reply | Awaitable[p.Reply]:
+        """The reply, or, for one that takes time (a summary), an awaitable of it. Called on the event loop."""
+        ...
 
 
 def unknown_bucket(request: p.Request) -> p.Reply:
@@ -61,7 +64,7 @@ class Buckets:
     def descriptors(self) -> tuple[p.Descriptor, ...]:
         return (self.hub(),) + tuple(d for provider in self._providers for d in provider.descriptors())
 
-    def answer(self, request: p.Request) -> p.Reply:
+    async def answer(self, request: p.Request) -> p.Reply:
         """The reply to `request`. Never raises: a Provider that fails gets a `failed` reply, logged."""
         if request.bucket == HUB.id:
             provider = next(
@@ -74,7 +77,8 @@ class Buckets:
             if provider is None:
                 return unknown_bucket(request)
         try:
-            return provider.answer(request)
+            reply = provider.answer(request)
+            return await reply if inspect.isawaitable(reply) else reply
         except Exception:  # noqa: BLE001 - one Provider's bug must not drop the phone's connection
             log.exception("the Provider of %s could not answer %s", request.bucket, request.command)
             return failed(request)

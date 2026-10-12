@@ -120,6 +120,38 @@ class RequestTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(asked, [p.Request(id="a3f1c9", bucket="herdr:w8:p1", command="status")])
         self.assertEqual(reply, {"type": "reply", "id": "a3f1c9", "say": "stsloop agent is working, for 2 minutes."})
 
+    async def test_a_slow_reply_holds_up_no_other(self):
+        release = asyncio.Event()
+
+        async def answer(request):
+            if request.command == "read":
+                await release.wait()
+            return p.Reply(id=request.id, say=request.command)
+
+        async with running_hub(answer=answer) as (_, url):
+            async with phone(url, pairing_token()) as ws:
+                await ws.send(HELLO)
+                await ws.recv(), await ws.recv()
+                await ws.send(json.dumps(fixture("v1", "request/read.json")))
+                await ws.send(json.dumps(fixture("v1", "request/status.json")))
+                first = json.loads(await asyncio.wait_for(ws.recv(), 5))
+                release.set()
+                second = json.loads(await asyncio.wait_for(ws.recv(), 5))
+        self.assertEqual((first["say"], second["say"]), ("status", "read"))
+
+    async def test_an_answer_that_raises_still_gets_a_reply(self):
+        def answer(request):
+            raise RuntimeError("bug")
+
+        async with running_hub(answer=answer) as (_, url):
+            async with phone(url, pairing_token()) as ws:
+                await ws.send(HELLO)
+                await ws.recv(), await ws.recv()
+                with self.assertLogs("stsloop.hub", "ERROR"):
+                    await ws.send(json.dumps(fixture("v1", "request/status.json")))
+                    reply = json.loads(await asyncio.wait_for(ws.recv(), 5))
+        self.assertEqual(reply["reason"], "failed")
+
     async def test_a_request_before_the_welcome_is_ignored(self):
         async with running_hub(answer=lambda r: self.fail("answered before hello")) as (_, url):
             async with phone(url, pairing_token()) as ws:

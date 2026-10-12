@@ -12,7 +12,7 @@ from pathlib import Path
 from stsloop_hub import cli, config, tailnet
 from stsloop_hub.stub import STUB_BUCKETS
 
-from support import FakeHerdr, agent
+from support import FakeBackend, FakeHerdr, agent
 
 TAILNET_IP = "100.101.102.103"
 
@@ -26,6 +26,8 @@ class Run:
         self.herdr = herdr
         self.served = []
         self.pollers = []
+        #: The summariser config each serve built its backend from; the backend is a fake.
+        self.summarisers = []
 
     def __call__(self, *argv):
         self.out, self.err = io.StringIO(), io.StringIO()
@@ -37,6 +39,7 @@ class Run:
             find_tailnet=lambda: self.tailnet_ip,
             run_hub=lambda hub, host, port, pollers: (self.served.append((hub, host, port)), self.pollers.append(pollers)),
             find_herdr=lambda: self.herdr,
+            make_backend=lambda cfg: (self.summarisers.append(cfg), FakeBackend())[1],
         )
         return self
 
@@ -172,6 +175,42 @@ class ServeTest(unittest.TestCase):
         asyncio.run(one_poll())
         self.assertEqual([d.id for d in hub._descriptors()], ["hub", "herdr:w8:p1"])
         self.assertEqual(hub._descriptors()[0].commands[0].id, "blocked")
+    def test_summaries_use_claude_by_default(self):
+        run = Run(self.home, herdr=FakeHerdr())
+        run("init")
+        run("serve")
+        self.assertEqual(run.summarisers, [config.SummariserConfig(backend="claude")])
+        self.assertIn("summarising agents with claude", run.err.getvalue())
+
+    def test_the_summariser_named_in_the_config_is_used_and_init_keeps_it(self):
+        run = Run(self.home, herdr=FakeHerdr())
+        run("init")
+        cfg = run.config
+        cfg["summariser"] = {"backend": "ollama", "model": "qwen3", "url": "http://10.0.0.2:11434", "timeout_s": 12}
+        (self.home / "hub.json").write_text(json.dumps(cfg))
+        run("init", "--port", "9000")
+        self.assertEqual(run.config["summariser"], cfg["summariser"])
+        run("serve")
+        self.assertEqual(run.summarisers, [config.SummariserConfig(
+            backend="ollama", model="qwen3", url="http://10.0.0.2:11434", timeout_s=12.0)])
+
+    def test_an_unusable_summariser_is_reported(self):
+        self.run("init")
+        for summariser, said in [
+            ({"backend": "gpt"}, "backend 'gpt'"),
+            ({"backend": "pi", "timeout_s": 60}, "timeout_s"),
+            ({"backend": "pi", "timeout_s": True}, "timeout_s"),
+            ({"model": ""}, "model"),
+            ("claude", "object"),
+        ]:
+            with self.subTest(summariser=summariser):
+                cfg = self.run.config
+                cfg["summariser"] = summariser
+                (self.home / "hub.json").write_text(json.dumps(cfg))
+                self.run("serve")
+                self.assertEqual(self.run.code, 2)
+                self.assertIn(said, self.run.err.getvalue())
+
     def test_serve_stores_the_corpus_in_the_hub_home_by_default(self):
         self.run("init")
         self.run("serve")

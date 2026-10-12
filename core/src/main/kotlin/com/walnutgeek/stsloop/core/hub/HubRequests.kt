@@ -15,7 +15,9 @@ import com.walnutgeek.stsloop.core.turn.SessionCommands
  * [SessionCommands.HUB_OFFLINE] when the request cannot be sent. A reply
  * that has not come within [timeoutMs] is given up on, and the loop says
  * [NO_ANSWER] ([tick]); a reply that comes later, or to a request this
- * Session did not send, is ignored.
+ * Session did not send, is ignored. A command whose Descriptor asks for
+ * longer ([BucketRequest.replyWithinMs], a summary) is waited for that long,
+ * up to [MAX_REPLY_TIMEOUT_MS].
  *
  * Thread-safe: requests come from the STT thread, replies from the hub
  * connection's, ticks from the capture thread. [say] is called with the lock
@@ -40,14 +42,14 @@ class HubRequests(
         /** The hub answered [request] with [reply], [afterMs] after it was sent; the reply is being said. */
         fun replied(request: Request, reply: Reply, afterMs: Long) {}
 
-        /** [request] was given up on: no reply within [timeoutMs]. */
-        fun timedOut(request: Request) {}
+        /** [request] was given up on: no reply within [afterMs]. */
+        fun timedOut(request: Request, afterMs: Long) {}
 
         /** A reply that matches no request waiting for one: late, or not ours. */
         fun ignored(reply: Reply) {}
     }
 
-    private class Waiting(val request: Request, val sentAtMs: Long)
+    private class Waiting(val request: Request, val sentAtMs: Long, val timeoutMs: Long)
 
     private val waiting = LinkedHashMap<String, Waiting>()
 
@@ -56,7 +58,8 @@ class HubRequests(
         val request = synchronized(this) {
             var id = newId()
             while (id in waiting) id = newId()
-            Request(id, bucket.bucketId, bucket.command).also { waiting[id] = Waiting(it, clockMs()) }
+            val timeout = bucket.replyWithinMs?.coerceIn(timeoutMs, MAX_REPLY_TIMEOUT_MS) ?: timeoutMs
+            Request(id, bucket.bucketId, bucket.command).also { waiting[id] = Waiting(it, clockMs(), timeout) }
         }
         // Not under this lock: the link calls [replied] under its own, so holding both here could deadlock.
         if (!send(request)) {
@@ -75,16 +78,16 @@ class HubRequests(
         say(reply.say)
     }
 
-    /** Gives up on every request older than [timeoutMs], saying [NO_ANSWER] once for them. */
+    /** Gives up on every request older than its timeout, saying [NO_ANSWER] once for them. */
     @Synchronized
     fun tick() {
         if (waiting.isEmpty()) return
         val now = clockMs()
-        val late = waiting.values.filter { now - it.sentAtMs >= timeoutMs }
+        val late = waiting.values.filter { now - it.sentAtMs >= it.timeoutMs }
         if (late.isEmpty()) return
         for (w in late) {
             waiting.remove(w.request.id)
-            listener.timedOut(w.request)
+            listener.timedOut(w.request, w.timeoutMs)
         }
         say(NO_ANSWER)
     }
@@ -95,6 +98,9 @@ class HubRequests(
     companion object {
         /** How long the phone waits for a reply. The hub answers from what it already knows, in milliseconds. */
         const val REPLY_TIMEOUT_MS = 5_000L
+
+        /** The longest a Descriptor can make the phone wait for a reply. */
+        const val MAX_REPLY_TIMEOUT_MS = 60_000L
 
         /** Said when the hub has not answered in time. */
         const val NO_ANSWER = "no answer from the hub."

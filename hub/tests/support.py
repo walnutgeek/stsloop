@@ -72,12 +72,40 @@ class FakeHerdr:
         self.agents_now = list(agents)
         self.error = error
         self.calls = 0
+        #: Each pane's screen, as `read` gives it; a pane not here cannot be read.
+        self.screens: dict[str, str] = {}
+        self.reads: list[tuple[str, int]] = []
 
     def agents(self):
         self.calls += 1
         if self.error:
             raise HerdrError(self.error)
         return list(self.agents_now)
+
+    def read(self, pane_id: str, lines: int) -> str:
+        self.reads.append((pane_id, lines))
+        if pane_id not in self.screens:
+            raise HerdrError(f"agent_not_found: {pane_id}")
+        return self.screens[pane_id]
+
+
+class FakeBackend:
+    """A summariser that never calls a model: it gives `answer`, or raises `error`, and records each call."""
+
+    def __init__(self, answer: str = "a summary.", error: Exception | None = None):
+        self.answer = answer
+        self.error = error
+        self.calls: list[tuple[str, str, float]] = []
+        #: When set, a threading.Event the model waits on before it answers.
+        self.wait = None
+
+    def summarise(self, system: str, text: str, timeout: float) -> str:
+        self.calls.append((system, text, timeout))
+        if self.wait is not None:
+            self.wait.wait(5)
+        if self.error:
+            raise self.error
+        return self.answer
 
 
 class Clock:
