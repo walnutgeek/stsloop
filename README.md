@@ -102,7 +102,9 @@ from the next Session. The screen writes the same files adb can, described
 below: `files/timings.json`, `files/buckets.json`, and
 `files/hub/aliases.json` for hub Buckets. Each save changes only what was
 edited and keeps the rest of the file as it was, so values pushed over adb
-survive. Trailing silence takes 0.3 to 10 s on the screen; the file still
+survive. A file a Session cannot use as a whole (not strict JSON, say) is
+never overwritten: the save is refused until it is fixed or deleted over
+adb. Trailing silence takes 0.3 to 10 s on the screen; the file still
 takes anything it allows. An alias is refused when another Bucket is already
 heard by it, since a Session would drop it from both.
 

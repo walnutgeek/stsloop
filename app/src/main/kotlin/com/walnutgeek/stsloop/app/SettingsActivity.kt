@@ -58,7 +58,7 @@ class SettingsActivity : Activity() {
             addView(heading("Settings", 24f))
             addView(text("Changes apply from the next Session.", 14f))
             addView(heading("Timings"))
-            addView(text("Trailing silence (seconds): the pause that ends what you say", 14f))
+            addView(text("Trailing silence (seconds): the Silence that ends your Turn", 14f))
             addView(trailingSilence)
             addView(text("Focus timeout (seconds): how long a named Bucket keeps Focus before the Inbox", 14f))
             addView(focusTimeout)
@@ -109,12 +109,25 @@ class SettingsActivity : Activity() {
 
     // --- timings ---
 
+    /** The timings last shown as loaded; a field still showing its one has no unsaved typing. */
+    private var shownSilence: String? = null
+    private var shownTimeout: String? = null
+
+    /** Re-reads the file, leaving alone a field with unsaved typing (back from the QR scanner, say). */
     private fun loadTimings() = io.execute {
-        val s = TimingsSettings(read(Timings.FILE))
+        val (s, unreadable) = try {
+            TimingsSettings(read(Timings.FILE)) to null
+        } catch (e: IOException) {
+            TimingsSettings(null) to "Cannot read ${Timings.FILE}: ${e.message}"
+        }
         runOnUiThread {
-            trailingSilence.setText(Seconds.format(s.timings.trailingSilenceMs))
-            focusTimeout.setText(Seconds.format(s.timings.focusTimeoutMs))
-            timingsNote.text = ignored(Timings.FILE, s.rejected)
+            val silence = Seconds.format(s.timings.trailingSilenceMs)
+            val timeout = Seconds.format(s.timings.focusTimeoutMs)
+            if (shownSilence == null || trailingSilence.text.toString() == shownSilence) trailingSilence.setText(silence)
+            if (shownTimeout == null || focusTimeout.text.toString() == shownTimeout) focusTimeout.setText(timeout)
+            shownSilence = silence
+            shownTimeout = timeout
+            timingsNote.text = unreadable ?: ignored(Timings.FILE, s.rejected)
         }
     }
 
@@ -126,24 +139,40 @@ class SettingsActivity : Activity() {
             return
         }
         io.execute {
-            val s = TimingsSettings(read(Timings.FILE))
-            val outcome = apply(s.edit(trailingSilenceMs = silence, focusTimeoutMs = timeout), "Saved. The next Session uses them.")
-            runOnUiThread { timingsNote.text = outcome.message }
+            val outcome = edit("Saved. The next Session uses them.") {
+                TimingsSettings(read(Timings.FILE)).edit(trailingSilenceMs = silence, focusTimeoutMs = timeout)
+            }
+            runOnUiThread {
+                timingsNote.text = outcome.message
+                if (outcome.saved) {
+                    shownSilence = Seconds.format(silence)
+                    shownTimeout = Seconds.format(timeout)
+                }
+            }
         }
     }
 
     // --- Buckets ---
 
+    /** Rebuilds the list from the files, keeping any unsaved typing of a Bucket still listed. */
     private fun loadBuckets() = io.execute {
-        val s = buckets()
+        val (s, unreadable) = try {
+            buckets() to null
+        } catch (e: IOException) {
+            BucketSettings(null, null, null) to "Cannot read the Bucket files: ${e.message}"
+        }
         runOnUiThread {
+            val typed = rows.filter { it.edited }.associate { it.key to it.typed }
             bucketList.removeAllViews()
-            for (row in s.rows) bucketList.addView(BucketRow(row).view)
-            bucketsNote.text = ignored("the Bucket files", s.rejected)
+            rows = s.rows.map { r -> BucketRow(r).also { row -> typed[row.key]?.let(row::retype) } }
+            for (row in rows) bucketList.addView(row.view)
+            bucketsNote.text = unreadable ?: ignored("the Bucket files", s.rejected)
         }
     }
 
-    /** Background thread: the Buckets as the next Session would hear them. */
+    private var rows: List<BucketRow> = emptyList()
+
+    /** Background thread: the Buckets as the next Session would hear them. Throws when a file exists but cannot be read. */
     private fun buckets(): BucketSettings {
         val snapshot = try {
             HubStore(filesDir).descriptors()
@@ -156,10 +185,19 @@ class SettingsActivity : Activity() {
 
     /** One Bucket: its name, its aliases to edit, and a place for its recognisability result. */
     private inner class BucketRow(private val row: BucketSettings.Row) {
+        /** Which Bucket this is, across reloads. */
+        val key = row.name to row.hubId
+        private var shown = AliasText.format(row.aliases)
         private val aliases = EditText(this@SettingsActivity).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            setText(AliasText.format(row.aliases))
+            setText(shown)
         }
+        val typed: String get() = aliases.text.toString()
+
+        /** Whether the field holds typing not yet saved. */
+        val edited: Boolean get() = typed != shown
+
+        fun retype(text: String) = aliases.setText(text)
         private val status = note()
 
         /** The name-recognisability check's result (#49); empty and hidden until that check exists. */
@@ -178,17 +216,18 @@ class SettingsActivity : Activity() {
         private fun save() {
             val wanted = AliasText.parse(aliases.text.toString())
             io.execute {
-                // Re-read, so an edit to another Bucket, or a file pushed over adb, is kept.
-                val s = buckets()
-                val current = s.rows.firstOrNull { it.name == row.name && it.hubId == row.hubId }
-                val outcome = if (current == null) {
-                    Outcome(false, "${row.name} is gone; reopen the screen.")
-                } else {
-                    apply(s.edit(current, wanted), "Saved. The next Session hears it by these.")
+                val outcome = edit("Saved. The next Session hears it by these.") {
+                    // Re-read, so an edit to another Bucket, or a file pushed over adb, is kept.
+                    val s = buckets()
+                    val current = s.rows.firstOrNull { it.name == row.name && it.hubId == row.hubId }
+                    if (current == null) Edit.Refused("${row.name} is gone; reopen the screen.") else s.edit(current, wanted)
                 }
                 runOnUiThread {
                     status.text = outcome.message
-                    if (outcome.saved) aliases.setText(AliasText.format(wanted))
+                    if (outcome.saved) {
+                        shown = AliasText.format(wanted)
+                        aliases.setText(shown)
+                    }
                 }
             }
         }
@@ -199,28 +238,36 @@ class SettingsActivity : Activity() {
     /** Whether an edit was [saved], and what to show for it. */
     private class Outcome(val saved: Boolean, val message: String)
 
-    /** Background thread: writes an [Edit.Save], or says why not. */
-    private fun apply(edit: Edit, saved: String): Outcome = when (edit) {
-        is Edit.Refused -> Outcome(false, edit.problem)
-        is Edit.Save -> try {
-            write(edit.file, edit.text)
-            Outcome(true, saved)
+    /**
+     * Background thread: makes the edit (reading its files), then writes an
+     * [Edit.Save], or says why not. A file that exists but cannot be read
+     * refuses the edit, so it is never replaced by one built from the defaults.
+     */
+    private fun edit(saved: String, make: () -> Edit): Outcome {
+        val edit = try {
+            make()
         } catch (e: IOException) {
-            Log.e(TAG, "cannot write ${edit.file}", e)
-            Outcome(false, "Could not save: ${e.message}")
+            Log.e(TAG, "cannot read the settings files", e)
+            return Outcome(false, "Could not read the file to change: ${e.message}")
+        }
+        return when (edit) {
+            is Edit.Refused -> Outcome(false, edit.problem)
+            Edit.Unchanged -> Outcome(true, "Nothing to save: that is what the next Session uses.")
+            is Edit.Save -> try {
+                write(edit.file, edit.text)
+                Outcome(true, saved)
+            } catch (e: IOException) {
+                Log.e(TAG, "cannot write ${edit.file}", e)
+                Outcome(false, "Could not save: ${e.message}")
+            }
         }
     }
 
-    /** The text of `files/<name>`, or null when there is none or it cannot be read (a Session then uses the defaults too). */
+    /** The text of `files/<name>`, or null when there is none. Throws [IOException] when it exists but cannot be read. */
     private fun read(name: String): String? {
         val file = File(filesDir, name)
         if (!file.exists()) return null
-        return try {
-            file.readText()
-        } catch (e: IOException) {
-            Log.e(TAG, "cannot read $file", e)
-            null
-        }
+        return file.readText()
     }
 
     /** Replaces `files/<name>` atomically, so a Session starting meanwhile reads the old file or the new, never half of one. */

@@ -21,7 +21,8 @@ import com.walnutgeek.stsloop.core.jsonString
  * keeping every other entry and key of the file as it was. A hub Bucket's go
  * to [HubAliases]. An edit is refused when one of its aliases has no words, is
  * the Inbox's, or is already heard as another Bucket, since the Session would
- * otherwise drop it from both and leave neither Bucket reachable by it.
+ * otherwise drop it from both and leave neither Bucket reachable by it. A
+ * file a Session cannot use as a whole is refused, not replaced ([Edit.unusable]).
  */
 class BucketSettings(
     private val bucketsFile: String?,
@@ -47,6 +48,7 @@ class BucketSettings(
 
     /** The file that gives [row] exactly [aliases] (the name always counts as one too). */
     fun edit(row: Row, aliases: List<String>): Edit {
+        if (aliases == row.aliases) return Edit.Unchanged
         problem(row, aliases)?.let { return Edit.Refused(it) }
         val save = if (row.hubId == null) captureEdit(row, aliases) else hubEdit(row.hubId, aliases)
         if (save !is Edit.Save) return save
@@ -73,13 +75,16 @@ class BucketSettings(
     }
 
     private fun captureEdit(row: Row, aliases: List<String>): Edit {
-        val root = bucketsFile?.let {
+        val root = if (bucketsFile == null) {
+            Json.parseObject(BucketConfig.DEFAULT.toJson()) // what a Session uses with no file
+        } else {
             try {
-                Json.parseObject(it).takeIf { r -> r["buckets"] is List<*> }
+                Json.parseObject(bucketsFile)
             } catch (e: JsonException) {
-                null
+                return Edit.unusable(BucketConfig.FILE, e.message)
             }
-        } ?: Json.parseObject(BucketConfig.DEFAULT.toJson()) // what a Session uses for a missing or unusable file
+        }
+        if (root["buckets"] !is List<*>) return Edit.unusable(BucketConfig.FILE, "it has no \"buckets\" array")
         val list = (root["buckets"] as List<*>).toMutableList()
         val at = list.indexOfFirst { ((it as? Map<*, *>)?.get("name") as? String)?.trim() == row.name }
         if (at < 0) return Edit.Refused("${row.name} is no longer in ${BucketConfig.FILE}.")
@@ -88,6 +93,7 @@ class BucketSettings(
     }
 
     private fun hubEdit(id: String, aliases: List<String>): Edit {
+        hubAliases.rejected.firstOrNull { it.startsWith("file:") }?.let { return Edit.unusable(HubAliases.FILE, it.removePrefix("file: ")) }
         val own = snapshot?.buckets?.firstOrNull { it.id == id }?.aliases
         val byId = LinkedHashMap(hubAliases.aliases.byId)
         if (aliases == own) byId.remove(id) else byId[id] = aliases

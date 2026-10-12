@@ -12,8 +12,8 @@ import com.walnutgeek.stsloop.core.turn.Timings
  *
  * An edit changes only the keys whose value changed and keeps every other
  * entry of the file as it was, adb-written ones included, even those the
- * Session rejects. A file that is not a JSON object gives a Session all the
- * defaults, so an edit replaces it.
+ * Session rejects. A file that is not a JSON object is refused, not replaced
+ * ([Edit.unusable]).
  */
 class TimingsSettings(private val file: String?) {
     private val parsed = file?.let(Timings::parse) ?: Timings.Parsed(Timings(), emptyList())
@@ -26,18 +26,21 @@ class TimingsSettings(private val file: String?) {
 
     /** The file with [trailingSilenceMs] and [focusTimeoutMs] set; a null or unchanged value is left as it is. */
     fun edit(trailingSilenceMs: Int? = null, focusTimeoutMs: Int? = null): Edit {
-        val entries = LinkedHashMap<String, Any?>(
-            file?.let {
-                try {
-                    Json.parseObject(it)
-                } catch (e: JsonException) {
-                    null
-                }
-            }.orEmpty(),
-        )
         val changes = listOfNotNull(
             trailingSilenceMs?.takeIf { it != timings.trailingSilenceMs }?.let { TRAILING_SILENCE to it },
             focusTimeoutMs?.takeIf { it != timings.focusTimeoutMs }?.let { FOCUS_TIMEOUT to it },
+        )
+        if (changes.isEmpty()) return Edit.Unchanged
+        val entries = LinkedHashMap<String, Any?>(
+            if (file == null) {
+                emptyMap()
+            } else {
+                try {
+                    Json.parseObject(file)
+                } catch (e: JsonException) {
+                    return Edit.unusable(Timings.FILE, e.message)
+                }
+            },
         )
         for ((setting, ms) in changes) {
             if (ms !in setting.range) {
@@ -64,9 +67,9 @@ class TimingsSettings(private val file: String?) {
          * would end a Turn, and above 10 s nothing ever would. The file still
          * takes any value it allows, and the screen leaves one alone until it is edited.
          */
-        val TRAILING_SILENCE = Setting("trailing_silence_ms", "Trailing silence", 300..10_000)
+        val TRAILING_SILENCE = Setting(Timings.TRAILING_SILENCE_KEY, "Trailing silence", 300..10_000)
 
         /** As the file allows it. */
-        val FOCUS_TIMEOUT = Setting("focus_timeout_ms", "Focus timeout", Timings.FOCUS_TIMEOUT_FLOOR_MS..Timings.FOCUS_TIMEOUT_CAP_MS)
+        val FOCUS_TIMEOUT = Setting(Timings.FOCUS_TIMEOUT_KEY, "Focus timeout", Timings.FOCUS_TIMEOUT_FLOOR_MS..Timings.FOCUS_TIMEOUT_CAP_MS)
     }
 }

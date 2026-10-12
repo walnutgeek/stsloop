@@ -56,9 +56,14 @@ class TimingsSettingsTest {
     }
 
     @Test
-    fun `a file that is not JSON is replaced, since a Session would use the defaults anyway`() {
-        val text = saved(TimingsSettings("{not json").edit(trailingSilenceMs = 1000))
-        assertEquals(mapOf("trailing_silence_ms" to 1000L), Json.parseObject(text))
+    fun `a file that is not JSON is never overwritten, so an adb typo is not lost`() {
+        assertTrue(refused(TimingsSettings("{not json").edit(trailingSilenceMs = 1000)).contains(Timings.FILE))
+    }
+
+    @Test
+    fun `nothing changed writes nothing`() {
+        assertEquals(Edit.Unchanged, TimingsSettings(null).edit(trailingSilenceMs = Timings().trailingSilenceMs))
+        assertEquals(Edit.Unchanged, TimingsSettings("""{"guard_ms": 0}""").edit())
     }
 
     @Test

@@ -70,6 +70,16 @@ class BucketSettingsTest {
     }
 
     @Test
+    fun `a Bucket file a Session cannot use is never overwritten`() {
+        for (bad in listOf("{nope", """{"buckets": 3}""")) {
+            val s = BucketSettings(bad, null, null)
+            assertTrue(refused(s.edit(s.row("work"), listOf("job"))).contains(BucketConfig.FILE), bad)
+        }
+        val s = BucketSettings(null, "{nope", agents)
+        assertTrue(refused(s.edit(s.row("house site"), listOf("site"))).contains(HubAliases.FILE))
+    }
+
+    @Test
     fun `a hub alias edit is kept on the phone, by Bucket id`() {
         val s = BucketSettings(null, null, agents)
         val text = save(s.edit(s.row("stsloop agent"), listOf("loop agent")), HubAliases.FILE)
@@ -115,6 +125,13 @@ class BucketSettingsTest {
         val s = BucketSettings(adb, null, null)
         assertTrue(s.rejected.isNotEmpty())
         save(s.edit(s.row("errands"), listOf("shopping")), BucketConfig.FILE)
+    }
+
+    @Test
+    fun `the same aliases again write nothing`() {
+        val s = BucketSettings(null, null, agents)
+        assertEquals(Edit.Unchanged, s.edit(s.row("errands"), listOf("errands", "errand", "shopping")))
+        assertEquals(Edit.Unchanged, s.edit(s.row("stsloop agent"), listOf("stsloop", "the loop agent")))
     }
 
     @Test
