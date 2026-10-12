@@ -216,6 +216,24 @@ class HubLinkTest {
     }
 
     @Test
+    fun `once welcomed the hub's items reach the listener, and item_spoken goes back`() {
+        val items = mutableListOf<Item>()
+        val link = HubLink(pairing, transport, scheduler, object : HubLink.Listener {
+            override fun item(item: Item) { items += item }
+        })
+        link.start()
+        transport.last.events.opened()
+        hub("item/blocked.json")
+        assertTrue(items.isEmpty(), "an item before the welcome is ignored")
+        hub("welcome/basic.json")
+        hub("item/extras.json")
+        hub("item/merged.json")
+        assertEquals(listOf("item/blocked.json", "item/merged.json").map { Protocol.decode(Fixtures.text("v1", it)) }, items)
+        assertTrue(link.send(ItemSpoken(items.first().id)))
+        assertEquals(Fixtures.json("v1", "item_spoken/basic.json"), Json.parse(transport.last.sent.last()))
+    }
+
+    @Test
     fun `Descriptors before the welcome, unknown messages and broken frames are ignored`() {
         link.start()
         transport.last.events.opened()

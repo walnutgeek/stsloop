@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import logging
 import os
 import sys
@@ -27,7 +28,8 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TextIO
 
-from . import config, herdr, pairing, summary, tailnet
+from . import alerts, config, herdr, pairing, summary, tailnet
+from .alerts import Mutes
 from .agents import HerdrProvider
 from .buckets import Buckets
 from .corpus import CorpusStore
@@ -35,8 +37,8 @@ from .sends import FILE as SENDS_FILE
 from .sends import Deliveries, SendLog
 from .hub import Hub
 
-#: Background work that runs while the hub serves, told when the Buckets change.
-Poller = Callable[[Callable[[], None]], Awaitable[None]]
+#: Background work that runs while the hub serves.
+Poller = Callable[[], Awaitable[None]]
 
 NO_TAILNET = (
     "No tailnet address found: is Tailscale installed and up (`tailscale ip -4`)? "
@@ -90,7 +92,7 @@ def _run_forever(hub: Hub, host: str, port: int, pollers: Sequence[Poller] = ())
     async def run():
         async with hub.listen(host, port):
             logging.getLogger("stsloop.hub").info("listening on %s", pairing.url(host, port))
-            tasks = [asyncio.create_task(poll(hub.buckets_changed)) for poll in pollers]
+            tasks = [asyncio.create_task(poll()) for poll in pollers]
             try:
                 await asyncio.get_running_loop().create_future()
             finally:
@@ -169,15 +171,25 @@ def main(
         providers.append(HerdrProvider(found, summaries=summaries))
     if not found:
         logging.getLogger("stsloop.hub").info("herdr is not installed; no agent Buckets")
-    buckets = Buckets(providers)
+    buckets = Buckets(providers, mutes=Mutes(directory / alerts.FILE))
     try:
         sends = SendLog(directory / SENDS_FILE)
     except OSError as e:
         print(f"stsloop-hub: cannot read {directory / SENDS_FILE}: {e}", file=err)
         return 1
     hub = Hub(token=saved.token, descriptors=buckets.descriptors, answer=buckets.answer, corpus=corpus,
-              deliver=Deliveries(buckets.prepare_send, sends).deliver)
-    run_hub(hub, host, args.port or saved.port, [provider.run for provider in providers])
+              deliver=Deliveries(buckets.prepare_send, sends).deliver,
+              items=buckets.outstanding, spoken=buckets.spoken)
+
+    def polled(changed: bool) -> None:
+        """After each poll, on the event loop: a new snapshot if the Buckets changed, and any new Item."""
+        if changed:
+            hub.buckets_changed()
+        item = buckets.collect()
+        if item is not None:
+            hub.item_raised(item)
+
+    run_hub(hub, host, args.port or saved.port, [functools.partial(provider.run, polled) for provider in providers])
     return 0
 
 

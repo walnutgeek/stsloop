@@ -1,5 +1,6 @@
 package com.walnutgeek.stsloop.core.turn
 
+import com.walnutgeek.stsloop.core.hub.Item
 import java.util.Locale
 import java.util.concurrent.ConcurrentLinkedQueue
 
@@ -20,6 +21,13 @@ fun interface Speaker {
      * not started). No end report is needed for it any more.
      */
     fun abandon(id: Long) {}
+
+    /**
+     * Like [speak], for Inbound Items (`speak_item`): an earcon first, then
+     * [text], as one machine Turn whose end is reported as [speak]'s is. A
+     * speaker without an earcon just speaks.
+     */
+    fun alert(id: Long, text: String) = speak(id, text)
 }
 
 /** What the loop says back for a transcript (`docs/phase0.md`, "Spoken echo of the transcript"). */
@@ -58,6 +66,20 @@ object EchoText {
  * it is told to [Speaker.abandon] that machine Turn, the [Listener] hears it
  * was lost, and the mic reopens a guard interval later.
  *
+ * Inbound Items wait in the [attention] queue and are drained by the same
+ * rules, after every reply waiting: as one machine Turn of every Item
+ * waiting ([AttentionQueue.text]), with an earcon ([Speaker.alert]). An Item
+ * asks for a longer Silence than a reply (`docs/vision.md`, "Silence is the
+ * mechanic"), because nobody asked for it: the open mic must have been quiet
+ * for another `trailing_silence_ms` after a human Turn closed (so twice that
+ * since the last speech), or since the mic reopened. So it never starts on
+ * the heels of the person's speech, and the echo of the Turn just closed,
+ * which arrives a few hundred milliseconds later, goes first. Following a
+ * reply in the same closed span, it starts at once. Once it has been said
+ * (its end reported), the [Listener] hears [Listener.itemsSpoken]; if its
+ * machine Turn is lost, the Items are forgotten, so the hub's next sending
+ * of them is heard.
+ *
  * A reply may carry a `then` ([echo]): it runs once that machine Turn is
  * over (its end reported, or lost), so "stop listening" can end the Session
  * only after "stopped listening." has been said. It runs exactly once, also
@@ -73,6 +95,7 @@ class HalfDuplex(
     private val sampleRate: Int,
     private val speaker: Speaker?,
     private val listener: Listener = object : Listener {},
+    private val attention: AttentionQueue? = null,
 ) {
     interface Listener {
         /** Machine Turn [id] starts: the mic closes at stream sample [atSample]. */
@@ -86,6 +109,9 @@ class HalfDuplex(
 
         /** [count] transcripts will never be spoken: the Session ended first. Any thread. */
         fun unspoken(count: Int) {}
+
+        /** The machine Turn saying [items] has been said. Capture thread. */
+        fun itemsSpoken(items: List<Item>) {}
     }
 
     private enum class Phase { OPEN, SPEAKING, GUARD }
@@ -96,6 +122,7 @@ class HalfDuplex(
     private class Reply(val text: String, val then: (() -> Unit)?)
 
     private val guardNs = timings.guardMs * NS_PER_MS
+    private val itemSilenceSamples = timings.trailingSilenceMs.toLong() * sampleRate / 1000
     private val pending = ConcurrentLinkedQueue<Reply>()
     private val lock = Any()
     private var finished = false // guarded by lock
@@ -105,6 +132,9 @@ class HalfDuplex(
     private var phase = Phase.OPEN
     private var lastId = 0L
     private var current: (() -> Unit)? = null // the speaking machine Turn's then
+    private var currentItems: List<Item> = emptyList() // the Items the speaking machine Turn says
+    private var quietFrom = 0L // the stream sample from which the open mic has been quiet: no Turn, no speech
+    private var heardSpeech = false // whether the last chunk left the segmenter capturing
     private var speakingSinceNs = 0L
     private var speakingLimitNs = 0L
     private var guardUntilNs = 0L
@@ -168,13 +198,13 @@ class HalfDuplex(
                     val end = takeEnd()
                     when {
                         end != null -> {
-                            over()
+                            over(said = true)
                             if (!speakNext(capturedAtNs, chunkStart + from)) guard(end)
                         }
                         capturedAtNs - speakingSinceNs > speakingLimitNs -> {
                             speaker?.abandon(lastId)
                             listener.lost(lastId)
-                            over()
+                            over(said = false)
                             guard(capturedAtNs)
                         }
                         else -> {
@@ -190,6 +220,7 @@ class HalfDuplex(
                     if (open == 0) return
                     from = count - open
                     phase = Phase.OPEN
+                    quietFrom = chunkStart + from
                     listener.reopened(chunkStart + from, chunkStart + from - closedAt)
                 }
                 Phase.OPEN -> {
@@ -197,6 +228,11 @@ class HalfDuplex(
                         val chunk = if (from == 0) samples else samples.copyOfRange(from, count)
                         segmenter.accept(chunk, count - from, capturedAtNs)
                         from = count
+                        val capturing = segmenter.state == TurnState.CAPTURING
+                        // Counted from the Turn's close, not its last speech: its Silence closed it, and an
+                        // Item waits for one more.
+                        if (heardSpeech && !capturing) quietFrom = position
+                        heardSpeech = capturing
                     }
                     // Every sample so far was captured before this call: speaking now closes the mic on the next one.
                     if (segmenter.state == TurnState.CAPTURING || !speakNext(capturedAtNs, position)) return
@@ -218,32 +254,50 @@ class HalfDuplex(
             while (true) unspoken += pending.poll() ?: break
         }
         if (unspoken.isNotEmpty()) listener.unspoken(unspoken.size)
-        over()
+        over(said = false)
         for (r in unspoken) r.then?.invoke()
     }
 
-    /** The speaking machine Turn is over (or never will be): run its then, once. */
-    private fun over() {
+    /** The speaking machine Turn is over, [said] or not (lost, or the Session ended): run its then, once. */
+    private fun over(said: Boolean) {
+        val items = currentItems
+        currentItems = emptyList()
+        if (!said && items.isNotEmpty()) attention?.forget(items)
+        if (said && items.isNotEmpty()) {
+            attention?.spoken(items)
+            listener.itemsSpoken(items)
+        }
         val then = current ?: return
         current = null
         then()
     }
 
-    /** Starts the next queued machine Turn, closing the mic at stream sample [atSample]; false if none is queued. */
+    /**
+     * Starts the next queued machine Turn, closing the mic at stream sample
+     * [atSample]: a reply, else the waiting Items if they are due; false if
+     * there is none.
+     */
     private fun speakNext(nowNs: Long, atSample: Long): Boolean {
         val s = speaker ?: return false
-        val reply = pending.poll() ?: return false
-        val text = reply.text
-        current = reply.then
+        val reply = pending.poll()
+        val items = if (reply == null && itemsDue(atSample)) attention?.take().orEmpty() else emptyList()
+        if (reply == null && items.isEmpty()) return false
+        val text = reply?.text ?: AttentionQueue.text(items)
+        current = reply?.then
+        currentItems = items
         val id = ++lastId
         if (phase == Phase.OPEN) closedAt = atSample
         phase = Phase.SPEAKING
         speakingSinceNs = nowNs
         speakingLimitNs = speakingLimitMs(text) * NS_PER_MS
         listener.speaking(id, text, atSample)
-        s.speak(id, text)
+        if (items.isEmpty()) s.speak(id, text) else s.alert(id, text)
         return true
     }
+
+    /** Items may start: following a machine Turn in the same closed span, or after enough quiet on the open mic. */
+    private fun itemsDue(atSample: Long): Boolean =
+        attention != null && (phase == Phase.SPEAKING || atSample - quietFrom >= itemSilenceSamples)
 
     private fun guard(fromNs: Long) {
         phase = Phase.GUARD

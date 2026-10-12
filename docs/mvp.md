@@ -138,6 +138,14 @@ When an agent becomes blocked, the hub raises an Item. The phone speaks it into
 the next Silence as an earcon and one sentence. Changes that arrive together
 merge ("two agents blocked: …"). Muted Buckets raise nothing.
 
+Settled in #46: the hub raises an Item when it sees an agent enter
+`blocked` (not one already blocked at its first poll), merging everything
+one poll sees; Items carry ids and are sent again on reconnect until the
+phone says it has spoken them. "Quiet" and "unmute" are `request` commands
+the hub answers for any `speak_item` Bucket, kept in `mutes.json` beside
+its config. An Item waits for a longer Silence than a reply: twice
+`trailing_silence_ms` after the last speech (`docs/phase0.md`, "The loop").
+
 ## Summaries
 
 The hub summarises agent output into one or two sentences before it reaches

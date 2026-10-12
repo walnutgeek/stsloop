@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class ProbesTest {
-    private val agents = Protocol.decode(Fixtures.text("v1", "descriptors/agents.json")) as Descriptors
+    private val future = Protocol.decode(Fixtures.text("v1", "descriptors/future-primitive.json")) as Descriptors
     private val herdr = Protocol.decode(Fixtures.text("v1", "descriptors/herdr.json")) as Descriptors
 
     @Test
@@ -53,8 +53,9 @@ class ProbesTest {
 
     @Test
     fun `a command whose Primitive the phone does not run is not listened for, so not probed`() {
-        val p = Probes.of(HubProvider.registry(BucketConfig.DEFAULT, agents))
-        assertTrue(p.none { it.key == "read it back" }, "a draft command")
+        val p = Probes.of(HubProvider.registry(BucketConfig.DEFAULT, future))
+        assertTrue(p.none { it.key == "skip" }, "a seek command")
+        assertTrue(p.any { it.key == "status" }, "its request command is kept")
     }
 
     @Test

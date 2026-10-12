@@ -313,6 +313,7 @@ class SessionService : Service() {
                 onSent = { s -> turnCapture?.sent(s) },
                 // The welcome resends every Draft the hub has not answered, with its key: delivered at most once.
                 onStatus = { s -> if (s is HubStatus.Online) turnCapture?.welcomed() },
+                onItem = { i -> turnCapture?.item(i) },
                 corpus = corpusDir(this),
             )
             hub = hubLink

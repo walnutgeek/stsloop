@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stsloop:protocol:v1:item_spoken",
+  "title": "item_spoken",
+  "description": "Phone to hub, once welcomed: the `item` with this `id` has been said, so the hub stops sending it. A phone that gets an Item it has already said (its `item_spoken` was lost with a connection) sends `item_spoken` again instead of saying it twice. The hub ignores an `id` it does not know.",
+  "type": "object",
+  "required": ["type", "id"],
+  "properties": {
+    "type": { "const": "item_spoken" },
+    "id": {
+      "description": "The `id` of the item that was said.",
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

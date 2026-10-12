@@ -172,7 +172,25 @@ class Sent:
 #: The shortest idempotency key the hub takes: 128 random bits as hex is 32 characters.
 MIN_KEY = 16
 
-Message = Union[Hello, Welcome, Refusal, Descriptors, Pairing, Request, Reply, TurnOffer, TurnAudio, TurnAck, Send, Sent]
+
+@dataclass(frozen=True)
+class Item:
+    """Hub to phone: an Item for the Attention Queue, said in the next Silence after an earcon.
+    `buckets` are the Descriptor ids it is about; `id` is unique across hub restarts."""
+
+    id: str
+    buckets: tuple[str, ...]
+    say: str
+
+
+@dataclass(frozen=True)
+class ItemSpoken:
+    """Phone to hub: the Item `id` has been said; the hub stops sending it."""
+
+    id: str
+
+
+Message = Union[Hello, Welcome, Refusal, Descriptors, Pairing, Request, Reply, TurnOffer, TurnAudio, TurnAck, Send, Sent, Item, ItemSpoken]
 
 
 class BadMessage(ValueError):
@@ -413,6 +431,12 @@ _READERS = {
         say=_string(o, "say", "sent"),
         reason=_string(o, "reason", "sent") if "reason" in o else None,
     ),
+    "item": lambda o: Item(
+        id=_string(o, "id", "item"),
+        buckets=_strings(o, "buckets", "item", min_items=1),
+        say=_string(o, "say", "item"),
+    ),
+    "item_spoken": lambda o: ItemSpoken(id=_string(o, "id", "item_spoken")),
 }
 
 
@@ -492,6 +516,10 @@ def to_json(message: Message) -> dict:
                 obj["reason"] = reason
             obj["say"] = say
             return obj
+        case Item(id=iid, buckets=buckets, say=say):
+            return {"type": "item", "id": iid, "buckets": list(buckets), "say": say}
+        case ItemSpoken(id=iid):
+            return {"type": "item_spoken", "id": iid}
     raise TypeError(f"not a message: {message!r}")
 
 

@@ -19,6 +19,11 @@ its state when the hub first saw it has been so "for at least" that long.
   Draft arrives as a `send`; `prepare_send` says who it goes to, and the
   delivery it returns submits it with `herdr agent prompt`. Each key is
   delivered at most once by `sends.Deliveries`, not here.
+- **Alerts.** An agent seen to become blocked (from another state, or blocked
+  again since the last poll, or new and already blocked) is raised
+  (`take_raised`) for the hub to speak (`alerts.py`). One already blocked at
+  the hub's first poll, or when herdr answers again after being away, is
+  not: the hub did not see it happen. A finished agent is never raised.
 - **Without herdr** there is no Provider at all (`cli.py`); with herdr
   installed but not answering, there are no agent Buckets, and "what's
   blocked" says herdr is not answering.
@@ -34,6 +39,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from . import protocol as p
+from .alerts import Raised
 from .buckets import HUB, Delivery, unknown_bucket, unknown_bucket_sent, unknown_command
 from .config import MAX_SUMMARY_TIMEOUT_S
 from .herdr import TIMEOUT_S as HERDR_TIMEOUT_S
@@ -126,6 +132,8 @@ class HerdrProvider:
         #: Each live agent's (spoken workspace label, number within it): kept for the agent's
         #: lifetime, so "stsloop agent two" stays two when "stsloop agent" goes.
         self._names: dict[str, tuple[str, int]] = {}
+        #: Pane ids seen to become blocked since the last `take_raised`.
+        self._raised: list[str] = []
 
     # --- what the hub publishes -------------------------------------------------
 
@@ -180,6 +188,8 @@ class HerdrProvider:
             else:
                 # A new agent, or one whose state moved, entered this state at most a poll ago.
                 seen[agent.pane_id] = _Seen(agent, now, observed=not first)
+                if agent.status == "blocked" and not first:
+                    self._raised.append(agent.pane_id)
         self._seen = seen
         return self._publish()
 
@@ -207,19 +217,34 @@ class HerdrProvider:
             aliases = (base,) if n == 0 else ()
             out.append(p.Descriptor(
                 id=PREFIX + pane_id, name=name, aliases=aliases, type="agent",
-                primitives=("draft", "request"), commands=(STATUS, READ, READ_BACK, SEND, CANCEL),
+                primitives=("draft", "request", "speak_item"), commands=(STATUS, READ, READ_BACK, SEND, CANCEL),
             ))
         return tuple(out)
 
-    async def run(self, changed: Callable[[], object], interval: float = POLL_S) -> None:
-        """Polls herdr every `interval` seconds, calling `changed` when the Buckets change."""
+    def take_raised(self) -> tuple[Raised, ...]:
+        """The agents seen to become blocked since the last call, still here and still blocked, in herdr's order."""
+        raised, self._raised = set(self._raised), []
+        return tuple(
+            Raised(bucket=d.id, name=d.name) for d in self._descriptors
+            if d.id.removeprefix(PREFIX) in raised and self._is_blocked(d.id)
+        )
+
+    def blocked(self) -> frozenset[str]:
+        return frozenset(d.id for d in self._descriptors if self._is_blocked(d.id))
+
+    def _is_blocked(self, bucket_id: str) -> bool:
+        seen = self._seen.get(bucket_id.removeprefix(PREFIX))
+        return seen is not None and seen.agent.status == "blocked"
+
+    async def run(self, polled: Callable[[bool], object], interval: float | None = None) -> None:
+        """Polls herdr every `interval` seconds (default `POLL_S`), calling `polled` after each poll, with
+        whether the Buckets changed."""
         while True:
             try:
-                if self.apply(await asyncio.to_thread(self.poll)):
-                    changed()
+                polled(self.apply(await asyncio.to_thread(self.poll)))
             except Exception:  # noqa: BLE001 - a bug here must not stop the polling
                 log.exception("herdr poll failed")
-            await asyncio.sleep(interval)
+            await asyncio.sleep(POLL_S if interval is None else interval)
 
     # --- answering ------------------------------------------------------------------
 

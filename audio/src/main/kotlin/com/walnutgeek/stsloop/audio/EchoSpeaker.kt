@@ -37,6 +37,12 @@ import java.util.concurrent.atomic.AtomicInteger
  * `nothing plausibly played` and counted in [unobserved]. Every done
  * report is passed to [played], `false` for those, so the loop can say so.
  *
+ * An Inbound Item ([alert]) plays the earcon (`res/raw/stsloop_earcon.wav`,
+ * core's `Earcon`) through the same engine (`TextToSpeech.playEarcon`, so it
+ * takes the same route and attributes),
+ * queued straight before its text; the machine Turn's end is the text's.
+ * If the earcon cannot be prepared or played, the text is still said.
+ *
  * [speak] may be called from any thread; all TTS work runs on this Session's
  * own handler thread.
  */
@@ -56,7 +62,7 @@ class EchoSpeaker(
         .build()
 
     /** One machine Turn in flight, handler thread only. */
-    private class MachineTurn(val id: Long, val text: String) {
+    private class MachineTurn(val id: Long, val text: String, val earcon: Boolean = false) {
         var startedAtNs = -1L
         var playerSeen = false
         var volume = -1
@@ -65,6 +71,7 @@ class EchoSpeaker(
     // Handler thread only.
     private var tts: TextToSpeech? = null
     private var engine = Engine.STARTING
+    private var earconReady = false
     private val waiting = ArrayList<MachineTurn>() // asked for before the engine was ready
     private val inFlight = LinkedHashMap<String, MachineTurn>()
 
@@ -92,8 +99,11 @@ class EchoSpeaker(
         }
     }
 
-    override fun speak(id: Long, text: String) {
-        val p = MachineTurn(id, text)
+    override fun speak(id: Long, text: String) = post(MachineTurn(id, text))
+
+    override fun alert(id: Long, text: String) = post(MachineTurn(id, text, earcon = true))
+
+    private fun post(p: MachineTurn) {
         if (!handler.post { request(p) }) end(p, "not spoken: the Session's speaker is closed")
     }
 
@@ -149,6 +159,7 @@ class EchoSpeaker(
             val lang = t.setLanguage(Locale.US)
             t.setAudioAttributes(attributes)
             t.setOnUtteranceProgressListener(progress)
+            earconReady = prepareEarcon(t)
             engine = Engine.READY
             Log.i(TAG, "Session $sessionId echo ready: engine ${t.defaultEngine}, voice ${t.voice?.name}, language result $lang")
         }
@@ -166,6 +177,10 @@ class EchoSpeaker(
         val t = tts ?: return end(p, "not spoken: no TextToSpeech engine")
         val key = key(p.id)
         p.volume = am.getStreamVolume(attributes.volumeControlStream)
+        if (p.earcon && earconReady) {
+            val played = t.playEarcon(EARCON, TextToSpeech.QUEUE_ADD, null, "$EARCON_KEY${p.id}")
+            if (played != TextToSpeech.SUCCESS) Log.w(TAG, "Session $sessionId echo ${p.id}: no earcon (playEarcon returned $played)")
+        }
         inFlight[key] = p
         val result = t.speak(p.text, TextToSpeech.QUEUE_ADD, null, key)
         if (result != TextToSpeech.SUCCESS) {
@@ -197,6 +212,7 @@ class EchoSpeaker(
 
         private fun report(utteranceId: String, problem: String?) {
             val ns = SystemClock.elapsedRealtimeNanos()
+            if (utteranceId.startsWith(EARCON_KEY)) return earcon(utteranceId, problem)
             handler.post {
                 val p = inFlight.remove(utteranceId) ?: return@post // already ended (both onError overloads, or closed)
                 if (problem != null) return@post end(p, problem, ns)
@@ -219,6 +235,15 @@ class EchoSpeaker(
         }
     }
 
+    /**
+     * An earcon's report, if the engine sends one (Google's does not, on the
+     * Pixel 10 Pro): its machine Turn's end is its text's, so this is only logged.
+     */
+    private fun earcon(utteranceId: String, problem: String?) {
+        if (problem == null) Log.i(TAG, "Session $sessionId $utteranceId played")
+        else Log.w(TAG, "Session $sessionId $utteranceId $problem; its sentence is still said")
+    }
+
     private val playback = object : AudioManager.AudioPlaybackCallback() {
         override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>) {
             if (configs.any(::isOurs)) for (p in inFlight.values) if (p.startedAtNs >= 0) p.playerSeen = true
@@ -239,7 +264,23 @@ class EchoSpeaker(
 
     private fun key(id: Long) = "echo-$id"
 
+    /**
+     * Registers the earcon with the engine as this library's raw resource:
+     * the engine runs in its own process, which can read an app's resources
+     * but not its private files. False (logged) if it cannot.
+     */
+    private fun prepareEarcon(t: TextToSpeech): Boolean = try {
+        val result = t.addEarcon(EARCON, context.packageName, R.raw.stsloop_earcon)
+        if (result != TextToSpeech.SUCCESS) Log.w(TAG, "Session $sessionId: addEarcon returned $result; Items play no earcon")
+        result == TextToSpeech.SUCCESS
+    } catch (e: Exception) {
+        Log.e(TAG, "Session $sessionId: cannot prepare the earcon; Items play no earcon", e)
+        false
+    }
+
     private companion object {
         const val TAG = "stsloop.Echo"
+        const val EARCON = "[stsloop-item]"
+        const val EARCON_KEY = "earcon-"
     }
 }

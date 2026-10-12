@@ -77,6 +77,17 @@ string `type`.
    The `draft` commands themselves ("read it back", "send", "cancel": ids
    `read_back`, `send`, `cancel`) run on the phone. No capability is needed:
    a hub that declares a `draft` command answers `send`.
+8. **Items.** The hub sends an `item` when a Bucket that uses `speak_item`
+   raises one (an agent has become blocked): an `id`, the `buckets` it is
+   about, and one sentence to `say`. Changes the hub sees together are one
+   Item. The phone says it after an earcon in the next Silence, and then
+   sends `item_spoken` with its `id`. After each welcome (and its
+   `descriptors`), the hub sends again every Item not yet spoken that still
+   holds, and the phone ignores an `id` it already has, answering
+   `item_spoken` again for one it has said: a reconnect never repeats an
+   alert. A muted Bucket raises nothing; the hub adds `quiet` and `unmute`
+   `request` commands to every Bucket that uses `speak_item`, answers them
+   itself, and keeps the mutes across restarts. No capability is needed.
 
 The hub serves one phone at a time: once a new connection is welcomed, the
 hub closes the older one (code 1000). A refused connection replaces nothing.
@@ -109,8 +120,9 @@ Bucket, with an empty Corpus, answers every exchange exactly (an exchange with
 `after` runs on the hub the named earlier exchange left behind).
 `descriptors/herdr.json` and the `reply/` fixtures are what the hub's herdr
 Provider produces for a fake herdr and a fake summariser
-(`hub/tests/test_agents.py`), and the `sent/` fixtures what it answers the
-`send/` ones with (`hub/tests/test_sends.py`). The phone's
+(`hub/tests/test_agents.py`), the `sent/` fixtures what it answers the
+`send/` ones with (`hub/tests/test_sends.py`), and the `item/` fixtures
+what it raises (`hub/tests/test_alerts.py`). The phone's
 are in `core/src/test/kotlin/com/walnutgeek/stsloop/core/hub/`
 (`ProtocolFixturesTest`; `HubLinkTest`, which plays each exchange's hub steps
 to the phone and checks where it ends up: online, refused, offline and

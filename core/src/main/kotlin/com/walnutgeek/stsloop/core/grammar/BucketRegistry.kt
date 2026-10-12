@@ -5,7 +5,6 @@ import com.walnutgeek.stsloop.core.jsonString
 /**
  * One of the fixed behaviours the phone runs for a Bucket (`CONTEXT.md`,
  * Primitive). A Descriptor composes them; the phone never runs Provider code.
- * `speak_item` comes later.
  */
 enum class Primitive(val json: String) {
     /** File the Turn under the Bucket, as a Note. */
@@ -20,6 +19,12 @@ enum class Primitive(val json: String) {
      * (`docs/mvp.md`, "Send"). A hub Bucket's only.
      */
     DRAFT("draft"),
+
+    /**
+     * Speak the Bucket's Inbound Items into Silence, after an earcon. It runs
+     * no command: the Items arrive on their own (`AttentionQueue`).
+     */
+    SPEAK_ITEM("speak_item"),
     ;
 
     companion object {

@@ -79,7 +79,7 @@ sealed interface HubStatus {
  *   delay. [networkChanged] retries at once, and replaces a live connection,
  *   which may be bound to a network that is gone: the hub keeps the newest.
  * - Once welcomed, [send] sends on the connection, and the hub's other
- *   messages go to [Listener.reply] and [Listener.turnAck].
+ *   messages go to [Listener.reply], [Listener.item] and [Listener.turnAck].
  * - A `refusal`, a `welcome` in another major (the phone speaks only its
  *   own, ADR-0006), or a 401 for the token, is not retried until the next
  *   [start]: none fixes itself while a Session runs.
@@ -102,6 +102,9 @@ class HubLink(
 
         /** The hub answered a request. */
         fun reply(reply: Reply) {}
+
+        /** The hub raised an Item for the Attention Queue. */
+        fun item(item: Item) {}
 
         /** The hub answered a Corpus upload message. */
         fun turnAck(ack: TurnAck) {}
@@ -267,6 +270,7 @@ class HubLink(
                 message is Reply && status is HubStatus.Online -> listener.reply(message)
                 message is TurnAck && status is HubStatus.Online -> listener.turnAck(message)
                 message is Sent && status is HubStatus.Online -> listener.sent(message)
+                message is Item && status is HubStatus.Online -> listener.item(message)
                 else -> listener.ignored(if (message == null) "a message of a type the phone does not know" else "an unexpected ${message::class.simpleName}")
             }
         }

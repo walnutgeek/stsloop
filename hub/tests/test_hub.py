@@ -197,6 +197,47 @@ class BucketsChangedTest(unittest.IsolatedAsyncioTestCase):
             hub.buckets_changed()
 
 
+class ItemTest(unittest.IsolatedAsyncioTestCase):
+    """Items over the wire: outstanding ones on every welcome, new ones as raised, `item_spoken` back."""
+
+    BLOCKED = p.from_json(fixture("v1", "item/blocked.json"))
+    MERGED = p.from_json(fixture("v1", "item/merged.json"))
+
+    async def welcomed(self, ws):
+        await ws.send(HELLO)
+        await ws.recv()  # welcome
+        await ws.recv()  # descriptors
+
+    async def test_a_welcomed_phone_gets_every_outstanding_item_after_the_descriptors(self):
+        async with running_hub(items=lambda: (self.BLOCKED, self.MERGED)) as (_, url):
+            async with phone(url, pairing_token()) as ws:
+                await self.welcomed(ws)
+                self.assertEqual(json.loads(await asyncio.wait_for(ws.recv(), 5)), fixture("v1", "item/blocked.json"))
+                self.assertEqual(json.loads(await asyncio.wait_for(ws.recv(), 5)), fixture("v1", "item/merged.json"))
+
+    async def test_a_raised_item_reaches_the_welcomed_phone(self):
+        async with running_hub() as (hub, url):
+            async with phone(url, pairing_token()) as ws:
+                await self.welcomed(ws)
+                hub.item_raised(self.BLOCKED)
+                self.assertEqual(json.loads(await asyncio.wait_for(ws.recv(), 5)), fixture("v1", "item/blocked.json"))
+
+    async def test_with_no_phone_a_raised_item_goes_nowhere(self):
+        async with running_hub() as (hub, _):
+            hub.item_raised(self.BLOCKED)
+
+    async def test_item_spoken_is_passed_on(self):
+        spoken = []
+        async with running_hub(spoken=spoken.append) as (_, url):
+            async with phone(url, pairing_token()) as ws:
+                await self.welcomed(ws)
+                await ws.send(json.dumps(fixture("v1", "item_spoken/basic.json")))
+                await ws.send(json.dumps(fixture("v1", "item_spoken/extras.json")))
+                while len(spoken) < 2:
+                    await asyncio.sleep(0.01)
+        self.assertEqual(spoken, ["7c1e2a90d4b3", "7c1e2a90d4b3"])
+
+
 class OnePhoneTest(unittest.IsolatedAsyncioTestCase):
     async def test_a_new_connection_replaces_the_old_one(self):
         async with running_hub() as (hub, url):

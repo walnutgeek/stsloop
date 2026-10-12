@@ -94,6 +94,13 @@ How the echo keeps that promise (#11; `:core` `HalfDuplex`):
   the machine never cuts the human off, just as the human cannot barge in.
   Echoes that waited are spoken back to back, in order, in one closed span,
   with one guard interval after the last.
+- **Inbound Items wait longer** (#46, `:core` `AttentionQueue`). Nobody asked
+  for an alert, so it waits for a longer Silence: another
+  `trailing_silence_ms` of quiet on the open mic after a human Turn closes
+  (twice that since the last speech), or after the mic reopens. Meanwhile
+  the Turn's echo arrives and goes first; an Item following an echo in the
+  same closed span goes at once. Every Item waiting then is one machine
+  Turn: an earcon, then their sentences.
 - **The guard runs from the engine's end report**, on the capture clock, to
   the exact sample. The end report comes slightly before the audio has left
   the speaker, so the guard also covers output latency. If the engine never
