@@ -23,6 +23,8 @@ android {
 
 dependencies {
     api(project(":core"))
+    // The hub connection (HubConnection): one WebSocket, with pings to notice a dead network.
+    implementation(libs.okhttp)
     androidTestImplementation(libs.commons.compress) // builds a .tar.bz2 for the on-device unpack test
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)

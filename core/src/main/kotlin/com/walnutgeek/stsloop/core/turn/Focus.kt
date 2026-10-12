@@ -5,7 +5,9 @@ import com.walnutgeek.stsloop.core.grammar.Descriptor
 
 /**
  * The current Bucket (`CONTEXT.md`, Focus; `docs/mvp.md`, "Focus"), for one
- * Session. A Session starts in the [BucketRegistry.inbox]. A lone Bucket
+ * Session. A Session starts in the [BucketRegistry.inbox]. Its Buckets are
+ * read from [buckets] at each call, so hub Buckets that arrive mid-Session
+ * can be focused. A lone Bucket
  * alias [set]s Focus; a Turn that is neither a command nor Declared is then
  * filed under [filing]. Focus on any other Bucket returns to the Inbox once
  * [timeoutMs] pass with nothing heard ([tick]), and the loop says
@@ -19,8 +21,11 @@ import com.walnutgeek.stsloop.core.grammar.Descriptor
  * it is filed by the Focus at the time its utterance ended ([filing]), even
  * when the timeout has passed since.
  */
-class Focus(private val buckets: BucketRegistry, private val timeoutMs: Long) {
-    private var current: Descriptor = buckets.inbox
+class Focus(private val buckets: () -> BucketRegistry, private val timeoutMs: Long) {
+    /** Over a fixed set of Buckets. */
+    constructor(buckets: BucketRegistry, timeoutMs: Long) : this({ buckets }, timeoutMs)
+
+    private var current: Descriptor = Descriptor.INBOX
     private var lastHeardMs = 0L
 
     /** The Bucket the last timeout left, and the stream time it timed out at; null once Focus is set again. */
@@ -40,15 +45,23 @@ class Focus(private val buckets: BucketRegistry, private val timeoutMs: Long) {
     @Synchronized
     fun filing(endedAtMs: Long): String? {
         val then = timedOut?.takeIf { endedAtMs < timedOutAtMs } ?: current
-        return then.takeIf { buckets.takesNotes(it) }?.name
+        return then.takeIf { buckets().takesNotes(it) }?.name
     }
 
-    /** Focus the Bucket called [name], heard at [atMs]. */
+    /** The Bucket called [name] in the current registry, or null. */
+    fun named(name: String): Descriptor? = buckets().named(name)
+
+    /**
+     * Focus the Bucket called [name], heard at [atMs]. False, and Focus
+     * unchanged, when there is no such Bucket: the hub's Buckets can change
+     * between a Turn's classification and its publication.
+     */
     @Synchronized
-    fun set(name: String, atMs: Long) {
-        current = requireNotNull(buckets.named(name)) { "no Bucket called \"$name\"" }
+    fun set(name: String, atMs: Long): Boolean {
+        current = named(name) ?: return false
         timedOut = null
         heard(atMs)
+        return true
     }
 
     /** A Turn, or speech being captured, at [atMs]: the timeout starts again. */
@@ -65,10 +78,10 @@ class Focus(private val buckets: BucketRegistry, private val timeoutMs: Long) {
     @Synchronized
     fun tick(nowMs: Long, capturing: Boolean): Boolean {
         if (capturing) heard(nowMs)
-        if (current === buckets.inbox || nowMs - lastHeardMs < timeoutMs) return false
+        if (current === Descriptor.INBOX || nowMs - lastHeardMs < timeoutMs) return false
         timedOut = current
         timedOutAtMs = lastHeardMs + timeoutMs
-        current = buckets.inbox
+        current = Descriptor.INBOX
         return true
     }
 

@@ -36,6 +36,8 @@ from jsonschema.exceptions import SchemaError
 ENVELOPE = "message"
 EXCHANGES = "exchanges.json"
 EQUIVALENTS = "equivalents.json"
+#: What one exchange step can be: a frame, the phone keeping quiet, a close, or an HTTP answer to the upgrade.
+STEP_KINDS = ("fixture", "idle_ms", "close", "http")
 
 
 def _no_duplicates(pairs):
@@ -149,13 +151,24 @@ def _check_version(root: Path, version: str) -> list[str]:
             exchanges = []
         for exchange in exchanges:
             label = f"{EXCHANGES} {exchange.get('name')!r}"
-            for step in exchange.get("steps", []):
-                if step.get("from") not in ("phone", "hub"):
+            if "authorization" in exchange and not isinstance(exchange["authorization"], (str, type(None))):
+                problems.append(f"fixtures/{version}/{label}: authorization must be a string or null")
+            steps = exchange.get("steps", [])
+            for i, step in enumerate(steps):
+                sender = step.get("from")
+                if sender not in ("phone", "hub"):
                     problems.append(f"fixtures/{version}/{label}: step {step} has no from phone|hub")
-                if ("fixture" in step) == ("close" in step):
-                    problems.append(f"fixtures/{version}/{label}: step {step} needs exactly one of fixture, close")
-                elif "fixture" in step:
+                kinds = [k for k in STEP_KINDS if k in step]
+                if len(kinds) != 1:
+                    problems.append(f"fixtures/{version}/{label}: step {step} needs exactly one of {', '.join(STEP_KINDS)}")
+                    continue
+                kind = kinds[0]
+                if kind == "fixture":
                     known(step["fixture"], label)
+                elif kind == "http" and (sender != "hub" or i != len(steps) - 1):
+                    problems.append(f"fixtures/{version}/{label}: an http step comes from the hub and is the last step")
+                elif kind == "idle_ms" and sender != "phone":
+                    problems.append(f"fixtures/{version}/{label}: only the phone can be idle (idle_ms)")
 
     equivalents_path = fixtures_dir / EQUIVALENTS
     if equivalents_path.exists():

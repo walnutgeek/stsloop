@@ -26,4 +26,8 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // The protocol fixture-conformance tests (ADR-0006) read the repo's protocol/.
+    val protocol = rootProject.file("protocol")
+    inputs.dir(protocol).withPropertyName("protocol").withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty("stsloop.protocol", protocol.absolutePath)
 }
