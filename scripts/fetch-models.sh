@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# Fetch the speech models into :audio's assets, checksum-verified, and derive
-# bpe.vocab from bpe.model. Everything this writes is git-ignored.
+# Fetch the speech models into :audio's debug assets, checksum-verified, and
+# derive bpe.vocab from bpe.model. Everything this writes is git-ignored.
 #
 #   scripts/fetch-models.sh
 #
 # Writes:
-#   audio/src/main/assets/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25/
+#   audio/src/debug/assets/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25/
 #       {encoder,decoder,joiner}.int8.onnx  tokens.txt          (the app's STT, ~662 MB)
-#   audio/src/main/assets/silero_vad.onnx
+#   audio/src/debug/assets/silero_vad.onnx
 #   audio/src/androidTest/assets/sherpa-onnx-streaming-zipformer-en-2023-06-26/
 #       {encoder,decoder,joiner}-epoch-99-avg-1-chunk-16-left-128.int8.onnx
 #       tokens.txt  bpe.vocab                                   (test APK only, ~70 MB)
 #   audio/src/androidTest/assets/test_wavs/{0,1}.wav            (upstream test wavs)
+#
+# Only debug builds (and the device tests) bundle the models. A release build
+# bundles none and downloads the same pinned files on first run (#50); the pins
+# below must match core's SpeechManifest, which SpeechManifestTest checks.
 #
 # The STT model comes from sherpa-onnx's release tarball (464 MB, kept in the
 # cache), of which only the int8 model files are extracted. The previous model,
@@ -36,8 +40,10 @@ HF_REPO="csukuangfj/$ZIPFORMER"
 HF_REV="672fbf1b30579d6585301139bb363f42a0ad4a24"
 PREFIX="epoch-99-avg-1-chunk-16-left-128"
 
-MAIN_ASSETS="$REPO_ROOT/audio/src/main/assets"
+MAIN_ASSETS="$REPO_ROOT/audio/src/debug/assets"
 TEST_ASSETS="$REPO_ROOT/audio/src/androidTest/assets"
+# Before #50 the models were in main/assets, which a release build bundles too.
+OLD_ASSETS="$REPO_ROOT/audio/src/main/assets"
 
 say() { printf '==> %s\n' "$*"; }
 for tool in curl sha256sum uv tar bzip2; do
@@ -45,6 +51,18 @@ for tool in curl sha256sum uv tar bzip2; do
 done
 
 verified() { [[ -f "$1" ]] && echo "$2  $1" | sha256sum -c --quiet - 2>/dev/null; }
+
+# Move a checkout's models from the old location rather than fetch them again.
+if [[ -d "$OLD_ASSETS" ]]; then
+  say "Moving models from ${OLD_ASSETS#"$REPO_ROOT"/} to ${MAIN_ASSETS#"$REPO_ROOT"/}"
+  mkdir -p "$MAIN_ASSETS"
+  for old in "$OLD_ASSETS"/* "$OLD_ASSETS"/.[!.]*; do
+    [[ -e "$old" ]] || continue
+    rm -rf "${MAIN_ASSETS:?}/$(basename "$old")"
+    mv "$old" "$MAIN_ASSETS/"
+  done
+  rmdir "$OLD_ASSETS"
+fi
 
 # fetch URL DEST SHA256 — download to DEST unless it already verifies.
 fetch() {

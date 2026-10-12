@@ -69,7 +69,8 @@ latency, which includes any backlog, is the number that gates the echo.
   classified as their commands, including "end session", which the zipformer
   heard as "IN SESSION" (#14).
 - **Size and memory.** About 660 MB of model against 73 MB, read whole into
-  memory at Session start. The APK is about 690 MB and needs `adb install`
-  rather than any store.
+  memory at Session start. The APK was about 690 MB and needed `adb install`
+  rather than any store; since #50 only debug builds bundle the models, and
+  a release build downloads them on first run.
 - **License.** The NVIDIA Open Model License, as the Hugging Face card states.
   Harmless for personal use; resolve before any public release.

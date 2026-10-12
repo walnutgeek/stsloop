@@ -29,6 +29,9 @@ enum class StartRefusal {
 
     /** The platform refused the microphone foreground service (no exemption applied). */
     NOT_ALLOWED,
+
+    /** The speech models are not installed yet: a release build downloads them on first run. */
+    MODELS,
 }
 
 sealed interface SessionEvent {
@@ -98,6 +101,7 @@ data class SessionControls(val status: String, val action: SessionAction) {
                     StartRefusal.MICROPHONE -> "Microphone permission needed. Open the app."
                     StartRefusal.NOTIFICATIONS -> "Notifications needed. Open the app."
                     StartRefusal.NOT_ALLOWED -> "Could not start from here. Open the app."
+                    StartRefusal.MODELS -> "Speech models not downloaded yet. Open the app."
                 },
                 SessionAction.OPEN_APP,
             )
@@ -108,12 +112,14 @@ data class SessionControls(val status: String, val action: SessionAction) {
 /**
  * Whether a Session may start; null when it may. The notification is the only
  * eyes-free way to stop (and later restart) a Session, so a Session never
- * starts without it.
+ * starts without it. Missing models come last: the app downloads them by
+ * itself, while the other two need the user.
  */
 object StartGate {
-    fun check(micGranted: Boolean, controlsVisible: Boolean): StartRefusal? = when {
+    fun check(micGranted: Boolean, controlsVisible: Boolean, modelsReady: Boolean): StartRefusal? = when {
         !micGranted -> StartRefusal.MICROPHONE
         !controlsVisible -> StartRefusal.NOTIFICATIONS
+        !modelsReady -> StartRefusal.MODELS
         else -> null
     }
 }

@@ -8,6 +8,9 @@
          and the in_communication audio mode test mode can hold. -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- The first-run download of the speech models (ModelDownloads), which waits for Wi-Fi. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- The echo speaks through the system TextToSpeech engine (package visibility, API 30+). -->
     <queries>

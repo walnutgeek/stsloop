@@ -124,17 +124,34 @@ native libraries are built locally:
 4. Run `scripts/fetch-models.sh`. It downloads the STT model,
    `sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25`
    (a 464 MB tarball, kept in `~/.cache/stsloop`; about 660 MB extracted), and
-   Silero VAD into `audio/src/main/assets/`. Into the test assets it fetches
+   Silero VAD into `audio/src/debug/assets/`, so only debug builds bundle
+   them (a checkout fetched before #50 has them in `audio/src/main/assets/`;
+   the script moves them). Into the test assets it fetches
    the int8 `chunk-16-left-128` files of
    `sherpa-onnx-streaming-zipformer-en-2023-06-26` (about 70 MB), the model
    shipped before #30, and generates its `bpe.vocab` from `bpe.model` with
    `scripts/export_bpe_vocab.py` (run through `uv`). Every file is checked
-   against a pinned SHA-256. The app APK is about 690 MB.
+   against a pinned SHA-256. The debug APK is about 670 MB.
 
 The `.so` files and models are git-ignored, so the repo stays small. CI builds
 without them: it checks that everything compiles and the JVM tests pass, and
 its APK has no speech. The on-device test needs both scripts run first:
-`mise exec -- ./gradlew :audio:connectedDebugAndroidTest`.
+`mise exec -- ./gradlew :audio:connectedDebugAndroidTest`. The real
+first-run download of the shipped models (465 MB) is an opt-in device test:
+add `-Pandroid.testInstrumentationRunnerArguments.fullDownload=true`.
+
+**Speech models in a release build.** A release APK bundles no models
+(`checkNoReleaseModels` fails the build if any are where it would pick them
+up). On first run the app downloads them from the upstream sherpa-onnx
+releases on GitHub: the STT tarball (464 MB) and Silero VAD. It checks each
+download and each extracted file against the pins in `core`'s
+`SpeechManifest`, which `scripts/fetch-models.sh` shares, and installs them in
+the app's `no_backup/models` (kept out of Auto Backup). It starts by itself on
+Wi-Fi; on mobile data the app offers a "Download now over mobile data"
+button. A dropped download resumes from where it stopped. Until the models
+are in place, Start says why it cannot run, in the app and on the
+notification. Logs are under `stsloop.Models`. A debug build with bundled
+models uses those and downloads nothing.
 
 5. With both scripts run and the phone attached, build and install the app:
    `mise exec -- ./gradlew :app:installDebug`. Installing over an earlier

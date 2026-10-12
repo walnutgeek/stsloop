@@ -8,6 +8,7 @@ local.properties
 # Produced by scripts/build-sherpa-onnx.sh and scripts/fetch-models.sh
 audio/src/main/jniLibs/
 audio/src/main/assets/
+audio/src/debug/assets/
 audio/src/androidTest/assets/
 
 # Python (the hub and scripts)

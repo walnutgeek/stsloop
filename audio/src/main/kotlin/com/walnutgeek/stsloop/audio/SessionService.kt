@@ -21,8 +21,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import com.k2fsa.sherpa.onnx.Vad
-import com.walnutgeek.stsloop.audio.speech.SpeechModels
-import com.walnutgeek.stsloop.audio.speech.SttRecognizer
+import com.walnutgeek.stsloop.audio.speech.ModelDownloads
 import com.walnutgeek.stsloop.audio.testmode.TestModeSession
 import com.walnutgeek.stsloop.core.Ids
 import com.walnutgeek.stsloop.core.SessionAction
@@ -181,6 +180,7 @@ class SessionService : Service() {
         val refusal = StartGate.check(
             micGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED,
             controlsVisible = controlsVisible(this),
+            modelsReady = ModelDownloads.locate(this) != null,
         )
         if (refusal != null && captureThread == null) {
             Log.w(TAG, "Session start refused: $refusal")
@@ -289,7 +289,10 @@ class SessionService : Service() {
             Log.i(TAG, "Session $sessionId timings: ${timings.toJson().replace(Regex("\\s+"), " ")}")
             val registry = TurnCapture.loadRegistry(filesDir)
             Log.i(TAG, "Session $sessionId buckets: ${registry.buckets.joinToString { b -> "${b.name} ${b.aliases}" }}")
-            vad = SpeechModels.newVad(assets)
+            // Checked at Start; gone since only if the model files were deleted underneath us.
+            val models = checkNotNull(ModelDownloads.locate(this)) { "no speech models installed" }
+            Log.i(TAG, "Session $sessionId models: ${models.source}")
+            vad = models.newVad()
             val testConfig = TurnCapture.loadTestConfig(filesDir)
             if (testConfig.enabled && !testModeAllowed(this)) {
                 Log.w(TAG, "Session $sessionId: ignoring ${TestConfig.FILE}; test mode is for debug builds only")
@@ -346,8 +349,8 @@ class SessionService : Service() {
             val testMode = test
             val turns = TurnCapture(
                 writer, sessionId, startedAt, appVersion(), timings,
-                TurnCapture.silero(vad), SpeechModels.vadConfig().sileroVadModelConfig.windowSize,
-                recognizer = { SttRecognizer.load(assets) },
+                TurnCapture.silero(vad), models.vadConfig().sileroVadModelConfig.windowSize,
+                recognizer = models::loadStt,
                 buckets = registry,
                 testOf = testMode?.let { t -> t::turnTest },
                 speaker = echo,

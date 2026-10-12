@@ -9,16 +9,19 @@ import com.k2fsa.sherpa.onnx.SileroVadModelConfig
 import com.k2fsa.sherpa.onnx.Vad
 import com.k2fsa.sherpa.onnx.VadModelConfig
 import com.walnutgeek.stsloop.audio.SAMPLE_RATE_HZ
+import com.walnutgeek.stsloop.core.models.SpeechManifest
 
 /**
- * The speech models stsloop ships, as asset paths. Fetched into
- * `audio/src/main/assets` by `scripts/fetch-models.sh`; see ADR-0004 for why
- * this model and this decoding configuration.
+ * The speech models stsloop runs ([SpeechManifest]), as paths under a model
+ * root: "" for assets, or a directory ending in `/` for files. A debug build
+ * bundles them as assets (`scripts/fetch-models.sh`); a release build
+ * downloads them on first run ([ModelDownloads]). See ADR-0004 for why this
+ * model and this decoding configuration.
  */
 object SpeechModels {
     /** NVIDIA's nemotron-speech-streaming-en-0.6b, int8, 560 ms chunks: a streaming NeMo transducer. */
-    const val STT_DIR = "sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25"
-    const val VAD_MODEL = "silero_vad.onnx"
+    const val STT_DIR = SpeechManifest.STT_DIR
+    const val VAD_MODEL = SpeechManifest.VAD
 
     /**
      * The model type is left empty: sherpa-onnx picks the NeMo implementation
@@ -26,15 +29,15 @@ object SpeechModels {
      * greedy_search (anything else exits at load) and no hotwords, which
      * [Stt]'s gate refuses.
      */
-    fun sttConfig(numThreads: Int = 2) = OnlineRecognizerConfig(
+    fun sttConfig(numThreads: Int = 2, root: String = "") = OnlineRecognizerConfig(
         featConfig = FeatureConfig(sampleRate = SAMPLE_RATE_HZ, featureDim = 128),
         modelConfig = OnlineModelConfig(
             transducer = OnlineTransducerModelConfig(
-                encoder = "$STT_DIR/encoder.int8.onnx",
-                decoder = "$STT_DIR/decoder.int8.onnx",
-                joiner = "$STT_DIR/joiner.int8.onnx",
+                encoder = "$root$STT_DIR/encoder.int8.onnx",
+                decoder = "$root$STT_DIR/decoder.int8.onnx",
+                joiner = "$root$STT_DIR/joiner.int8.onnx",
             ),
-            tokens = "$STT_DIR/tokens.txt",
+            tokens = "$root$STT_DIR/tokens.txt",
             numThreads = numThreads,
         ),
         decodingMethod = "greedy_search",
@@ -43,15 +46,15 @@ object SpeechModels {
         hotwordsFile = "",
     )
 
-    fun vadConfig() = VadModelConfig(
-        sileroVadModelConfig = SileroVadModelConfig(model = VAD_MODEL),
+    fun vadConfig(root: String = "") = VadModelConfig(
+        sileroVadModelConfig = SileroVadModelConfig(model = "$root$VAD_MODEL"),
         sampleRate = SAMPLE_RATE_HZ,
         numThreads = 1,
     )
 
-    /** Silero VAD from assets, checked first like [Stt]. */
-    fun newVad(assets: AssetManager, config: VadModelConfig = vadConfig()): Vad {
-        requireAssets(assets, listOf(config.sileroVadModelConfig.model))
+    /** Silero VAD from [assets], or from files when null; checked first like [Stt]. */
+    fun newVad(assets: AssetManager?, config: VadModelConfig = vadConfig()): Vad {
+        requireModels(assets, listOf(config.sileroVadModelConfig.model))
         return Vad(assets, config)
     }
 }
