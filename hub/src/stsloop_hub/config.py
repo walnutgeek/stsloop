@@ -1,4 +1,5 @@
-"""The hub's config file: the pairing token, and an optional host and port.
+"""The hub's config file: the pairing token, and an optional host and port; and
+where the uploaded Corpus is kept.
 
 `hub.json` lives in `$STSLOOP_HUB_HOME`, else `$XDG_CONFIG_HOME/stsloop-hub`,
 else `~/.config/stsloop-hub`. The directory is 0700 and the file 0600: the
@@ -41,6 +42,16 @@ def config_dir(env: Mapping[str, str] = os.environ) -> Path:
     if env.get("XDG_CONFIG_HOME"):
         return Path(env["XDG_CONFIG_HOME"]) / "stsloop-hub"
     return Path(env.get("HOME") or Path.home()) / ".config" / "stsloop-hub"
+
+
+def corpus_dir(env: Mapping[str, str] = os.environ) -> Path:
+    """Where `serve` stores the uploaded Corpus: `$STSLOOP_HUB_HOME/corpus`, else
+    `$XDG_DATA_HOME/stsloop-hub/corpus`, else `~/.local/share/stsloop-hub/corpus`."""
+    if env.get("STSLOOP_HUB_HOME"):
+        return Path(env["STSLOOP_HUB_HOME"]) / "corpus"
+    if env.get("XDG_DATA_HOME"):
+        return Path(env["XDG_DATA_HOME"]) / "stsloop-hub" / "corpus"
+    return Path(env.get("HOME") or Path.home()) / ".local" / "share" / "stsloop-hub" / "corpus"
 
 
 def load(directory: Path) -> HubConfig | None:

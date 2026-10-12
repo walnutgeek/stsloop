@@ -65,6 +65,22 @@ class HubStoreTest {
     }
 
     @Test
+    fun `the record of uploaded Turns survives a restart and a new token, but not another hub`() {
+        val turn = "2026-10-06T14:22:07.431Z-a3f1c9"
+        val store = HubStore(files)
+        store.pair(pairing)
+        store.uploads().add(turn)
+        assertEquals(setOf(turn), HubStore(files).uploads().uploaded())
+        store.pair(pairing.copy(token = "n".repeat(43)))
+        assertEquals(setOf(turn), store.uploads().uploaded())
+        store.pair(pairing.copy(url = "ws://100.64.0.9:7717/"))
+        assertEquals(emptySet<String>(), store.uploads().uploaded())
+        store.uploads().add(turn)
+        store.forget()
+        assertEquals(emptySet<String>(), store.uploads().uploaded())
+    }
+
+    @Test
     fun `forgetting the hub drops the pairing and its Descriptors`() {
         val store = HubStore(files)
         store.pair(pairing)

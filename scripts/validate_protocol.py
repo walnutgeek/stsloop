@@ -16,7 +16,8 @@ For each version directory `protocol/fixtures/v<N>/` it checks that:
 - every command in a `descriptors` fixture uses a Primitive its Descriptor lists;
 - every message schema has at least one fixture;
 - `exchanges.json` and `equivalents.json` name only fixtures that exist, and
-  each equivalent pair has one type.
+  each equivalent pair has one type; an exchange's `after` names an earlier
+  exchange.
 
     uv run scripts/validate_protocol.py [PROTOCOL_DIR]
 
@@ -149,10 +150,14 @@ def _check_version(root: Path, version: str) -> list[str]:
         except (ValueError, KeyError, TypeError) as e:
             problems.append(f"fixtures/{version}/{EXCHANGES}: unreadable: {e}")
             exchanges = []
+        earlier: set = set()
         for exchange in exchanges:
             label = f"{EXCHANGES} {exchange.get('name')!r}"
             if "authorization" in exchange and not isinstance(exchange["authorization"], (str, type(None))):
                 problems.append(f"fixtures/{version}/{label}: authorization must be a string or null")
+            if "after" in exchange and exchange["after"] not in earlier:
+                problems.append(f"fixtures/{version}/{label}: after must name an earlier exchange")
+            earlier.add(exchange.get("name"))
             steps = exchange.get("steps", [])
             for i, step in enumerate(steps):
                 sender = step.get("from")

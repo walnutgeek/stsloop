@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import contextlib
 import json
+import tempfile
 from pathlib import Path
 
 from websockets.asyncio.client import connect
 
+from stsloop_hub.corpus import CorpusStore
 from stsloop_hub.herdr import Agent, HerdrError
 from stsloop_hub.hub import Hub
 from stsloop_hub.stub import STUB_BUCKETS
@@ -39,12 +41,16 @@ def pairing_token(version: str = "v1") -> str:
 
 
 @contextlib.asynccontextmanager
-async def running_hub(token: str | None = None, descriptors=lambda: STUB_BUCKETS, **kwargs):
-    """A hub on 127.0.0.1, publishing only the stub Bucket unless told otherwise; yields (hub, ws url)."""
-    hub = Hub(token=token or pairing_token(), descriptors=descriptors, **kwargs)
-    async with hub.listen("127.0.0.1", 0) as server:
-        port = server.sockets[0].getsockname()[1]
-        yield hub, f"ws://127.0.0.1:{port}/"
+async def running_hub(token: str | None = None, descriptors=lambda: STUB_BUCKETS, corpus: CorpusStore | None = None,
+                      **kwargs):
+    """A hub on 127.0.0.1, publishing only the stub Bucket unless told otherwise, with a
+    Corpus (an empty one in a temporary directory unless `corpus` is given); yields (hub, ws url)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        corpus = corpus or CorpusStore(Path(tmp) / "corpus")
+        hub = Hub(token=token or pairing_token(), descriptors=descriptors, corpus=corpus, **kwargs)
+        async with hub.listen("127.0.0.1", 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            yield hub, f"ws://127.0.0.1:{port}/"
 
 
 def phone(url: str, token: str | None = None, authorization: str | None = None):

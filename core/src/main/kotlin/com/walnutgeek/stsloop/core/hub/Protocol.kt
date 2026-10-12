@@ -3,6 +3,7 @@ package com.walnutgeek.stsloop.core.hub
 import com.walnutgeek.stsloop.core.corpus.Json
 import com.walnutgeek.stsloop.core.corpus.JsonException
 import com.walnutgeek.stsloop.core.corpus.JsonWriter
+import java.util.Base64
 
 /** A protocol version, `{major, minor}` on the wire. */
 data class Version(val major: Int, val minor: Int)
@@ -54,6 +55,44 @@ data class Pairing(val protocol: Version, val url: String, val token: String) : 
 }
 
 /**
+ * Phone to hub, with the `corpus` capability: one Turn of the Corpus offered
+ * for upload. [turn] is its directory name, [turnJson] its `turn.json` text as
+ * written, and [sha256] and [bytes] describe the Recording the phone will send.
+ */
+data class TurnOffer(val turn: String, val turnJson: String, val sha256: String, val bytes: Long) : Message {
+    override fun toString() = "TurnOffer(turn=$turn, sha256=$sha256, bytes=$bytes)"
+}
+
+/** Phone to hub: one piece of the Recording on offer, from [offset]; [data] is standard base64. */
+data class TurnAudio(val turn: String, val offset: Long, val data: String, val last: Boolean) : Message {
+    override fun toString() = "TurnAudio(turn=$turn, offset=$offset, ${data.length} base64 chars, last=$last)"
+
+    companion object {
+        fun of(turn: String, offset: Long, bytes: ByteArray, last: Boolean) =
+            TurnAudio(turn, offset, Base64.getEncoder().encodeToString(bytes), last)
+    }
+}
+
+/**
+ * Hub to phone: the answer to each [TurnOffer] and [TurnAudio]. [status] is an
+ * open string: [SEND] (from [offset]), [STORED], [REJECTED] (with a [reason]),
+ * and anything else reads as a rejection.
+ */
+data class TurnAck(
+    val turn: String,
+    val status: String,
+    val offset: Long? = null,
+    val reason: String? = null,
+    val message: String? = null,
+) : Message {
+    companion object {
+        const val SEND = "send"
+        const val STORED = "stored"
+        const val REJECTED = "rejected"
+    }
+}
+
+/**
  * A frame that is not a message, or a message of a known type that breaks its
  * schema. [messageType] is the frame's `type` when it had one.
  */
@@ -72,14 +111,18 @@ object Protocol {
     /** The one version the phone speaks (ADR-0006: the phone supports only its own major). */
     val VERSION = Version(1, 0)
 
-    /** The capabilities the phone can use. */
-    val CAPABILITIES: List<String> = listOf("descriptors")
+    /** The capabilities the phone can use: Descriptors from the hub, and Corpus upload to it. */
+    val CAPABILITIES: List<String> = listOf("descriptors", CORPUS)
+
+    const val CORPUS = "corpus"
 
     /** What the phone says first on every connection. */
     val HELLO = Hello(VERSION, CAPABILITIES)
 
     private val URL = Regex("^wss?://.+")
     private val TOKEN = Regex("^[A-Za-z0-9_-]{32,}$")
+    private val TURN_NAME = Regex("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z-[0-9a-f]{1,32}$")
+    private val SHA256 = Regex("^[0-9a-f]{64}$")
 
     fun decode(text: String): Message? {
         val obj = try {
@@ -113,6 +156,35 @@ object Protocol {
                     if (!TOKEN.matches(token)) throw BadMessage("pairing needs a token of at least 32 URL-safe base64 characters")
                     Pairing(o.version("protocol"), url, token)
                 }
+                "turn_offer" -> {
+                    val turn = o.string("turn")
+                    if (!TURN_NAME.matches(turn)) throw BadMessage("turn_offer's turn \"$turn\" is not a Turn directory name")
+                    val audio = Obj(o.map["audio"] as? Map<*, *> ?: throw BadMessage("turn_offer needs audio as an object"), "turn_offer's audio")
+                    val sha256 = audio.string("sha256")
+                    if (!SHA256.matches(sha256)) throw BadMessage("turn_offer's audio needs sha256 as 64 lowercase hex digits")
+                    val turnJson = o.map["turn_json"] as? String ?: throw BadMessage("turn_offer needs turn_json as a string")
+                    if (turnJson.length < 2) throw BadMessage("turn_offer has an empty turn_json")
+                    TurnOffer(turn, turnJson, sha256, audio.count("bytes"))
+                }
+                "turn_audio" -> {
+                    val data = o.map["data"] as? String ?: throw BadMessage("turn_audio needs data as a string")
+                    try {
+                        Base64.getDecoder().decode(data)
+                    } catch (e: IllegalArgumentException) {
+                        throw BadMessage("turn_audio's data is not base64: ${e.message}")
+                    }
+                    TurnAudio(o.string("turn"), o.count("offset"), data, o.map["last"] as? Boolean ?: throw BadMessage("turn_audio needs last as a boolean"))
+                }
+                "turn_ack" -> {
+                    val status = o.string("status")
+                    TurnAck(
+                        o.string("turn"),
+                        status,
+                        offset = if ("offset" in obj || status == TurnAck.SEND) o.count("offset") else null,
+                        reason = if ("reason" in obj || status == TurnAck.REJECTED) o.string("reason") else null,
+                        message = if ("message" in obj) o.string("message") else null,
+                    )
+                }
                 else -> null
             }
         } catch (e: BadMessage) {
@@ -139,6 +211,21 @@ object Protocol {
             put("id", message.id)
             message.reason?.let { put("reason", it) }
             put("say", message.say)
+        }
+        is TurnOffer -> mapOf(
+            "type" to "turn_offer",
+            "turn" to message.turn,
+            "turn_json" to message.turnJson,
+            "audio" to mapOf("sha256" to message.sha256, "bytes" to message.bytes),
+        )
+        is TurnAudio -> mapOf("type" to "turn_audio", "turn" to message.turn, "offset" to message.offset, "data" to message.data, "last" to message.last)
+        is TurnAck -> buildMap {
+            put("type", "turn_ack")
+            put("turn", message.turn)
+            put("status", message.status)
+            message.offset?.let { put("offset", it) }
+            message.reason?.let { put("reason", it) }
+            message.message?.let { put("message", it) }
         }
     }
 
@@ -201,6 +288,13 @@ object Protocol {
             val l = list(key)
             if (l.size < minItems || !l.all { it is String && it.isNotEmpty() }) throw BadMessage("$what needs $key as a list of non-empty strings")
             return l.map { it as String }
+        }
+
+        /** A non-negative integer. */
+        fun count(key: String): Long {
+            val n = map[key] as? Long ?: throw BadMessage("$what needs $key as an integer")
+            if (n < 0) throw BadMessage("$what has a negative $key")
+            return n
         }
 
         fun version(key: String): Version {

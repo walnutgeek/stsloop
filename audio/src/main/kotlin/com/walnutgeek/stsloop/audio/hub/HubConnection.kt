@@ -7,8 +7,11 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
 import android.util.Log
 import com.walnutgeek.stsloop.core.hub.Cancellable
+import com.walnutgeek.stsloop.core.hub.CorpusDirectory
+import com.walnutgeek.stsloop.core.hub.CorpusUploader
 import com.walnutgeek.stsloop.core.hub.Descriptors
 import com.walnutgeek.stsloop.core.hub.HubLink
 import com.walnutgeek.stsloop.core.hub.HubSocket
@@ -19,11 +22,14 @@ import com.walnutgeek.stsloop.core.hub.Message
 import com.walnutgeek.stsloop.core.hub.Pairing
 import com.walnutgeek.stsloop.core.hub.Reply
 import com.walnutgeek.stsloop.core.hub.Scheduler
+import com.walnutgeek.stsloop.core.hub.TurnAck
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import java.io.File
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
@@ -39,8 +45,13 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Each snapshot of Descriptors is cached in [store], on the timer thread so
  * no disk write happens under the link's lock, before [onDescriptors] hears of it.
  *
- * A Session holds one from start to end ([start], [stop]); the pairing screen
- * holds one to fetch the first Descriptors. [online] and [offline] read
+ * Given the [corpus] directory, it also uploads the Corpus while the hub is
+ * online ([CorpusUploader]): on its own background-priority thread, one piece
+ * in flight at a time, reading Turns and never changing them. Call
+ * [published] for each Turn the loop publishes.
+ *
+ * A Session holds one from start to end ([start], [stop]), with its Corpus;
+ * the pairing screen holds one, without, to fetch the first Descriptors. [online] and [offline] read
  * volatiles, so the loop can ask on any thread without waiting. Construct it
  * off the main thread: it reads the stored pairing.
  */
@@ -53,6 +64,8 @@ class HubConnection(
     private val onDescriptors: (Descriptors) -> Unit = {},
     /** The hub answered a request; called on OkHttp's thread with the link's lock held, so it must return at once. */
     private val onReply: (Reply) -> Unit = {},
+    /** The Corpus to upload; null uploads nothing. */
+    corpus: File? = null,
 ) {
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val timers: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { r ->
@@ -72,10 +85,33 @@ class HubConnection(
         null
     }
 
-    private val link = HubLink(pairing, OkHttpTransport(client), ExecutorScheduler(timers), object : HubLink.Listener {
+    private val uploadThread: ExecutorService? = corpus?.let {
+        Executors.newSingleThreadExecutor { r ->
+            Thread({
+                // Below the loop's threads: hashing and reading Turns must never delay a transcript.
+                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+                r.run()
+            }, "hub-upload-$owner").apply { isDaemon = true }
+        }
+    }
+
+    private val uploader: CorpusUploader? = if (corpus == null || pairing == null) null else CorpusUploader(
+        CorpusDirectory(corpus),
+        store.uploads(),
+        checkNotNull(uploadThread),
+        send = { message -> link.send(message) },
+        log = { line -> Log.w(TAG, "$owner: Corpus upload: $line") },
+    )
+
+    private val link: HubLink = HubLink(pairing, OkHttpTransport(client), ExecutorScheduler(timers), object : HubLink.Listener {
         override fun status(status: HubStatus) {
             Log.i(TAG, "$owner: hub ${describe(status)}")
+            uploader?.status(status)
             onStatus(status)
+        }
+
+        override fun turnAck(ack: TurnAck) {
+            uploader?.received(ack)
         }
 
         override fun descriptors(descriptors: Descriptors) {
@@ -108,6 +144,11 @@ class HubConnection(
 
     /** Queues [message] for the hub; false unless it is online ([HubLink.send]). Returns at once. */
     fun send(message: Message): Boolean = link.send(message)
+
+    /** A Turn was published to the Corpus: it is uploaded once the ones before it are. */
+    fun published() {
+        uploader?.published()
+    }
 
     /** Calls [HubLink.networkChanged] when the network it is told about changes; one per watched network. */
     private inner class Watch(private val which: String) : ConnectivityManager.NetworkCallback() {
@@ -152,6 +193,8 @@ class HubConnection(
         for (w in watches) runCatching { connectivity.unregisterNetworkCallback(w) }
         watches.clear()
         link.stop()
+        uploader?.let { Log.i(TAG, "$owner: uploaded ${it.stored} Turns to the hub") }
+        uploadThread?.shutdownNow()
         timers.shutdownNow()
         client.dispatcher.executorService.shutdown()
         client.connectionPool.evictAll()

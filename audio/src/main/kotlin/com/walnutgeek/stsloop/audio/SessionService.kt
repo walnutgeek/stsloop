@@ -302,10 +302,12 @@ class SessionService : Service() {
             // The aliases given hub Buckets on the settings screen, which outlive every snapshot.
             val hubAliases = TurnCapture.loadHubAliases(filesDir)
             val registry = TurnCapture.registry(buckets, cached, hubAliases)
+            // The Corpus goes up to the hub while it is online, read-only and in the background (#51).
             val hubLink = HubConnection(
                 this, hubStore, "Session $sessionId",
                 onDescriptors = { d -> turnCapture?.bucketsChanged(TurnCapture.registry(buckets, d, hubAliases)) },
                 onReply = { r -> turnCapture?.replied(r) },
+                corpus = corpusDir(this),
             )
             hub = hubLink
             Log.i(TAG, "Session $sessionId buckets: ${registry.buckets.joinToString { b -> "${b.name} ${b.aliases}" }}")
@@ -381,6 +383,7 @@ class SessionService : Service() {
                     main.post { stopListening(sessionId) }
                 },
             ) { turn, u, timing ->
+                hubLink.published() // only queues it: the upload runs on its own thread
                 testMode?.turnWritten(turn, u)
                 Log.i(
                     TAG,

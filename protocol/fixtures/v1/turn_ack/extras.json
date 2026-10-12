@@ -1,0 +1,8 @@
+{
+  "type": "turn_ack",
+  "turn": "2026-10-06T14:22:07.431Z-a3f1c9",
+  "status": "send",
+  "offset": 0,
+  "window": 4,
+  "hub_time": "2026-10-11T09:30:00Z"
+}

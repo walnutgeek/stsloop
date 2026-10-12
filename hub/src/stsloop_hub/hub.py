@@ -7,6 +7,10 @@
   No hello within `hello_timeout` closes the connection (1008).
 - An acceptable hello gets `welcome`, then a `descriptors` snapshot when both
   sides have that capability. Anything else gets `refusal`, then close (1008).
+- With a Corpus to store into and the `corpus` capability agreed, each
+  `turn_offer` and `turn_audio` is answered with a `turn_ack` (`corpus.py`),
+  in order, with the disk work off the event loop. A broken one that names its
+  Turn is answered `rejected`, so the phone moves on.
 - A newer welcomed connection replaces an older one (closed with 1000, in the
   background): a phone that changed networks reconnects before the old socket
   has noticed it is dead. A refused connection replaces nothing.
@@ -19,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import logging
 from collections.abc import Callable
 from http import HTTPStatus
@@ -29,6 +34,7 @@ from websockets.protocol import State
 
 from . import protocol as p
 from .buckets import Buckets
+from .corpus import CorpusStore
 
 log = logging.getLogger("stsloop.hub")
 
@@ -44,6 +50,7 @@ class Hub:
         hello_timeout: float = HELLO_TIMEOUT_S,
         supported: tuple[p.Version, ...] = p.SUPPORTED,
         answer: Callable[[p.Request], p.Reply] | None = None,
+        corpus: CorpusStore | None = None,
     ):
         self._token = token.encode()
         self._descriptors = descriptors
@@ -53,9 +60,16 @@ class Hub:
         self._sending: set[asyncio.Task] = set()
         self._hello_timeout = hello_timeout
         self._supported = supported
+        self._corpus = corpus
+        self._capabilities = tuple(c for c in p.CAPABILITIES if c != p.CORPUS or corpus is not None)
         self._current: ServerConnection | None = None
         self._open: set[ServerConnection] = set()
         self._closing: set[asyncio.Task] = set()
+
+    @property
+    def corpus(self) -> CorpusStore | None:
+        """Where uploaded Turns are stored; None means the hub does not offer `corpus`."""
+        return self._corpus
 
     @property
     def connections(self) -> int:
@@ -80,8 +94,9 @@ class Hub:
         self._open.add(ws)
         try:
             log.info("phone connected from %s", ws.remote_address)
-            if await self._handshake(ws):
-                await self._serve(ws)
+            welcome = await self._handshake(ws)
+            if welcome is not None:
+                await self._serve(ws, welcome)
         except ConnectionClosed:
             pass
         finally:
@@ -92,25 +107,25 @@ class Hub:
                 self._subscriber = None
             log.info("phone %s disconnected", ws.remote_address)
 
-    async def _handshake(self, ws: ServerConnection) -> bool:
+    async def _handshake(self, ws: ServerConnection) -> p.Welcome | None:
         try:
             async with asyncio.timeout(self._hello_timeout):
                 answer = await self._answer_hello(ws)
         except TimeoutError:
             await ws.close(p.POLICY_VIOLATION, "no hello")
-            return False
+            return None
         await ws.send(p.encode(answer))
         if isinstance(answer, p.Refusal):
             log.warning("refused the phone: %s", answer.message)
             await ws.close(p.POLICY_VIOLATION, answer.reason)
-            return False
+            return None
         log.info("welcomed the phone: protocol %d.%d, capabilities %s",
                  answer.protocol.major, answer.protocol.minor, list(answer.capabilities))
         self._replace_current(ws)
         self._subscriber = ws if "descriptors" in answer.capabilities else None
         if self._subscriber is ws:
             await ws.send(p.encode(p.Descriptors(buckets=self._descriptors())))
-        return True
+        return answer
 
     def buckets_changed(self) -> None:
         """On the event loop: a Bucket came, went or changed; the welcomed phone gets a new snapshot."""
@@ -149,21 +164,53 @@ class Hub:
                 log.debug("ignored a frame before hello: %s", e)
                 continue
             if isinstance(message, p.Hello):
-                return p.negotiate(message, self._supported)
+                return p.negotiate(message, self._supported, self._capabilities)
             log.debug("ignored a %s before hello", type(message).__name__ if message else "message of unknown type")
         raise ConnectionClosed(None, None)
 
-    async def _serve(self, ws: ServerConnection) -> None:
-        """After the welcome: answer each request; ignore everything else, as receivers do."""
-        async for frame in ws:
-            if isinstance(frame, bytes):
-                continue
-            try:
-                message = p.decode(frame)
-            except p.BadMessage as e:
-                log.warning("ignored a broken %s from the phone: %s", e.message_type or "frame", e)
-                continue
-            if isinstance(message, p.Request):
-                reply = self._answer(message)
-                log.info("request %s %s/%s: %s", message.id, message.bucket, message.command, reply.say)
-                await ws.send(p.encode(reply))
+    async def _serve(self, ws: ServerConnection, welcome: p.Welcome) -> None:
+        """After the welcome: answer each request, and each Corpus upload message if
+        `corpus` was agreed; ignore everything else, as receivers do."""
+        receiver = self._corpus.receiver() if self._corpus is not None and p.CORPUS in welcome.capabilities else None
+        try:
+            async for frame in ws:
+                if isinstance(frame, bytes):
+                    continue
+                try:
+                    message = p.decode(frame)
+                except p.BadMessage as e:
+                    log.warning("ignored a broken %s from the phone: %s", e.message_type or "frame", e)
+                    turn = _turn_of(frame) if receiver is not None and e.message_type in ("turn_offer", "turn_audio") else None
+                    if turn is not None:
+                        # Answered, so the phone moves on to its next Turn.
+                        await ws.send(p.encode(p.TurnAck(turn, p.REJECTED, reason="bad_message",
+                                                         message="The hub could not read that message.")))
+                    continue
+                if isinstance(message, p.Request):
+                    reply = self._answer(message)
+                    log.info("request %s %s/%s: %s", message.id, message.bucket, message.command, reply.say)
+                    await ws.send(p.encode(reply))
+                elif receiver is not None and isinstance(message, (p.TurnOffer, p.TurnAudio)):
+                    await ws.send(p.encode(await _receive(receiver, message)))
+        finally:
+            if receiver is not None:
+                await asyncio.to_thread(receiver.close)
+
+
+async def _receive(receiver, message: p.TurnOffer | p.TurnAudio) -> p.TurnAck:
+    handle = receiver.offer if isinstance(message, p.TurnOffer) else receiver.audio
+    try:
+        return await asyncio.to_thread(handle, message)
+    except Exception:
+        # A Turn the store chokes on must not drop the connection, or the phone retries it forever.
+        log.exception("Turn %s: storing it failed", message.turn)
+        await asyncio.to_thread(receiver.close)
+        return p.TurnAck(message.turn, p.REJECTED, reason="storage_failed", message="The hub could not write the Turn.")
+
+
+def _turn_of(frame: str) -> str | None:
+    try:
+        turn = json.loads(frame).get("turn")
+    except (ValueError, AttributeError):
+        return None
+    return turn if isinstance(turn, str) and turn else None

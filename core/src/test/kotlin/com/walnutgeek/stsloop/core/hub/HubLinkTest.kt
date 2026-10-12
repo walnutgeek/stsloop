@@ -192,6 +192,27 @@ class HubLinkTest {
     }
 
     @Test
+    fun `once welcomed the link sends messages, and the hub's turn acks reach the listener`() {
+        val acks = mutableListOf<TurnAck>()
+        val link = HubLink(pairing, transport, scheduler, object : HubLink.Listener {
+            override fun turnAck(ack: TurnAck) { acks += ack }
+        })
+        val offer = Protocol.decode(Fixtures.text("v1", "turn_offer/basic.json"))!!
+        assertFalse(link.send(offer), "not started")
+        link.start()
+        transport.last.events.opened()
+        hub("turn_ack/send.json")
+        assertFalse(link.send(offer), "not welcomed yet")
+        hub("welcome/basic.json")
+        assertTrue(link.send(offer))
+        assertEquals(Fixtures.json("v1", "turn_offer/basic.json"), Json.parse(transport.last.sent.last()))
+        hub("turn_ack/stored.json")
+        assertEquals(listOf(Protocol.decode(Fixtures.text("v1", "turn_ack/stored.json"))), acks)
+        link.stop()
+        assertFalse(link.send(offer), "stopped")
+    }
+
+    @Test
     fun `Descriptors before the welcome, unknown messages and broken frames are ignored`() {
         link.start()
         transport.last.events.opened()

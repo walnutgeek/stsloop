@@ -1,11 +1,52 @@
 # Getting the Corpus onto the Linux box
 
-The Egress design (`docs/phase0.md`, "Egress") is "no protocol": the Corpus is
-immutable and append-only, so any folder copy that brings new files over is
-enough, and repeating a copy is harmless. This page is the step-by-step
-version, and it is honest about one obstacle.
+Since #51 the Corpus travels over the hub connection (Phase 0 finding #7,
+`docs/mvp.md`): pair the phone with `stsloop-hub` and every Turn ends up on the
+hub, with nothing else to set up. The folder-copy routes further down still
+work, and `adb` is still the way to get a Corpus off a phone with no hub.
 
-## The obstacle: the Corpus is in app-private storage
+## Recommended: upload to the hub
+
+1. Run the hub and pair the phone with it (README, "The hub").
+2. Drive. While a Session runs and the hub is online, the phone uploads every
+   Turn the hub has not acknowledged yet, oldest first: the backlog from
+   before pairing as well as the new Turns.
+3. On the hub machine:
+
+   ```sh
+   uv run <repo>/scripts/corpus_load.py ~/.local/share/stsloop-hub/corpus
+   ```
+
+   (`$STSLOOP_HUB_HOME/corpus` if that is set, or the `--corpus DIR` given to
+   `stsloop-hub serve`.)
+
+What it does, and does not, do:
+
+- **Same files.** The hub stores each Turn as the phone wrote it,
+  `<started_at>-<id>/turn.json` (byte for byte) and `audio.wav`, so the loader
+  reads the hub's Corpus as it reads a pulled one. Uploads in progress sit in
+  `.incoming/`, which the loader skips, and a Turn appears whole or not at all.
+- **Checked.** The hub stores a Recording only if the bytes it received match
+  the length and SHA-256 the phone read from its file. The loader then checks
+  each `audio.sha256` in `turn.json` against the WAV, as always.
+- **Idempotent.** A Turn is identified by its directory name. The phone keeps
+  the names the hub acknowledged in `files/hub/uploaded.txt` and never offers
+  them again; if that record is lost, the hub answers a re-offered Turn it
+  already holds with "stored" without taking its audio. Pairing a hub at a
+  different address starts the record afresh.
+- **Out of the loop's way.** The upload runs on its own background-priority
+  thread, never the loop's, and sends one 32 KiB piece at a time, each only
+  after the hub acknowledged the last, so anything else on the connection
+  waits behind one piece at most.
+- **Only during a Session**, because that is when the phone holds the hub
+  connection. A Turn the hub rejects, or that cannot be read, is skipped until
+  the next Session; the reason is in the phone's log (`stsloop.Hub`).
+- **Turns only.** Test mode's route logs (`sessions/*.jsonl`) stay on the
+  phone; pull them with `adb` below.
+- **Read-only on the phone.** Uploading never changes or deletes a Turn; the
+  phone's Corpus stays complete.
+
+## Without a hub: the Corpus is in app-private storage
 
 The app writes the Corpus to `files/corpus/` in its **private** storage
 (`/data/data/com.walnutgeek.stsloop/files/corpus/`, `Context.filesDir`).
@@ -27,7 +68,7 @@ directory, unchanged, to a folder the user picks (e.g. `Documents/stsloop/`
 through the Storage Access Framework). Syncthing or rsync can then mirror
 that folder. Until that exists, use `adb`.
 
-## Today: pull with `adb` (debug build)
+## Pull with `adb` (debug build)
 
 `run-as` runs a command as the app's own user, so it can read `files/`.
 `tar` streams the whole directory out at once:
@@ -65,7 +106,7 @@ address (`100.x.y.z`), so this also works away from home. Two limits:
 Android turns wireless debugging off when the phone leaves Wi-Fi, and none of
 this has been tried with this app yet.
 
-## Once the app exports the Corpus: Syncthing (recommended)
+## Once the app exports the Corpus: Syncthing
 
 Syncthing is the recommended setup once the export exists. It runs in the
 background on both ends, needs no cloud, copies only new files, and resumes

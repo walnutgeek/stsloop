@@ -1,0 +1,11 @@
+{
+  "type": "turn_offer",
+  "turn": "2026-10-06T14:22:07.431Z-a3f1c9",
+  "turn_json": "{\n  \"schema\": 1,\n  \"id\": \"a3f1c9\",\n  \"session_id\": \"0f22ab\",\n  \"started_at\": \"2026-10-06T14:22:07.431Z\",\n  \"ended_at\": \"2026-10-06T14:22:07.431Z\",\n  \"audio\": { \"file\": \"audio.wav\", \"sha256\": \"c73e738b12a0feac5471bd58c402d9c134d8b365788ec17dc98b377d87ae3c5f\", \"sample_rate\": 16000, \"duration_ms\": 0, \"silent\": false },\n  \"vad\": { \"speech_ms\": 0, \"trailing_silence_ms\": 0 },\n  \"transcript\": { \"text\": \"ERRANDS ORDER ROOFING SCREWS\", \"engine\": \"sherpa-onnx\", \"model\": \"fixture\", \"finished_at\": \"2026-10-06T14:22:07.670Z\", \"latency_ms\": 239 },\n  \"kind\": \"note\",\n  \"declaration\": { \"bucket\": \"errands\", \"position\": \"leading\", \"matched\": \"errands\" },\n  \"bucket\": \"errands\",\n  \"bucket_source\": \"declaration\",\n  \"content\": \"order roofing screws\",\n  \"app_version\": \"0.1.0\"\n}\n",
+  "audio": {
+    "sha256": "c73e738b12a0feac5471bd58c402d9c134d8b365788ec17dc98b377d87ae3c5f",
+    "bytes": 60,
+    "format": "wav"
+  },
+  "priority": "low"
+}

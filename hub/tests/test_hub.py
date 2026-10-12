@@ -2,11 +2,15 @@
 
 import asyncio
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from stsloop_hub import protocol as p
+from stsloop_hub.corpus import CorpusStore
+from stsloop_hub.hub import Hub
 from stsloop_hub.stub import STUB_BUCKETS
 
 from support import fixture, pairing_token, phone, running_hub
@@ -188,6 +192,96 @@ class OnePhoneTest(unittest.IsolatedAsyncioTestCase):
                 await good.ping()
                 with self.assertRaises(asyncio.TimeoutError):
                     await asyncio.wait_for(good.recv(), 0.2)
+
+
+class CorpusUploadTest(unittest.IsolatedAsyncioTestCase):
+    """Uploads over a live connection; the store's own rules are in test_corpus.py."""
+
+    OFFER = json.dumps(fixture("v1", "turn_offer/basic.json"))
+
+    async def welcomed(self, ws, hello=HELLO):
+        await ws.send(hello)
+        welcome = json.loads(await asyncio.wait_for(ws.recv(), 5))
+        await ws.recv()  # descriptors
+        return welcome
+
+    async def ack(self, ws):
+        return json.loads(await asyncio.wait_for(ws.recv(), 5))
+
+    async def test_a_hub_without_a_corpus_does_not_offer_the_capability_and_ignores_offers(self):
+        hub = Hub(token=pairing_token(), descriptors=lambda: STUB_BUCKETS)
+        async with hub.listen("127.0.0.1", 0) as server:
+            url = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/"
+            async with phone(url, pairing_token()) as ws:
+                self.assertEqual((await self.welcomed(ws))["capabilities"], ["descriptors"])
+                await ws.send(self.OFFER)
+                with self.assertRaises(asyncio.TimeoutError):
+                    await asyncio.wait_for(ws.recv(), 0.2)
+
+    async def test_a_phone_that_did_not_ask_for_corpus_gets_no_answer_to_an_offer(self):
+        async with running_hub() as (_, url):
+            async with phone(url, pairing_token()) as ws:
+                await self.welcomed(ws, json.dumps(fixture("v1", "hello/descriptors-only.json")))
+                await ws.send(self.OFFER)
+                with self.assertRaises(asyncio.TimeoutError):
+                    await asyncio.wait_for(ws.recv(), 0.2)
+
+    async def test_a_broken_offer_that_names_its_turn_is_rejected_so_the_phone_moves_on(self):
+        async with running_hub() as (_, url):
+            async with phone(url, pairing_token()) as ws:
+                await self.welcomed(ws)
+                broken = fixture("v1", "turn_offer/basic.json")
+                broken["audio"]["sha256"] = "not hex"
+                await ws.send(json.dumps(broken))
+                self.assertEqual(
+                    {k: v for k, v in (await self.ack(ws)).items() if k != "message"},
+                    {"type": "turn_ack", "turn": broken["turn"], "status": "rejected", "reason": "bad_message"},
+                )
+                await ws.send('{"type": "turn_audio"}')  # names no Turn: nothing to answer
+                with self.assertRaises(asyncio.TimeoutError):
+                    await asyncio.wait_for(ws.recv(), 0.2)
+
+    async def test_a_turn_the_store_fails_on_is_rejected_and_the_connection_stays_open(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = CorpusStore(Path(tmp))
+
+            def broken(offer):
+                raise ValueError("boom")
+
+            store.receiver = lambda real=store.receiver: _with_offer(real(), broken)
+            async with running_hub(corpus=store) as (_, url):
+                async with phone(url, pairing_token()) as ws:
+                    await self.welcomed(ws)
+                    await ws.send(self.OFFER)
+                    ack = await self.ack(ws)
+                    self.assertEqual((ack["status"], ack["reason"]), ("rejected", "storage_failed"))
+                    await ws.ping()
+
+    async def test_a_turn_half_sent_before_a_reconnect_is_stored_whole_from_the_new_connection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = CorpusStore(Path(tmp))
+            async with running_hub(corpus=store) as (_, url):
+                async with phone(url, pairing_token()) as old:
+                    await self.welcomed(old)
+                    await old.send(self.OFFER)
+                    await self.ack(old)
+                    await old.send(json.dumps(fixture("v1", "turn_audio/first.json")))
+                    await self.ack(old)
+                    async with phone(url, pairing_token()) as new:
+                        await self.welcomed(new)
+                        await new.send(self.OFFER)
+                        self.assertEqual(await self.ack(new), fixture("v1", "turn_ack/send.json"))
+                        for piece in ("first", "last"):
+                            await new.send(json.dumps(fixture("v1", f"turn_audio/{piece}.json")))
+                            ack = await self.ack(new)
+                        self.assertEqual(ack, fixture("v1", "turn_ack/stored.json"))
+            turn = fixture("v1", "turn_offer/basic.json")
+            self.assertEqual((Path(tmp) / turn["turn"] / "turn.json").read_text(), turn["turn_json"])
+
+
+def _with_offer(receiver, offer):
+    receiver.offer = offer
+    return receiver
 
 
 if __name__ == "__main__":
