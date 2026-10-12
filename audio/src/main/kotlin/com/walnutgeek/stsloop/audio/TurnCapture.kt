@@ -318,6 +318,15 @@ class TurnCapture(
     /** Any thread: the hub answered a request; its reply is said into the next Silence. */
     fun replied(reply: Reply) = requests.replied(reply)
 
+    /**
+     * Any thread: say [text] into the next Silence, as the loop's own machine
+     * Turn (the name-recognisability check's warning at Session start). Not
+     * said once the Session is ending, nor with no echo.
+     */
+    fun announce(text: String) {
+        if (!ending) loop.announce(text)
+    }
+
     /** Any thread: from the next Turn on, the Buckets are [buckets] (the hub sent a new snapshot). */
     fun bucketsChanged(buckets: BucketRegistry) = grammar.replace(buckets)
 

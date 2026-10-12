@@ -259,6 +259,8 @@ class SessionService : Service() {
         captureThread = null
         capturingSessionId = null
         commit(SessionMachine.on(state, SessionEvent.CaptureEnded))
+        // The hub may have sent new Descriptors meanwhile; the check waits for no Session (#49).
+        NameCheck.request(this, "a Session ended")
     }
 
     /**
@@ -398,6 +400,17 @@ class SessionService : Service() {
             }
             capture = turns
             turnCapture = turns
+            // A Bucket phrase the recogniser cannot reliably hear is said once, ever (#49); only with an echo to say it.
+            if (echo != null) {
+                try {
+                    NameCheck.announceOnce(filesDir, models, registry)?.let { say ->
+                        Log.i(TAG, "Session $sessionId: saying \"$say\"")
+                        turns.announce(say)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Session $sessionId: cannot read or mark the name-check results", e)
+                }
+            }
             hubLink.start() // once turnCapture is set, so no snapshot is missed
             silencedWatch = SilencedWatch(getSystemService(AudioManager::class.java), record, main) { silenced ->
                 Log.w(TAG, "Session $sessionId: recording ${if (silenced) "silenced by another capture client" else "no longer silenced"}")

@@ -12,6 +12,7 @@ import android.view.WindowInsets
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.walnutgeek.stsloop.audio.NameCheck
 import com.walnutgeek.stsloop.audio.SessionService
 import com.walnutgeek.stsloop.audio.speech.ModelDownloads
 import com.walnutgeek.stsloop.core.models.DownloadStatus
@@ -113,6 +114,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        NameCheck.request(this, "app opened")
         ModelDownloads.observe(modelsChanged)
         ModelDownloads.ensure(this)
         refresh()

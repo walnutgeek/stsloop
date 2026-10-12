@@ -3,6 +3,7 @@ package com.walnutgeek.stsloop.audio.speech
 import android.content.res.AssetManager
 import com.k2fsa.sherpa.onnx.Vad
 import com.walnutgeek.stsloop.core.models.ModelStore
+import com.walnutgeek.stsloop.core.speech.modelId
 import java.io.FileNotFoundException
 
 /**
@@ -24,6 +25,9 @@ class InstalledModels private constructor(
     fun sttConfig(numThreads: Int = 2) = SpeechModels.sttConfig(numThreads, root)
     fun vadConfig() = SpeechModels.vadConfig(root)
     fun newVad(): Vad = SpeechModels.newVad(assets, vadConfig())
+
+    /** `transcript.model` of the STT model, without loading it: what [loadStt]'s [SttRecognizer.model] will be. */
+    val modelId: String get() = Stt.specOf(sttConfig()).modelId
 
     /** Loads the STT model; seconds, and ~750 MB of memory. A missing native library throws a [LinkageError]. */
     fun loadStt(): SttRecognizer = SttRecognizer(Stt(assets, sttConfig()))

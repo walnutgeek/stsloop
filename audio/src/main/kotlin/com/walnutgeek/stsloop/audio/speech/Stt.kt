@@ -52,7 +52,8 @@ class Stt(
 
     override fun close() = recognizer.release()
 
-    private companion object {
+    internal companion object {
+        /** The [RecognizerSpec] of [c], without loading it: what [spec] will be. */
         fun specOf(c: OnlineRecognizerConfig) = with(c.modelConfig) {
             RecognizerSpec(
                 transducerEncoder = transducer.encoder,
@@ -69,7 +70,7 @@ class Stt(
             )
         }
 
-        fun modelPaths(c: OnlineRecognizerConfig) = with(c.modelConfig) {
+        private fun modelPaths(c: OnlineRecognizerConfig) = with(c.modelConfig) {
             listOf(transducer.encoder, transducer.decoder, transducer.joiner, tokens, bpeVocab)
         }.filter { it.isNotEmpty() }
     }
