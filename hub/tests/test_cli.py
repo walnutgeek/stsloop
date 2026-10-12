@@ -3,6 +3,8 @@
 import asyncio
 import io
 import json
+import os
+import socket
 import stat
 import subprocess
 import tempfile
@@ -10,21 +12,48 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
-from stsloop_hub import cli, config, tailnet
+from stsloop_hub import claude_settings, cli, config, tailnet
 from stsloop_hub.stub import STUB_BUCKETS
 
-from support import FakeBackend, FakeHerdr, agent
+from support import FakeBackend, FakeHerdr, agent, recording
+
+
+def free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+async def post(port: int, payload: dict, pane: str | None = None, pid: int | None = None) -> bytes:
+    """Posts one hook event as the installed hook's curl does; the hub's answer."""
+    body = json.dumps(payload).encode()
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    head = (
+        "POST /stsloop-hub/claude-code HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+        f"X-Herdr-Pane: {pane or ''}\r\nX-Claude-Pid: {pid or ''}\r\nContent-Length: {len(body)}\r\n\r\n"
+    )
+    writer.write(head.encode() + body)
+    await writer.drain()
+    answer = await reader.read()
+    writer.close()
+    return answer
 
 TAILNET_IP = "100.101.102.103"
 
 
 class Run:
-    """One CLI invocation against a temporary config directory."""
+    """One CLI invocation against a temporary config directory, and a temporary HOME: Claude Code's settings
+    are always `<home's parent>/user/.claude/settings.json` here, never the real ones. Nobody answers when asked
+    (`answer` False), and only the commands in `installed` are installed."""
 
     def __init__(self, home: Path, tailnet_ip: str | None = TAILNET_IP, herdr=None):
         self.home = home
+        self.user_home = home.parent / "user"
         self.tailnet_ip = tailnet_ip
         self.herdr = herdr
+        self.answer = False
+        self.asked = []
+        self.installed = {"curl"}
         self.served = []
         self.pollers = []
         #: The summariser config each serve built its backend from; the backend is a fake.
@@ -34,15 +63,21 @@ class Run:
         self.out, self.err = io.StringIO(), io.StringIO()
         self.code = cli.main(
             list(argv),
-            env={"STSLOOP_HUB_HOME": str(self.home)},
+            env={"STSLOOP_HUB_HOME": str(self.home), "HOME": str(self.user_home)},
             out=self.out,
             err=self.err,
             find_tailnet=lambda: self.tailnet_ip,
             run_hub=lambda hub, host, port, pollers: (self.served.append((hub, host, port)), self.pollers.append(pollers)),
             find_herdr=lambda: self.herdr,
             make_backend=lambda cfg: (self.summarisers.append(cfg), FakeBackend())[1],
+            ask=lambda question: (self.asked.append(question), self.answer)[1],
+            which=lambda name: f"/usr/bin/{name}" if name in self.installed else None,
         )
         return self
+
+    @property
+    def claude_settings(self) -> Path:
+        return self.user_home / ".claude" / "settings.json"
 
     @property
     def config(self):
@@ -104,6 +139,105 @@ class InitTest(unittest.TestCase):
         self.assertNotIn("█", run.out.getvalue())
 
 
+class InitHooksTest(unittest.TestCase):
+    """`init` offers Claude Code's hooks: against a temporary HOME only."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name) / "stsloop-hub"
+        self.run = Run(self.home)
+        self.run.installed |= {"claude"}
+        self.settings = self.run.claude_settings
+        self.settings.parent.mkdir(parents=True)
+        self.theirs = {"model": "opus", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "notify-send done"}]}]}}
+        self.settings.write_text(json.dumps(self.theirs))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_init_shows_exactly_what_it_would_add_and_asks(self):
+        out = self.run("init").out.getvalue()
+        self.assertEqual(self.run.asked, ["Install these hooks? [y/N] "])
+        self.assertIn(str(self.settings), out)
+        self.assertIn(json.dumps({"hooks": claude_settings.hooks(config.DEFAULT_HOOKS_PORT)}, indent=2), out)
+        self.assertIn("█", out, "and then the QR code")
+
+    def test_no_answer_writes_nothing(self):
+        before = self.settings.read_bytes()
+        out = self.run("init").out.getvalue()
+        self.assertEqual(self.settings.read_bytes(), before)
+        self.assertIn("stsloop-hub init --hooks", out)
+        self.assertFalse(self.settings.with_name("settings.json.stsloop-hub.bak").exists())
+
+    def test_yes_installs_them_beside_what_is_there(self):
+        self.run.answer = True
+        self.run("init")
+        settings = json.loads(self.settings.read_text())
+        self.assertTrue(claude_settings.installed(settings, config.DEFAULT_HOOKS_PORT))
+        self.assertEqual(claude_settings.without_ours(settings), self.theirs)
+
+    def test_installed_hooks_are_not_offered_again(self):
+        self.run("init", "--hooks")
+        self.assertEqual(self.run.asked, [], "--hooks is the consent")
+        self.run.answer = True
+        out = self.run("init").out.getvalue()
+        self.assertEqual(self.run.asked, [])
+        self.assertIn("Claude Code hooks: installed", out)
+
+    def test_remove_hooks_undoes_the_install_and_does_nothing_else(self):
+        self.run("init", "--hooks")
+        self.run("init", "--remove-hooks")
+        self.assertEqual(self.run.code, 0)
+        self.assertEqual(json.loads(self.settings.read_text()), self.theirs)
+        self.assertNotIn("█", self.run.out.getvalue())
+        self.run("init", "--remove-hooks")
+        self.assertIn("nothing changed", self.run.out.getvalue())
+
+    def test_remove_hooks_works_with_a_broken_hub_config(self):
+        self.run("init", "--hooks")
+        (self.home / "hub.json").write_text("{nope")
+        self.run("init", "--remove-hooks")
+        self.assertEqual(self.run.code, 0)
+        self.assertEqual(json.loads(self.settings.read_text()), self.theirs)
+
+    def test_no_hooks_does_not_offer(self):
+        self.run("init", "--no-hooks")
+        self.assertEqual(self.run.asked, [])
+
+    def test_an_explicit_settings_file(self):
+        project = self.home.parent / "project" / ".claude" / "settings.json"
+        self.run("init", "--hooks", "--claude-settings", str(project))
+        self.assertTrue(claude_settings.installed(json.loads(project.read_text()), config.DEFAULT_HOOKS_PORT))
+        self.assertEqual(json.loads(self.settings.read_text()), self.theirs, "the user settings untouched")
+
+    def test_the_hooks_port_is_kept_for_serve(self):
+        self.run("init", "--hooks", "--hooks-port", "9100")
+        self.assertEqual(self.run.config["hooks_port"], 9100)
+        self.assertIn("127.0.0.1:9100/", self.settings.read_text())
+
+    def test_without_claude_code_nothing_is_offered(self):
+        self.run.installed = {"curl"}
+        self.settings.unlink()
+        self.settings.parent.rmdir()
+        out = self.run("init").out.getvalue()
+        self.assertEqual(self.run.asked, [])
+        self.assertIn("Claude Code not found", out)
+        self.assertFalse(self.settings.exists())
+
+    def test_without_curl_nothing_is_installed(self):
+        self.run.installed = {"claude"}
+        self.run("init", "--hooks")
+        self.assertIn("curl", self.run.err.getvalue())
+        self.assertEqual(json.loads(self.settings.read_text()), self.theirs)
+
+    def test_a_settings_file_that_is_not_json_is_left_alone(self):
+        self.settings.write_text("{nope")
+        self.run("init", "--hooks")
+        self.assertEqual(self.run.code, 0, "the pairing still works")
+        self.assertIn("not JSON", self.run.err.getvalue())
+        self.assertEqual(self.settings.read_text(), "{nope")
+
+
 class ServeTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -150,12 +284,36 @@ class ServeTest(unittest.TestCase):
         self.run("serve")
         self.assertEqual(self.run.served[0][1], "192.168.1.5")
 
-    def test_without_herdr_serve_publishes_only_the_hub_bucket_and_polls_nothing(self):
-        self.run("init")
+    def test_without_herdr_serve_hears_claude_code_hooks(self):
+        port = free_port()
+        self.run("init", "--no-hooks", "--hooks-port", str(port))
         self.run("serve")
         [(hub, _, _)] = self.run.served
-        self.assertEqual(hub._descriptors(), STUB_BUCKETS)
-        self.assertEqual(self.run.pollers, [[]])
+        self.assertEqual([d.id for d in hub._descriptors()], ["hub"])
+        self.assertEqual(hub._descriptors()[0].commands[0].id, "blocked", "what's blocked")
+        [[poll, hooks]] = self.run.pollers
+        changed, items = [], []
+        hub.buckets_changed = lambda: changed.append(True)
+        hub.item_raised = items.append
+        events = recording("doc-interactive")
+        answers = []
+
+        async def hear():
+            tasks = [asyncio.create_task(poll()), asyncio.create_task(hooks())]
+            await asyncio.sleep(0.05)
+            for pane, _, payload in events[:3]:  # started, asked, a question dialog
+                answers.append(await post(port, payload, pane, os.getpid()))
+            while not items:
+                await asyncio.sleep(0.01)
+            for task in tasks:
+                task.cancel()
+
+        with mock.patch("stsloop_hub.agents.POLL_S", 0.01):
+            asyncio.run(asyncio.wait_for(hear(), 5))
+        self.assertTrue(all(a.startswith(b"HTTP/1.1 204 ") for a in answers), answers)
+        self.assertEqual(changed, [True], "one new snapshot: the session came")
+        self.assertEqual([d.name for d in hub._descriptors()], ["hub", "woodglue agent"])
+        self.assertEqual([i.say for i in items], ["woodglue agent is blocked."])
 
     def test_with_herdr_serve_publishes_its_agents_and_polls_it(self):
         fake = FakeHerdr([agent("w8:p1", "stsloop", "working")])
@@ -163,7 +321,7 @@ class ServeTest(unittest.TestCase):
         run("init")
         run("serve")
         [(hub, _, _)] = run.served
-        [[poll]] = run.pollers
+        [[poll, _]] = run.pollers
         self.assertEqual([d.id for d in hub._descriptors()], ["hub"], "nothing before the first poll")
         changed, items = [], []
         hub.buckets_changed = lambda: changed.append(True)

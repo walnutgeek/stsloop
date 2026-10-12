@@ -1,4 +1,5 @@
-"""The hub's config file: the pairing token, an optional host and port, and the
+"""The hub's config file: the pairing token, an optional host and port, the port
+Claude Code's hooks post to (`hooks_port`, on 127.0.0.1, default 7718), and the
 summariser; and where the uploaded Corpus is kept.
 
 `hub.json` lives in `$STSLOOP_HUB_HOME`, else `$XDG_CONFIG_HOME/stsloop-hub`,
@@ -33,6 +34,8 @@ from pathlib import Path
 
 FILE = "hub.json"
 DEFAULT_PORT = 7717
+#: Where Claude Code's hooks reach the hub, on 127.0.0.1 (`hook_server.py`).
+DEFAULT_HOOKS_PORT = 7718
 BACKENDS = ("claude", "pi", "ollama")
 DEFAULT_SUMMARY_TIMEOUT_S = 20.0
 #: The longest a model may take; the phone's wait for a summary (`agents.READ_WITHIN_MS`) is built on it.
@@ -66,6 +69,7 @@ class HubConfig:
     token: str
     host: str | None = None
     port: int = DEFAULT_PORT
+    hooks_port: int = DEFAULT_HOOKS_PORT
     #: As `hub.json` has it: None when it has none, and the defaults apply.
     summariser: SummariserConfig | None = None
 
@@ -111,8 +115,11 @@ def load(directory: Path) -> HubConfig | None:
         port = obj["port"]
         if not isinstance(port, int) or isinstance(port, bool) or not 0 < port < 65536:
             raise ConfigError(f"{path} has an unusable port {port!r}")
+    hooks_port = obj.get("hooks_port", DEFAULT_HOOKS_PORT)
+    if not isinstance(hooks_port, int) or isinstance(hooks_port, bool) or not 0 < hooks_port < 65536:
+        raise ConfigError(f"{path} has an unusable hooks_port {hooks_port!r}")
     summariser = _summariser(obj["summariser"], path) if "summariser" in obj else None
-    return HubConfig(token=token, host=host, port=port, summariser=summariser)
+    return HubConfig(token=token, host=host, port=port, hooks_port=hooks_port, summariser=summariser)
 
 
 def _summariser(obj, path: Path) -> SummariserConfig:
@@ -139,6 +146,8 @@ def save(directory: Path, config: HubConfig) -> Path:
     obj = {"token": config.token, "port": config.port}
     if config.host:
         obj["host"] = config.host
+    if config.hooks_port != DEFAULT_HOOKS_PORT:
+        obj["hooks_port"] = config.hooks_port
     if config.summariser:
         obj["summariser"] = config.summariser.to_json()
     path = directory / FILE

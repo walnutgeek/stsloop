@@ -120,7 +120,10 @@ Bucket, with an empty Corpus, answers every exchange exactly (an exchange with
 `after` runs on the hub the named earlier exchange left behind).
 `descriptors/herdr.json` and the `reply/` fixtures are what the hub's herdr
 Provider produces for a fake herdr and a fake summariser
-(`hub/tests/test_agents.py`), the `sent/` fixtures what it answers the
+(`hub/tests/test_agents.py`), `descriptors/claude-code.json` and
+`reply/needs-herdr.json` what it publishes and answers for a Claude Code
+session its hooks report without herdr (`hub/tests/test_claude_code.py`,
+which replays recorded hook payloads), the `sent/` fixtures what it answers the
 `send/` ones with (`hub/tests/test_sends.py`), and the `item/` fixtures
 what it raises (`hub/tests/test_alerts.py`). The phone's
 are in `core/src/test/kotlin/com/walnutgeek/stsloop/core/hub/`

@@ -231,7 +231,7 @@ class Screens(Protocol):
 class Summaries:
     """What an agent's screen says, for the phone. Blocking: it reads herdr and waits on the model."""
 
-    def __init__(self, screens: Screens, model: Backend | None, timeout: float):
+    def __init__(self, screens: Screens | None, model: Backend | None, timeout: float):
         self._screens = screens
         self._model = model
         self._timeout = timeout
@@ -240,11 +240,16 @@ class Summaries:
         """`name`'s screen in a sentence or two. `state` is herdr's word for it, and `status` the sentence
         "status" answers ("stsloop agent is blocked, for 3 minutes"), which the fallback starts with."""
         try:
-            # Escape codes first: one right before a token would hide its word boundary from the patterns.
-            screen = redact(_ANSI.sub("", self._screens.read(pane_id, SCREEN_LINES)))
+            screen = self._screens.read(pane_id, SCREEN_LINES) if self._screens is not None else ""
         except HerdrError as e:
             log.warning("could not read %s's screen: %s", name, e)
             return f"{status}. herdr could not read its screen."
+        return self.say_text(name, state, status, screen)
+
+    def say_text(self, name: str, state: str, status: str, screen: str) -> str:
+        """As `say`, for a screen already read: what a Claude Code session's hooks said, without herdr."""
+        # Escape codes first: one right before a token would hide its word boundary from the patterns.
+        screen = redact(_ANSI.sub("", screen))
         last = last_line(screen)
         if last is None:
             return f"{status}. Its screen is empty."

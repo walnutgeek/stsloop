@@ -66,8 +66,9 @@ eventually makes declaring optional.
 `stsloop-hub` runs on the machine where your agents run, and publishes Buckets
 to the phone over one WebSocket on your tailnet
 ([ADR-0008](./docs/adr/0008-python-hub.md)). It always publishes the "hub"
-Bucket, and, with herdr (the terminal multiplexer for coding agents)
-installed, one Bucket per herdr agent; the Claude Code Provider comes next.
+Bucket, and one Bucket per coding agent: each herdr agent, with herdr (the
+terminal multiplexer for coding agents) installed, and each Claude Code
+session, with its hooks installed.
 It is not on PyPI yet, so install it from the repo with
 [uv](https://docs.astral.sh/uv/):
 
@@ -104,6 +105,28 @@ sentence or two. The hub only reads herdr (`herdr api snapshot`, every 2 s,
 and `herdr agent read` for a summary); it never types into an agent. It runs
 `$HERDR_BIN_PATH` when set, else `herdr` on the PATH, so start `serve` where
 that is the herdr your server runs. Without herdr, the hub starts as before.
+
+**Claude Code hooks.** When `init` finds Claude Code, it offers hooks that
+tell the hub each session's state the moment it changes. It prints exactly
+what it would add to `~/.claude/settings.json` and writes it only if you say
+yes (`--hooks` says yes up front, `--no-hooks` skips the question, and
+`--claude-settings FILE` picks another settings file, such as a project's
+`.claude/settings.json`). Everything else in the file stays as it was, and
+the file before is kept as `settings.json.stsloop-hub.bak`.
+`stsloop-hub init --remove-hooks` takes the hooks out again. Each hook posts
+the event to the hub on `127.0.0.1:7718` with `curl` (`--hooks-port` changes
+the port), and always succeeds silently, so it never blocks or slows Claude
+Code, hub running or not. The hub never answers a hook with a decision.
+
+A session in a herdr pane is the same Bucket as its herdr agent; the hooks
+make its state precise, and "status" says why it is blocked: "blocked on a
+question" or "blocked on a permission prompt". A session outside herdr is
+its own Bucket, named from its project directory, with "status", "what does
+it say" (a summary of what its hooks reported: what it asks, the tool it
+wants, its last message) and blocked alerts; "send" there says sending needs
+herdr, since only herdr can type into the agent. The hub forgets a session
+when it ends or its Claude Code process goes, and hears of one again at its
+next event after a hub restart.
 
 Summaries come from `claude -p` (with Claude Code's own login, the `haiku`
 model, and every tool off) unless `hub.json` names another backend:
