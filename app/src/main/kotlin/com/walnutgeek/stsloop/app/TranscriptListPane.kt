@@ -28,10 +28,10 @@ import java.util.concurrent.Executors
 
 /**
  * The transcript list: every Turn in the Corpus, newest first, for
- * sanity-checking the loop after a drive. Read-only: it lists [corpusDir]
- * and reads each Turn's `turn.json`, nothing else, except that [start]
- * creates [corpusDir] itself when it is missing. The staging directory sits
- * beside the Corpus, not in it, so it is never seen.
+ * sanity-checking the loop after a drive. It never changes a Turn: it lists
+ * [corpusDir] and reads each Turn's `turn.json`. Its one write is creating an
+ * empty [corpusDir] in [start], so there is a directory to watch. The staging
+ * directory sits beside the Corpus, not in it, so it is never seen.
  *
  * Reloads on [start] (the activity's resume) and whenever a Turn directory
  * appears in or leaves the Corpus while the screen is shown.
