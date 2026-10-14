@@ -49,10 +49,14 @@ jobs:
       - name: Build sherpa-onnx native libraries
         if: steps.jni.outputs.cache-hit != 'true'
         run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.14206865" "cmake;3.31.6" >/dev/null
+          # The NDK and CMake pins live in the script; install exactly those.
+          pin() { sed -n "s/^$1=\"\([^\"]*\)\".*/\1/p" scripts/build-sherpa-onnx.sh; }
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "ndk;$(pin NDK_VERSION)" "cmake;$(pin CMAKE_VERSION)" </dev/null >/dev/null
           STSLOOP_CACHE="$RUNNER_TEMP/stsloop-cache" scripts/build-sherpa-onnx.sh
           # The script also re-vendors the Kotlin API; it must match what is committed.
-          git diff --exit-code -- audio/src/main/kotlin/com/k2fsa
+          drift="$(git status --porcelain -- audio/src/main/kotlin/com/k2fsa)"
+          [[ -z "$drift" ]] || { echo "::error::vendored sherpa-onnx Kotlin API drifted:"; echo "$drift"; exit 1; }
 
       - name: Decode the signing key
         env:
@@ -81,6 +85,7 @@ jobs:
         env:
           VERSION_NAME: ${{ steps.version.outputs.name }}
           VERSION_CODE: ${{ steps.version.outputs.code }}
+          RELEASE_CERT_SHA256: ${{ vars.RELEASE_CERT_SHA256 }}
         run: |
           src=app/build/outputs/apk/release/app-release.apk
           [[ -f "$src" ]] || { echo "::error::no signed APK (was it built unsigned?)"; ls app/build/outputs/apk/release; exit 1; }
@@ -92,6 +97,12 @@ jobs:
           grep -E '^(Verifies|Verified using|Number of signers|.*Signer: certificate (DN|SHA-256 digest))' <<<"$certs"
           grep -qx 'Number of signers: 1' <<<"$certs"
           ! grep -q 'CN=Android Debug' <<<"$certs" || { echo "::error::signed with the debug key"; exit 1; }
+          # An APK signed with any other key won't install over the previous release.
+          # Once set, the repo variable RELEASE_CERT_SHA256 pins the key (the digest printed above).
+          if [[ -n "$RELEASE_CERT_SHA256" ]]; then
+            grep -q "certificate SHA-256 digest: ${RELEASE_CERT_SHA256,,}\$" <<<"$certs" ||
+              { echo "::error::not signed with the pinned release key ($RELEASE_CERT_SHA256)"; exit 1; }
+          fi
 
           # Without these the app dies with UnsatisfiedLinkError on first speech.
           libs="$(unzip -Z1 "$apk")"
