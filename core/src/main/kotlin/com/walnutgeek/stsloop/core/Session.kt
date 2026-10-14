@@ -57,7 +57,16 @@ sealed interface SessionEffect {
     data object StopServiceKeepControls : SessionEffect
 }
 
-data class Transition(val state: SessionState, val effects: List<SessionEffect>)
+/**
+ * One step of the machine. [sessionEnded] is true when a Session's capture
+ * has ended, so its last Turn is published (or abandoned): the moment a screen
+ * listing the Corpus should look again. Stop alone never ends a Session.
+ */
+data class Transition(
+    val state: SessionState,
+    val effects: List<SessionEffect>,
+    val sessionEnded: Boolean = false,
+)
 
 object SessionMachine {
     fun on(state: SessionState, event: SessionEvent): Transition {
@@ -77,9 +86,10 @@ object SessionMachine {
                 else -> Transition(SessionState.Saving, emptyList())
             }
             SessionEvent.CaptureEnded -> when (state) {
-                SessionState.SavingThenRestart -> Transition(SessionState.Capturing, listOf(SessionEffect.LaunchCapture))
+                SessionState.SavingThenRestart ->
+                    Transition(SessionState.Capturing, listOf(SessionEffect.LaunchCapture), sessionEnded = true)
                 SessionState.Capturing, SessionState.Saving ->
-                    Transition(SessionState.NoSession, listOf(SessionEffect.StopServiceKeepControls))
+                    Transition(SessionState.NoSession, listOf(SessionEffect.StopServiceKeepControls), sessionEnded = true)
                 else -> Transition(state, emptyList())
             }
         }
@@ -88,23 +98,51 @@ object SessionMachine {
 
 enum class SessionAction { START, STOP, OPEN_APP }
 
-/** What the Session's control surface (the notification) says, and the one action it offers. */
-data class SessionControls(val status: String, val action: SessionAction) {
+/**
+ * The notification's status-bar icon. The mic shows only while a Session is
+ * active; with no Session a mic icon reads as "still recording" (#70).
+ */
+enum class SessionIcon { MIC, IDLE }
+
+/** What the Session's control surface (the notification) says, the one action it offers, and its icon. */
+data class SessionControls(val status: String, val action: SessionAction, val icon: SessionIcon) {
     companion object {
-        fun of(state: SessionState): SessionControls = when (state) {
-            SessionState.NoSession -> SessionControls("No Session", SessionAction.START)
-            SessionState.Capturing -> SessionControls("Listening", SessionAction.STOP)
-            SessionState.Saving -> SessionControls("Saving Turn", SessionAction.START)
-            SessionState.SavingThenRestart -> SessionControls("Restarting", SessionAction.STOP)
-            is SessionState.StartBlocked -> SessionControls(
-                when (state.refusal) {
-                    StartRefusal.MICROPHONE -> "Microphone permission needed. Open the app."
-                    StartRefusal.NOTIFICATIONS -> "Notifications needed. Open the app."
-                    StartRefusal.NOT_ALLOWED -> "Could not start from here. Open the app."
-                    StartRefusal.MODELS -> "Speech models not downloaded yet. Open the app."
-                },
-                SessionAction.OPEN_APP,
-            )
+        fun of(state: SessionState): SessionControls {
+            val icon = if (state.isActive) SessionIcon.MIC else SessionIcon.IDLE
+            return when (state) {
+                SessionState.NoSession -> SessionControls("No Session", SessionAction.START, icon)
+                SessionState.Capturing -> SessionControls("Listening", SessionAction.STOP, icon)
+                SessionState.Saving -> SessionControls("Saving Turn", SessionAction.START, icon)
+                SessionState.SavingThenRestart -> SessionControls("Restarting", SessionAction.STOP, icon)
+                is SessionState.StartBlocked -> SessionControls(
+                    when (state.refusal) {
+                        StartRefusal.MICROPHONE -> "Microphone permission needed. Open the app."
+                        StartRefusal.NOTIFICATIONS -> "Notifications needed. Open the app."
+                        StartRefusal.NOT_ALLOWED -> "Could not start from here. Open the app."
+                        StartRefusal.MODELS -> "Speech models not downloaded yet. Open the app."
+                    },
+                    SessionAction.OPEN_APP,
+                    icon,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * What the app's screen shows for a Session state: the toggle's label,
+ * whether it can be pressed, and the status line. After Stop the Session is
+ * still [SessionState.Saving] its last Turn, and the screen says so rather
+ * than offering Stop again (#70); it offers Start once the Session has ended.
+ */
+data class SessionScreen(val toggle: String, val toggleEnabled: Boolean, val status: String) {
+    companion object {
+        fun of(state: SessionState): SessionScreen = when (state) {
+            SessionState.NoSession, is SessionState.StartBlocked -> SessionScreen("Start Session", true, "No Session.")
+            SessionState.Capturing -> SessionScreen("Stop Session", true, "Session active.")
+            SessionState.Saving -> SessionScreen("Stopping…", false, "Saving the last Turn.")
+            SessionState.SavingThenRestart ->
+                SessionScreen("Stop Session", true, "Saving the last Turn, then starting again.")
         }
     }
 }

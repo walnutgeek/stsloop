@@ -29,6 +29,7 @@ import com.walnutgeek.stsloop.core.SessionAction
 import com.walnutgeek.stsloop.core.SessionControls
 import com.walnutgeek.stsloop.core.SessionEffect
 import com.walnutgeek.stsloop.core.SessionEvent
+import com.walnutgeek.stsloop.core.SessionIcon
 import com.walnutgeek.stsloop.core.SessionMachine
 import com.walnutgeek.stsloop.core.SessionState
 import com.walnutgeek.stsloop.core.StartGate
@@ -85,13 +86,32 @@ class SessionService : Service() {
         /** Staged Turns are recovered once per process: before its first Session, no Turn of ours is staged. */
         private val recoveryDone = AtomicBoolean()
 
-        /** Owned by the main thread; readable anywhere for display. */
+        /** Owned by the main thread; readable anywhere for display, and followed with [observe]. */
         @Volatile
         var state: SessionState = SessionState.NoSession
             private set
 
         /** True while a Session holds the microphone or is still writing its Turn. */
         val isActive: Boolean get() = state.isActive
+
+        private val listeners = mutableSetOf<(sessionEnded: Boolean) -> Unit>()
+
+        /**
+         * Main thread: call [listener] on the main thread after each change of [state], with
+         * `true` when a Session has just ended, its last Turn published (or abandoned) (#70).
+         * A screen registers while it is shown, and reads [state] when called.
+         */
+        fun observe(listener: (sessionEnded: Boolean) -> Unit) {
+            listeners += listener
+        }
+
+        fun unobserve(listener: (sessionEnded: Boolean) -> Unit) {
+            listeners -= listener
+        }
+
+        private fun notifyListeners(sessionEnded: Boolean) {
+            for (l in listeners.toList()) l(sessionEnded)
+        }
 
         /** Starts a Session. Call only from a visible activity with RECORD_AUDIO granted. */
         fun start(context: Context) {
@@ -223,8 +243,9 @@ class SessionService : Service() {
         commit(blocked)
     }
 
-    /** Main thread: commit one transition, run its effects, and update the notification. */
+    /** Main thread: commit one transition, run its effects, update the notification, and tell the listeners. */
     private fun commit(transition: Transition) {
+        val before = state
         state = transition.state
         for (effect in transition.effects) when (effect) {
             SessionEffect.LaunchCapture -> launchCapture()
@@ -235,6 +256,7 @@ class SessionService : Service() {
             }
         }
         postControls()
+        if (state != before || transition.sessionEnded) notifyListeners(transition.sessionEnded)
     }
 
     /** Show the current state's controls, unless the notification already does. */
@@ -472,6 +494,7 @@ class SessionService : Service() {
             state = SessionState.NoSession
             stopForeground(STOP_FOREGROUND_DETACH)
             postControls()
+            notifyListeners(sessionEnded = true)
         }
         super.onDestroy()
     }
@@ -516,7 +539,12 @@ class SessionService : Service() {
             SessionAction.OPEN_APP -> "Open"
         }
         return Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setSmallIcon(
+                when (controls.icon) {
+                    SessionIcon.MIC -> android.R.drawable.ic_btn_speak_now
+                    SessionIcon.IDLE -> R.drawable.stsloop_session_idle // not a mic: it read as "still recording" (#70)
+                },
+            )
             .setContentTitle("stsloop")
             .setContentText(controls.status)
             .setContentIntent(open)
