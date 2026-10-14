@@ -4,6 +4,9 @@
 build/
 local.properties
 *.apk
+# Signing keys: the release key lives only in CI secrets
+*.jks
+*.keystore
 
 # Produced by scripts/build-sherpa-onnx.sh and scripts/fetch-models.sh
 audio/src/main/jniLibs/

@@ -23,6 +23,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: uv run scripts/test_drive_report_test.py
       - run: uv run scripts/corpus_load_test.py
+      - run: uv run scripts/release_version_test.py
 
   protocol:
     runs-on: ubuntu-latest
