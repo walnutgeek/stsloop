@@ -29,7 +29,8 @@ import java.util.concurrent.Executors
 /**
  * The transcript list: every Turn in the Corpus, newest first, for
  * sanity-checking the loop after a drive. Read-only: it lists [corpusDir]
- * and reads each Turn's `turn.json`, nothing else. The staging directory sits
+ * and reads each Turn's `turn.json`, nothing else, except that [start]
+ * creates [corpusDir] itself when it is missing. The staging directory sits
  * beside the Corpus, not in it, so it is never seen.
  *
  * Reloads on [start] (the activity's resume) and whenever a Turn directory
@@ -53,6 +54,11 @@ class TranscriptListPane(context: Context, private val corpusDir: File) {
     }
 
     fun start() {
+        // On a fresh install the Corpus does not exist until its first Turn is published, and a
+        // FileObserver on a missing directory watches nothing, then or later (#68). So create it.
+        if (!corpusDir.isDirectory && !corpusDir.mkdirs()) {
+            Log.w(TAG, "cannot create $corpusDir: new Turns are listed only on the next resume")
+        }
         // A Turn is published by renaming its staged directory into the Corpus.
         observer = object : FileObserver(corpusDir, MOVED_TO or MOVED_FROM or CREATE or DELETE) {
             override fun onEvent(event: Int, path: String?) {

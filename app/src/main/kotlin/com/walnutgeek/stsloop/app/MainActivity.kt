@@ -182,7 +182,8 @@ class MainActivity : Activity() {
 
     private fun stopSession() {
         SessionService.stop(this)
-        toggle.postDelayed(::refresh, 500)
+        // Also re-list the Corpus, in case a Turn the Session published was missed (#68).
+        toggle.postDelayed({ refresh(); transcripts.load() }, 500)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
