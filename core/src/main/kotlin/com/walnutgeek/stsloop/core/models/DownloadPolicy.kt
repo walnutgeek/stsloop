@@ -81,18 +81,36 @@ object DownloadPolicy {
     }
 
     /**
-     * Whether the download needs the app kept in the foreground (a foreground
-     * service), so that Android does not freeze it once the screen is off:
-     * while it runs, and while a dropped connection waits for a retry the
-     * network allows. Waiting for Wi-Fi or for the user holds nothing; the
-     * next [next] that says [Action.START] holds it again.
+     * How long a download stopped for the network keeps the foreground: long
+     * enough for Wi-Fi to come back after a blip (or a hop to mobile data and
+     * back), short enough that leaving home does not spend the day's
+     * foreground time waiting.
      */
-    fun holdsForeground(status: DownloadStatus, network: NetworkKind, meteredAllowed: Boolean, toFetch: Long): Boolean =
-        when (status) {
-            is DownloadStatus.Running -> true
-            is DownloadStatus.Failed -> next(status, network, meteredAllowed, toFetch) == Action.START
-            DownloadStatus.Ready, is DownloadStatus.Waiting -> false
+    const val NETWORK_GRACE_MS = 10 * 60_000L
+
+    /**
+     * Whether the download needs the app kept in the foreground (a foreground
+     * service), so that Android does not freeze it once the screen is off: while
+     * it runs; while a dropped connection waits for a retry the network allows;
+     * and for [NETWORK_GRACE_MS] after it last ran ([msSinceRun], null if it has
+     * not run in this process), so that the network coming back resumes it. A
+     * failure only the user retries holds nothing.
+     */
+    fun holdsForeground(
+        status: DownloadStatus,
+        network: NetworkKind,
+        meteredAllowed: Boolean,
+        toFetch: Long,
+        msSinceRun: Long?,
+    ): Boolean = when (status) {
+        DownloadStatus.Ready -> false
+        is DownloadStatus.Running -> true
+        is DownloadStatus.Failed, is DownloadStatus.Waiting -> when (next(status, network, meteredAllowed, toFetch)) {
+            Action.START -> true
+            Action.WAIT -> msSinceRun != null && msSinceRun < NETWORK_GRACE_MS
+            Action.STOP, Action.NOTHING -> false
         }
+    }
 }
 
 /**
@@ -111,7 +129,7 @@ data class DownloadNotice(val text: String, val bar: Bar) {
     }
 
     companion object {
-        /** Notification updates faster than this are dropped by the platform anyway. */
+        /** Well under the platform's limit on notification updates, which drops the excess. */
         const val MIN_INTERVAL_MS = 1_000L
 
         fun of(status: DownloadStatus, network: NetworkKind): DownloadNotice {

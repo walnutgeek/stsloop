@@ -98,8 +98,13 @@ class DownloadPolicyTest {
         )
     }
 
-    private fun holds(status: DownloadStatus, network: NetworkKind, meteredAllowed: Boolean = false, toFetch: Long = pending) =
-        DownloadPolicy.holdsForeground(status, network, meteredAllowed, toFetch)
+    private fun holds(
+        status: DownloadStatus,
+        network: NetworkKind,
+        meteredAllowed: Boolean = false,
+        toFetch: Long = pending,
+        msSinceRun: Long? = null,
+    ) = DownloadPolicy.holdsForeground(status, network, meteredAllowed, toFetch, msSinceRun)
 
     @Test
     fun `a running download holds the foreground, whatever the network`() {
@@ -115,6 +120,19 @@ class DownloadPolicyTest {
         assertEquals(true, holds(dropped, METERED, meteredAllowed = true))
         assertEquals(false, holds(dropped, METERED))
         assertEquals(false, holds(dropped, NONE))
+    }
+
+    @Test
+    fun `a download stopped for the network holds the foreground a while, so a Wi-Fi blip resumes it`() {
+        val grace = DownloadPolicy.NETWORK_GRACE_MS
+        val dropped = Failed(Reason.NETWORK, "interrupted", pending)
+        assertEquals(true, holds(dropped, NONE, msSinceRun = 0))
+        assertEquals(true, holds(waiting, METERED, msSinceRun = grace - 1))
+        assertEquals(false, holds(waiting, METERED, msSinceRun = grace))
+        assertEquals(false, holds(dropped, NONE, msSinceRun = grace))
+        assertEquals(false, holds(waiting, METERED), "never ran in this process")
+        assertEquals(false, holds(Failed(Reason.INTEGRITY, "mismatch", pending), UNMETERED, msSinceRun = 0))
+        assertEquals(false, holds(Ready, UNMETERED, msSinceRun = 0))
     }
 
     @Test

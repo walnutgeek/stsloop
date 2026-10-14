@@ -50,8 +50,14 @@ object ModelDownloads {
     private var appContext: Context? = null
     private var serviceStarted = false
 
-    /** The day's foreground time ran out ([ModelDownloadService.onTimeout]); cleared when the app is opened. */
+    /** The day's foreground time ran out, or a start was refused; cleared when the app is opened. */
     private var foregroundSpent = false
+
+    /** When the last run in this process ended short of Ready ([SystemClock.elapsedRealtime]), or null. */
+    private var ranUntil: Long? = null
+
+    /** Lets the foreground go once [DownloadPolicy.NETWORK_GRACE_MS] has passed. */
+    private val graceOver = Runnable { publish() }
 
     /** The one pending retry after a failure; re-posting replaces it rather than adding another. */
     private val retryLater = Runnable { appContext?.let(::apply) }
@@ -89,7 +95,7 @@ object ModelDownloads {
             watchNetwork(app)
             apply(app)
         }
-        notifyListeners()
+        publish()
     }
 
     /** The user's go-ahead to download over mobile data, for this process; also a retry after any failure. */
@@ -148,7 +154,7 @@ object ModelDownloads {
         val store = store(context)
         stopRequested = false
         status = DownloadStatus.Running(null)
-        notifyListeners()
+        publish()
         Log.i(TAG, "installing the speech models into ${store.root}: ${ModelStore.mb(store.pendingDownloadBytes())} to download")
         thread = Thread({ run(context, store) }, "stsloop-models").apply {
             isDaemon = true
@@ -169,7 +175,7 @@ object ModelDownloads {
                         main.post {
                             if (status is DownloadStatus.Running) {
                                 status = DownloadStatus.Running(p)
-                                notifyListeners()
+                                publish()
                             }
                         }
                     }
@@ -194,6 +200,7 @@ object ModelDownloads {
         main.post {
             thread = null
             status = outcome
+            ranUntil = if (outcome == DownloadStatus.Ready) null else SystemClock.elapsedRealtime()
             when {
                 outcome == DownloadStatus.Ready -> unwatchNetwork(context)
                 // A dropped connection on a network that has not changed: try again in a while,
@@ -201,7 +208,7 @@ object ModelDownloads {
                 outcome is DownloadStatus.Failed -> main.postDelayed(retryLater, RETRY_MS)
                 else -> apply(context)
             }
-            notifyListeners()
+            publish()
         }
     }
 
@@ -220,7 +227,7 @@ object ModelDownloads {
                     Log.i(TAG, "network now $kind")
                     network = kind
                     appContext?.let(::apply)
-                    notifyListeners()
+                    publish()
                 }
             }
         }
@@ -247,7 +254,8 @@ object ModelDownloads {
         syncForeground()
     }
 
-    internal fun foregroundTimedOut() {
+    /** No foreground service until the app is opened again: its time is used up, or a start was refused. */
+    internal fun foregroundUnavailable() {
         foregroundSpent = true
     }
 
@@ -255,8 +263,17 @@ object ModelDownloads {
     private fun syncForeground() {
         val app = appContext ?: return
         val s = status
-        val toFetch = if (s is DownloadStatus.Failed) s.pendingBytes else 0L
-        holdsForeground = DownloadPolicy.holdsForeground(s, network, meteredAllowed, toFetch)
+        val toFetch = when (s) {
+            is DownloadStatus.Failed -> s.pendingBytes
+            is DownloadStatus.Waiting -> s.pendingBytes
+            else -> 0L
+        }
+        val sinceRun = ranUntil?.let { SystemClock.elapsedRealtime() - it }
+        holdsForeground = DownloadPolicy.holdsForeground(s, network, meteredAllowed, toFetch, sinceRun)
+        main.removeCallbacks(graceOver)
+        if (holdsForeground && s !is DownloadStatus.Running && sinceRun != null) {
+            main.postDelayed(graceOver, (DownloadPolicy.NETWORK_GRACE_MS - sinceRun).coerceAtLeast(0) + 1)
+        }
         if (!holdsForeground || serviceStarted || foregroundSpent) return
         try {
             ModelDownloadService.start(app)
@@ -268,7 +285,8 @@ object ModelDownloads {
         }
     }
 
-    private fun notifyListeners() {
+    /** After any change of [status] or [network]: hold or release the foreground, then tell the listeners. */
+    private fun publish() {
         syncForeground()
         for (l in listeners.toList()) l()
     }

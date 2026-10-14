@@ -36,6 +36,7 @@ class ModelDownloadService : Service() {
     private var posted: DownloadNotice? = null
     private var postedAt = 0L
     private var stopped = false
+    private var started = false // in the foreground: until then, update() must not stop the service
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -61,9 +62,12 @@ class ModelDownloadService : Service() {
             runCatching {
                 startForeground(NOTIFICATION_ID, notification(notice), ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE)
             }.onFailure { Log.e(TAG, "cannot enter the foreground even briefly", it) }
+            ModelDownloads.foregroundUnavailable() // or ModelDownloads would start this again at once
+            started = true
             finish()
             return START_NOT_STICKY
         }
+        started = true
         posted = notice
         postedAt = SystemClock.elapsedRealtime()
         update()
@@ -73,13 +77,13 @@ class ModelDownloadService : Service() {
     /** The day's 6 hours of `dataSync` are used up. The download carries on while the app is open. */
     override fun onTimeout(startId: Int, fgsType: Int) {
         Log.w(TAG, "the model download's foreground time is used up for today")
-        ModelDownloads.foregroundTimedOut()
+        ModelDownloads.foregroundUnavailable()
         finish()
     }
 
     /** Main thread: follow [ModelDownloads]. */
     private fun update() {
-        if (stopped) return
+        if (stopped || !started) return
         if (!ModelDownloads.holdsForeground) {
             finish()
             return
