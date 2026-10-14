@@ -79,4 +79,59 @@ object DownloadPolicy {
             }
         }
     }
+
+    /**
+     * Whether the download needs the app kept in the foreground (a foreground
+     * service), so that Android does not freeze it once the screen is off:
+     * while it runs, and while a dropped connection waits for a retry the
+     * network allows. Waiting for Wi-Fi or for the user holds nothing; the
+     * next [next] that says [Action.START] holds it again.
+     */
+    fun holdsForeground(status: DownloadStatus, network: NetworkKind, meteredAllowed: Boolean, toFetch: Long): Boolean =
+        when (status) {
+            is DownloadStatus.Running -> true
+            is DownloadStatus.Failed -> next(status, network, meteredAllowed, toFetch) == Action.START
+            DownloadStatus.Ready, is DownloadStatus.Waiting -> false
+        }
+}
+
+/**
+ * What the download's notification shows while it holds the foreground: the
+ * screen's sentence ([DownloadStatus.describe]) and a progress bar.
+ */
+data class DownloadNotice(val text: String, val bar: Bar) {
+    sealed interface Bar {
+        /** No bar: nothing is in progress (a retry is pending). */
+        data object None : Bar
+
+        /** An indeterminate bar: working, with nothing to measure yet. */
+        data object Busy : Bar
+
+        data class Percent(val value: Int) : Bar
+    }
+
+    companion object {
+        /** Notification updates faster than this are dropped by the platform anyway. */
+        const val MIN_INTERVAL_MS = 1_000L
+
+        fun of(status: DownloadStatus, network: NetworkKind): DownloadNotice {
+            val bar = when (status) {
+                is DownloadStatus.Running -> {
+                    val p = status.progress
+                    if (p == null || p.phase == InstallProgress.Phase.VERIFYING || p.total <= 0) Bar.Busy
+                    else Bar.Percent((p.done * 100 / p.total).toInt().coerceIn(0, 100))
+                }
+                else -> Bar.None
+            }
+            return DownloadNotice(status.describe(network), bar)
+        }
+
+        /** Whether to post [next], given what was posted ([previous]) [msSince] ago. */
+        fun due(previous: DownloadNotice?, next: DownloadNotice, msSince: Long): Boolean = when {
+            previous == null -> true
+            previous == next -> false
+            previous.bar::class != next.bar::class -> true
+            else -> msSince >= MIN_INTERVAL_MS
+        }
+    }
 }

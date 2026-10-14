@@ -97,4 +97,32 @@ class DownloadPolicyTest {
             Failed(Reason.INTEGRITY, "x does not match", pending).describe(UNMETERED),
         )
     }
+
+    private fun holds(status: DownloadStatus, network: NetworkKind, meteredAllowed: Boolean = false, toFetch: Long = pending) =
+        DownloadPolicy.holdsForeground(status, network, meteredAllowed, toFetch)
+
+    @Test
+    fun `a running download holds the foreground, whatever the network`() {
+        assertEquals(true, holds(running, UNMETERED))
+        assertEquals(true, holds(running, NONE))
+        assertEquals(true, holds(Running(null), METERED))
+    }
+
+    @Test
+    fun `a dropped connection holds the foreground through its retry only when the network allows the retry`() {
+        val dropped = Failed(Reason.NETWORK, "interrupted", pending)
+        assertEquals(true, holds(dropped, UNMETERED))
+        assertEquals(true, holds(dropped, METERED, meteredAllowed = true))
+        assertEquals(false, holds(dropped, METERED))
+        assertEquals(false, holds(dropped, NONE))
+    }
+
+    @Test
+    fun `waiting, ready, or a failure only the user retries lets the foreground go`() {
+        assertEquals(false, holds(waiting, METERED))
+        assertEquals(false, holds(waiting, NONE))
+        assertEquals(false, holds(Ready, UNMETERED))
+        assertEquals(false, holds(Failed(Reason.INTEGRITY, "mismatch", pending), UNMETERED))
+        assertEquals(false, holds(Failed(Reason.STORAGE, "full", pending), UNMETERED))
+    }
 }

@@ -11,6 +11,8 @@
     <!-- The first-run download of the speech models (ModelDownloads), which waits for Wi-Fi. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- ModelDownloadService: keeps that download going with the screen off. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <!-- The echo speaks through the system TextToSpeech engine (package visibility, API 30+). -->
     <queries>
@@ -31,5 +33,12 @@
             android:name=".SessionService"
             android:exported="false"
             android:foregroundServiceType="microphone|shortService" />
+        <!-- The first-run model download, kept going with the screen off (#67). Typed dataSync;
+             shortService only for the moment a refused start must still call startForeground()
+             before stopping, as with SessionService. -->
+        <service
+            android:name=".speech.ModelDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|shortService" />
     </application>
 </manifest>
