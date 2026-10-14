@@ -51,26 +51,26 @@ class SessionMachineTest {
 
     @Test
     fun `Turn saved after stop ends the Session and keeps Start reachable`() {
-        assertEquals(Transition(NoSession, listOf(StopServiceKeepControls), sessionEnded = true), step(Saving, CaptureEnded))
+        assertEquals(Transition(NoSession, listOf(StopServiceKeepControls), captureEnded = true), step(Saving, CaptureEnded))
     }
 
     @Test
-    fun `Turn saved with a queued restart ends that Session and launches a new capture`() {
-        assertEquals(Transition(Capturing, listOf(LaunchCapture), sessionEnded = true), step(SavingThenRestart, CaptureEnded))
+    fun `Turn saved with a queued restart ends that capture and launches a new one`() {
+        assertEquals(Transition(Capturing, listOf(LaunchCapture), captureEnded = true), step(SavingThenRestart, CaptureEnded))
     }
 
     @Test
     fun `capture failing on its own ends the Session`() {
-        assertEquals(Transition(NoSession, listOf(StopServiceKeepControls), sessionEnded = true), step(Capturing, CaptureEnded))
+        assertEquals(Transition(NoSession, listOf(StopServiceKeepControls), captureEnded = true), step(Capturing, CaptureEnded))
     }
 
     @Test
-    fun `only the capture ending ends a Session, not the Stop that asks for it`() {
-        assertEquals(false, step(Capturing, Stop).sessionEnded)
-        assertEquals(false, step(SavingThenRestart, Stop).sessionEnded)
-        assertEquals(false, step(NoSession, Stop).sessionEnded)
-        assertEquals(false, step(NoSession, Start).sessionEnded)
-        assertEquals(false, step(NoSession, StartRefused(StartRefusal.MODELS)).sessionEnded)
+    fun `only the capture ending says the capture ended, not the Stop that asks for it`() {
+        assertEquals(false, step(Capturing, Stop).captureEnded)
+        assertEquals(false, step(SavingThenRestart, Stop).captureEnded)
+        assertEquals(false, step(NoSession, Stop).captureEnded)
+        assertEquals(false, step(NoSession, Start).captureEnded)
+        assertEquals(false, step(NoSession, StartRefused(StartRefusal.MODELS)).captureEnded)
     }
 
     @Test

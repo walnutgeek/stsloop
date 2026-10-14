@@ -94,23 +94,23 @@ class SessionService : Service() {
         /** True while a Session holds the microphone or is still writing its Turn. */
         val isActive: Boolean get() = state.isActive
 
-        private val listeners = mutableSetOf<(sessionEnded: Boolean) -> Unit>()
+        private val listeners = mutableSetOf<(captureEnded: Boolean) -> Unit>()
 
         /**
          * Main thread: call [listener] on the main thread after each change of [state], with
-         * `true` when a Session has just ended, its last Turn published (or abandoned) (#70).
+         * `true` when a capture has just ended, its last Turn published (or abandoned) (#70).
          * A screen registers while it is shown, and reads [state] when called.
          */
-        fun observe(listener: (sessionEnded: Boolean) -> Unit) {
+        fun observe(listener: (captureEnded: Boolean) -> Unit) {
             listeners += listener
         }
 
-        fun unobserve(listener: (sessionEnded: Boolean) -> Unit) {
+        fun unobserve(listener: (captureEnded: Boolean) -> Unit) {
             listeners -= listener
         }
 
-        private fun notifyListeners(sessionEnded: Boolean) {
-            for (l in listeners.toList()) l(sessionEnded)
+        private fun notifyListeners(captureEnded: Boolean) {
+            for (l in listeners.toList()) l(captureEnded)
         }
 
         /** Starts a Session. Call only from a visible activity with RECORD_AUDIO granted. */
@@ -256,7 +256,7 @@ class SessionService : Service() {
             }
         }
         postControls()
-        if (state != before || transition.sessionEnded) notifyListeners(transition.sessionEnded)
+        if (state != before || transition.captureEnded) notifyListeners(transition.captureEnded)
     }
 
     /** Show the current state's controls, unless the notification already does. */
@@ -494,7 +494,7 @@ class SessionService : Service() {
             state = SessionState.NoSession
             stopForeground(STOP_FOREGROUND_DETACH)
             postControls()
-            notifyListeners(sessionEnded = true)
+            notifyListeners(captureEnded = true)
         }
         super.onDestroy()
     }

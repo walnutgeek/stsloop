@@ -36,11 +36,11 @@ class MainActivity : Activity() {
     private var testMode: TestModePane? = null
     private lateinit var openSettings: Button
     private val modelsChanged: () -> Unit = { refreshModels() }
-    // The screen follows the Session's state (#70). When a Session ends its last Turn is
+    // The screen follows the Session's state (#70). When a capture ends its last Turn is
     // published, so the Corpus is re-listed too, in case the pane's watcher missed it (#68).
-    private val sessionChanged: (Boolean) -> Unit = { ended ->
+    private val sessionChanged: (Boolean) -> Unit = { captureEnded ->
         refresh()
-        if (ended) transcripts.load()
+        if (captureEnded) transcripts.load()
     }
     private var askedForNotifications = false // once per screen: a denial must not loop through onResume
 

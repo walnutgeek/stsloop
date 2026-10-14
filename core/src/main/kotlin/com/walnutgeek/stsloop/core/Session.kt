@@ -58,14 +58,15 @@ sealed interface SessionEffect {
 }
 
 /**
- * One step of the machine. [sessionEnded] is true when a Session's capture
+ * One step of the machine. [captureEnded] is true when a Session's capture
  * has ended, so its last Turn is published (or abandoned): the moment a screen
- * listing the Corpus should look again. Stop alone never ends a Session.
+ * listing the Corpus should look again. Stop only asks for that; the flag
+ * comes with [SessionEvent.CaptureEnded].
  */
 data class Transition(
     val state: SessionState,
     val effects: List<SessionEffect>,
-    val sessionEnded: Boolean = false,
+    val captureEnded: Boolean = false,
 )
 
 object SessionMachine {
@@ -87,9 +88,9 @@ object SessionMachine {
             }
             SessionEvent.CaptureEnded -> when (state) {
                 SessionState.SavingThenRestart ->
-                    Transition(SessionState.Capturing, listOf(SessionEffect.LaunchCapture), sessionEnded = true)
+                    Transition(SessionState.Capturing, listOf(SessionEffect.LaunchCapture), captureEnded = true)
                 SessionState.Capturing, SessionState.Saving ->
-                    Transition(SessionState.NoSession, listOf(SessionEffect.StopServiceKeepControls), sessionEnded = true)
+                    Transition(SessionState.NoSession, listOf(SessionEffect.StopServiceKeepControls), captureEnded = true)
                 else -> Transition(state, emptyList())
             }
         }
