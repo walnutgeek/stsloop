@@ -97,4 +97,50 @@ class DownloadPolicyTest {
             Failed(Reason.INTEGRITY, "x does not match", pending).describe(UNMETERED),
         )
     }
+
+    private fun holds(
+        status: DownloadStatus,
+        network: NetworkKind,
+        meteredAllowed: Boolean = false,
+        toFetch: Long = pending,
+        msSinceRun: Long? = null,
+    ) = DownloadPolicy.holdsForeground(status, network, meteredAllowed, toFetch, msSinceRun)
+
+    @Test
+    fun `a running download holds the foreground, whatever the network`() {
+        assertEquals(true, holds(running, UNMETERED))
+        assertEquals(true, holds(running, NONE))
+        assertEquals(true, holds(Running(null), METERED))
+    }
+
+    @Test
+    fun `a dropped connection holds the foreground through its retry only when the network allows the retry`() {
+        val dropped = Failed(Reason.NETWORK, "interrupted", pending)
+        assertEquals(true, holds(dropped, UNMETERED))
+        assertEquals(true, holds(dropped, METERED, meteredAllowed = true))
+        assertEquals(false, holds(dropped, METERED))
+        assertEquals(false, holds(dropped, NONE))
+    }
+
+    @Test
+    fun `a download stopped for the network holds the foreground a while, so a Wi-Fi blip resumes it`() {
+        val grace = DownloadPolicy.NETWORK_GRACE_MS
+        val dropped = Failed(Reason.NETWORK, "interrupted", pending)
+        assertEquals(true, holds(dropped, NONE, msSinceRun = 0))
+        assertEquals(true, holds(waiting, METERED, msSinceRun = grace - 1))
+        assertEquals(false, holds(waiting, METERED, msSinceRun = grace))
+        assertEquals(false, holds(dropped, NONE, msSinceRun = grace))
+        assertEquals(false, holds(waiting, METERED), "never ran in this process")
+        assertEquals(false, holds(Failed(Reason.INTEGRITY, "mismatch", pending), UNMETERED, msSinceRun = 0))
+        assertEquals(false, holds(Ready, UNMETERED, msSinceRun = 0))
+    }
+
+    @Test
+    fun `waiting, ready, or a failure only the user retries lets the foreground go`() {
+        assertEquals(false, holds(waiting, METERED))
+        assertEquals(false, holds(waiting, NONE))
+        assertEquals(false, holds(Ready, UNMETERED))
+        assertEquals(false, holds(Failed(Reason.INTEGRITY, "mismatch", pending), UNMETERED))
+        assertEquals(false, holds(Failed(Reason.STORAGE, "full", pending), UNMETERED))
+    }
 }

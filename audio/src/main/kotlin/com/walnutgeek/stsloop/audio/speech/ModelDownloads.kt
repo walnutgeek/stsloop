@@ -26,6 +26,11 @@ import java.io.File
  * when: by itself on Wi-Fi, over mobile data only once [allowMobileData] is
  * called. The download runs on a background thread while the process lives;
  * if the process dies, the next [ensure] resumes it from its partial file.
+ * While [holdsForeground], [ModelDownloadService] keeps the process from
+ * being frozen once the screen is off, and shows the progress. It can only be
+ * started while the app may start a foreground service (the app is open, in
+ * practice); a download that starts from the background runs as before, for
+ * as long as the process is not frozen.
  *
  * Main thread only, except [store] and [locate].
  */
@@ -43,6 +48,16 @@ object ModelDownloads {
     private var meteredAllowed = false
     private var callback: ConnectivityManager.NetworkCallback? = null
     private var appContext: Context? = null
+    private var serviceStarted = false
+
+    /** The day's foreground time ran out, or a start was refused; cleared when the app is opened. */
+    private var foregroundSpent = false
+
+    /** When the last run in this process ended short of Ready ([SystemClock.elapsedRealtime]), or null. */
+    private var ranUntil: Long? = null
+
+    /** Lets the foreground go once [DownloadPolicy.NETWORK_GRACE_MS] has passed. */
+    private val graceOver = Runnable { publish() }
 
     /** The one pending retry after a failure; re-posting replaces it rather than adding another. */
     private val retryLater = Runnable { appContext?.let(::apply) }
@@ -55,6 +70,10 @@ object ModelDownloads {
     var network: NetworkKind = NetworkKind.NONE
         private set
 
+    /** Whether the download needs [ModelDownloadService] now ([DownloadPolicy.holdsForeground]). */
+    var holdsForeground: Boolean = false
+        private set
+
     fun store(context: Context) = ModelStore(File(context.noBackupFilesDir, DIR), SpeechManifest.MANIFEST)
 
     /** The models a Session can load now, or null. Any thread; a few file checks. */
@@ -64,6 +83,7 @@ object ModelDownloads {
     fun ensure(context: Context) {
         val app = context.applicationContext
         appContext = app
+        foregroundSpent = false // opening the app renews the day's foreground time
         if (thread == null) {
             status = if (locate(app) != null) DownloadStatus.Ready else idleStatus(app)
         }
@@ -75,7 +95,7 @@ object ModelDownloads {
             watchNetwork(app)
             apply(app)
         }
-        notifyListeners()
+        publish()
     }
 
     /** The user's go-ahead to download over mobile data, for this process; also a retry after any failure. */
@@ -134,7 +154,7 @@ object ModelDownloads {
         val store = store(context)
         stopRequested = false
         status = DownloadStatus.Running(null)
-        notifyListeners()
+        publish()
         Log.i(TAG, "installing the speech models into ${store.root}: ${ModelStore.mb(store.pendingDownloadBytes())} to download")
         thread = Thread({ run(context, store) }, "stsloop-models").apply {
             isDaemon = true
@@ -155,7 +175,7 @@ object ModelDownloads {
                         main.post {
                             if (status is DownloadStatus.Running) {
                                 status = DownloadStatus.Running(p)
-                                notifyListeners()
+                                publish()
                             }
                         }
                     }
@@ -180,6 +200,7 @@ object ModelDownloads {
         main.post {
             thread = null
             status = outcome
+            ranUntil = if (outcome == DownloadStatus.Ready) null else SystemClock.elapsedRealtime()
             when {
                 outcome == DownloadStatus.Ready -> unwatchNetwork(context)
                 // A dropped connection on a network that has not changed: try again in a while,
@@ -187,7 +208,7 @@ object ModelDownloads {
                 outcome is DownloadStatus.Failed -> main.postDelayed(retryLater, RETRY_MS)
                 else -> apply(context)
             }
-            notifyListeners()
+            publish()
         }
     }
 
@@ -206,7 +227,7 @@ object ModelDownloads {
                     Log.i(TAG, "network now $kind")
                     network = kind
                     appContext?.let(::apply)
-                    notifyListeners()
+                    publish()
                 }
             }
         }
@@ -226,7 +247,47 @@ object ModelDownloads {
         else -> NetworkKind.METERED
     }
 
-    private fun notifyListeners() {
+    /** [ModelDownloadService] is gone. */
+    internal fun serviceStopped() {
+        serviceStarted = false
+        // It may have been on its way out just as the download needed it again.
+        syncForeground()
+    }
+
+    /** No foreground service until the app is opened again: its time is used up, or a start was refused. */
+    internal fun foregroundUnavailable() {
+        foregroundSpent = true
+    }
+
+    /** Start [ModelDownloadService] when the download needs it; the service stops itself once it does not. */
+    private fun syncForeground() {
+        val app = appContext ?: return
+        val s = status
+        val toFetch = when (s) {
+            is DownloadStatus.Failed -> s.pendingBytes
+            is DownloadStatus.Waiting -> s.pendingBytes
+            else -> 0L
+        }
+        val sinceRun = ranUntil?.let { SystemClock.elapsedRealtime() - it }
+        holdsForeground = DownloadPolicy.holdsForeground(s, network, meteredAllowed, toFetch, sinceRun)
+        main.removeCallbacks(graceOver)
+        if (holdsForeground && s !is DownloadStatus.Running && sinceRun != null) {
+            main.postDelayed(graceOver, (DownloadPolicy.NETWORK_GRACE_MS - sinceRun).coerceAtLeast(0) + 1)
+        }
+        if (!holdsForeground || serviceStarted || foregroundSpent) return
+        try {
+            ModelDownloadService.start(app)
+            serviceStarted = true
+        } catch (e: RuntimeException) {
+            // ForegroundServiceStartNotAllowedException: started from the background. The
+            // download still runs, but only for as long as Android lets the process run.
+            Log.w(TAG, "the model download runs without a foreground service", e)
+        }
+    }
+
+    /** After any change of [status] or [network]: hold or release the foreground, then tell the listeners. */
+    private fun publish() {
+        syncForeground()
         for (l in listeners.toList()) l()
     }
 }

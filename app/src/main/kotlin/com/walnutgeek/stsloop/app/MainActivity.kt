@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
 import android.view.WindowInsets
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -34,6 +35,7 @@ class MainActivity : Activity() {
     private var testMode: TestModePane? = null
     private lateinit var openSettings: Button
     private val modelsChanged: () -> Unit = { refreshModels() }
+    private var askedForNotifications = false // once per screen: a denial must not loop through onResume
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -191,6 +193,17 @@ class MainActivity : Activity() {
         if (requestCode == REQUEST_PERMISSIONS) launchSession()
     }
 
+    /**
+     * The download's progress shows in a notification once the screen is off (#67),
+     * so ask for notifications when one starts. The download runs either way.
+     */
+    private fun askForDownloadNotifications() {
+        if (askedForNotifications || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        askedForNotifications = true
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
+    }
+
     private fun gate() = StartGate.check(
         micGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED,
         controlsVisible = SessionService.controlsVisible(this),
@@ -208,6 +221,14 @@ class MainActivity : Activity() {
     /** Hidden once the models are in place; until then, how far the download is, and its one action. */
     private fun refreshModels() {
         val s = ModelDownloads.status
+        // While it runs, the screen stays on as long as this activity is visible. Set only on a
+        // change: every set is a window update, and this runs on each progress report.
+        val running = s is DownloadStatus.Running
+        val keepOn = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        if (running != (window.attributes.flags and keepOn != 0)) {
+            if (running) window.addFlags(keepOn) else window.clearFlags(keepOn)
+        }
+        if (running) askForDownloadNotifications()
         models.visibility = if (s == DownloadStatus.Ready) TextView.GONE else TextView.VISIBLE
         models.text = s.describe(ModelDownloads.network)
         val retry = s is DownloadStatus.Failed && ModelDownloads.network != NetworkKind.NONE
@@ -284,6 +305,7 @@ class MainActivity : Activity() {
 
     private companion object {
         const val REQUEST_PERMISSIONS = 1
+        const val REQUEST_NOTIFICATIONS = 2
         // Test-mode config reads and writes, off the main thread; one for the process.
         val io: java.util.concurrent.ExecutorService =
             java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "stsloop-testmode").apply { isDaemon = true } }
