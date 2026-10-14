@@ -18,6 +18,7 @@ import com.walnutgeek.stsloop.audio.SessionService
 import com.walnutgeek.stsloop.audio.speech.ModelDownloads
 import com.walnutgeek.stsloop.core.models.DownloadStatus
 import com.walnutgeek.stsloop.core.models.NetworkKind
+import com.walnutgeek.stsloop.core.SessionScreen
 import com.walnutgeek.stsloop.core.StartGate
 import com.walnutgeek.stsloop.core.StartRefusal
 import com.walnutgeek.stsloop.core.testmode.TestConfig
@@ -35,6 +36,12 @@ class MainActivity : Activity() {
     private var testMode: TestModePane? = null
     private lateinit var openSettings: Button
     private val modelsChanged: () -> Unit = { refreshModels() }
+    // The screen follows the Session's state (#70). When a capture ends its last Turn is
+    // published, so the Corpus is re-listed too, in case the pane's watcher missed it (#68).
+    private val sessionChanged: (Boolean) -> Unit = { captureEnded ->
+        refresh()
+        if (captureEnded) transcripts.load()
+    }
     private var askedForNotifications = false // once per screen: a denial must not loop through onResume
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -119,12 +126,14 @@ class MainActivity : Activity() {
         NameCheck.request(this, "app opened")
         ModelDownloads.observe(modelsChanged)
         ModelDownloads.ensure(this)
+        SessionService.observe(sessionChanged)
         refresh()
         transcripts.start()
     }
 
     override fun onPause() {
         ModelDownloads.unobserve(modelsChanged)
+        SessionService.unobserve(sessionChanged)
         transcripts.stop()
         super.onPause()
     }
@@ -179,13 +188,12 @@ class MainActivity : Activity() {
             status.text = "Could not start a Session: ${e.message}"
             return
         }
-        toggle.postDelayed(::refresh, 300)
+        // The screen follows: sessionChanged refreshes it once the service commits the Start.
     }
 
+    /** The screen follows: sessionChanged refreshes it, and re-lists the Corpus once the Session has ended. */
     private fun stopSession() {
         SessionService.stop(this)
-        // Also re-list the Corpus, in case a Turn the Session published was missed (#68).
-        toggle.postDelayed({ refresh(); transcripts.load() }, 500)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -211,9 +219,11 @@ class MainActivity : Activity() {
     )
 
     private fun refresh() {
-        toggle.text = if (SessionService.isActive) "Stop Session" else "Start Session"
+        val screen = SessionScreen.of(SessionService.state)
+        toggle.text = screen.toggle
+        toggle.isEnabled = screen.toggleEnabled
         settings.visibility = if (SessionService.controlsVisible(this)) Button.GONE else Button.VISIBLE
-        status.text = if (SessionService.isActive) "Session active." else "No Session."
+        status.text = screen.status
         refreshModels()
         testMode?.refresh()
     }

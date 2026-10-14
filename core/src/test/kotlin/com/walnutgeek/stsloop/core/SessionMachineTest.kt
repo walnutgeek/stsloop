@@ -51,17 +51,26 @@ class SessionMachineTest {
 
     @Test
     fun `Turn saved after stop ends the Session and keeps Start reachable`() {
-        assertEquals(Transition(NoSession, listOf(StopServiceKeepControls)), step(Saving, CaptureEnded))
+        assertEquals(Transition(NoSession, listOf(StopServiceKeepControls), captureEnded = true), step(Saving, CaptureEnded))
     }
 
     @Test
-    fun `Turn saved with a queued restart launches a new capture`() {
-        assertEquals(Transition(Capturing, listOf(LaunchCapture)), step(SavingThenRestart, CaptureEnded))
+    fun `Turn saved with a queued restart ends that capture and launches a new one`() {
+        assertEquals(Transition(Capturing, listOf(LaunchCapture), captureEnded = true), step(SavingThenRestart, CaptureEnded))
     }
 
     @Test
     fun `capture failing on its own ends the Session`() {
-        assertEquals(Transition(NoSession, listOf(StopServiceKeepControls)), step(Capturing, CaptureEnded))
+        assertEquals(Transition(NoSession, listOf(StopServiceKeepControls), captureEnded = true), step(Capturing, CaptureEnded))
+    }
+
+    @Test
+    fun `only the capture ending says the capture ended, not the Stop that asks for it`() {
+        assertEquals(false, step(Capturing, Stop).captureEnded)
+        assertEquals(false, step(SavingThenRestart, Stop).captureEnded)
+        assertEquals(false, step(NoSession, Stop).captureEnded)
+        assertEquals(false, step(NoSession, Start).captureEnded)
+        assertEquals(false, step(NoSession, StartRefused(StartRefusal.MODELS)).captureEnded)
     }
 
     @Test
@@ -96,26 +105,56 @@ class SessionMachineTest {
 
     @Test
     fun `controls offer exactly one action, the one that moves things forward`() {
-        assertEquals(SessionControls("No Session", SessionAction.START), SessionControls.of(NoSession))
-        assertEquals(SessionControls("Listening", SessionAction.STOP), SessionControls.of(Capturing))
-        assertEquals(SessionControls("Saving Turn", SessionAction.START), SessionControls.of(Saving))
-        assertEquals(SessionControls("Restarting", SessionAction.STOP), SessionControls.of(SavingThenRestart))
+        assertEquals(SessionControls("No Session", SessionAction.START, SessionIcon.IDLE), SessionControls.of(NoSession))
+        assertEquals(SessionControls("Listening", SessionAction.STOP, SessionIcon.MIC), SessionControls.of(Capturing))
+        assertEquals(SessionControls("Saving Turn", SessionAction.START, SessionIcon.MIC), SessionControls.of(Saving))
+        assertEquals(SessionControls("Restarting", SessionAction.STOP, SessionIcon.MIC), SessionControls.of(SavingThenRestart))
+    }
+
+    @Test
+    fun `the mic icon shows only while a Session is active`() {
+        assertEquals(SessionIcon.IDLE, SessionControls.of(NoSession).icon)
+        assertEquals(SessionIcon.IDLE, SessionControls.of(StartBlocked(StartRefusal.MICROPHONE)).icon)
+        for (active in listOf(Capturing, Saving, SavingThenRestart)) assertEquals(SessionIcon.MIC, SessionControls.of(active).icon)
     }
 
     @Test
     fun `a blocked start points at the app, which can fix it`() {
         assertEquals(
-            SessionControls("Microphone permission needed. Open the app.", SessionAction.OPEN_APP),
+            SessionControls("Microphone permission needed. Open the app.", SessionAction.OPEN_APP, SessionIcon.IDLE),
             SessionControls.of(StartBlocked(StartRefusal.MICROPHONE)),
         )
         assertEquals(
-            SessionControls("Could not start from here. Open the app.", SessionAction.OPEN_APP),
+            SessionControls("Could not start from here. Open the app.", SessionAction.OPEN_APP, SessionIcon.IDLE),
             SessionControls.of(StartBlocked(StartRefusal.NOT_ALLOWED)),
         )
         assertEquals(
-            SessionControls("Speech models not downloaded yet. Open the app.", SessionAction.OPEN_APP),
+            SessionControls("Speech models not downloaded yet. Open the app.", SessionAction.OPEN_APP, SessionIcon.IDLE),
             SessionControls.of(StartBlocked(StartRefusal.MODELS)),
         )
+    }
+}
+
+class SessionScreenTest {
+    @Test
+    fun `with no Session the screen offers Start`() {
+        assertEquals(SessionScreen("Start Session", true, "No Session."), SessionScreen.of(NoSession))
+        assertEquals(SessionScreen("Start Session", true, "No Session."), SessionScreen.of(StartBlocked(StartRefusal.MODELS)))
+    }
+
+    @Test
+    fun `a capturing Session offers Stop`() {
+        assertEquals(SessionScreen("Stop Session", true, "Session active."), SessionScreen.of(Capturing))
+    }
+
+    @Test
+    fun `after Stop the screen says the last Turn is being saved, not that the Session is still on`() {
+        assertEquals(SessionScreen("Stopping…", false, "Saving the last Turn."), SessionScreen.of(Saving))
+    }
+
+    @Test
+    fun `a queued restart can still be stopped`() {
+        assertEquals(SessionScreen("Stop Session", true, "Saving the last Turn, then starting again."), SessionScreen.of(SavingThenRestart))
     }
 }
 
