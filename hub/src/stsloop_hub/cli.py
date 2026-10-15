@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import TextIO
 
 from . import alerts, claude_settings, config, herdr, hook_server, pairing, summary, tailnet
+from . import protocol as p
 from .alerts import Mutes
 from .agents import AgentsProvider
 from .claude_code import Sessions
@@ -328,7 +329,7 @@ def _herdr(env: Mapping[str, str], saved: str | None, probe: Callable[[str], her
     found = probe(path)
     if found.answers:
         print(f"stsloop-hub: herdr {found.describe()} answers; one Bucket per agent", file=err)
-    elif found.code == "protocol_mismatch":
+    elif found.code == p.HERDR_PROTOCOL_MISMATCH:
         print(f"stsloop-hub: warning: herdr {found.describe()} does not speak the running herdr server's protocol, "
               "so no agents are published from herdr. Run `stsloop-hub init` to find the herdr that does.", file=err)
     else:
@@ -349,7 +350,7 @@ def _find_herdr(cfg: config.HubConfig, env: Mapping[str, str], probe: Callable[[
     for t in tried:
         if t.answers:
             continue
-        if t.code == "protocol_mismatch":
+        if t.code == p.HERDR_PROTOCOL_MISMATCH:
             print(f"herdr {t.describe()} does not speak the running herdr server's protocol; skipped.", file=out)
         else:
             print(f"herdr {t.describe()} does not answer: {t.error}", file=out)
@@ -358,7 +359,7 @@ def _find_herdr(cfg: config.HubConfig, env: Mapping[str, str], probe: Callable[[
         print(f"herdr {found.describe()} answers the running herdr server; serve will use it.", file=out)
         return
     kept = f" serve keeps using {cfg.herdr}." if cfg.herdr else ""
-    if all(t.code == "protocol_mismatch" for t in tried):
+    if all(t.code == p.HERDR_PROTOCOL_MISMATCH for t in tried):
         print("stsloop-hub: no herdr here speaks the running herdr server's protocol: update herdr, then run "
               f"init again.{kept}", file=err)
     else:

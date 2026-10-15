@@ -7,7 +7,7 @@ import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
 import com.walnutgeek.stsloop.core.hub.Drafts
 import com.walnutgeek.stsloop.core.hub.HubReport
-import com.walnutgeek.stsloop.core.hub.HubReports
+import com.walnutgeek.stsloop.core.hub.StatusQueries
 import com.walnutgeek.stsloop.core.summary.BucketSummaries
 import com.walnutgeek.stsloop.core.summary.NoteSource
 import com.walnutgeek.stsloop.core.summary.SummaryMarks
@@ -65,11 +65,11 @@ class CorpusSink(
     /** This Session's Drafts; shared with whatever hears the hub's answers to their sends. */
     private val drafts: Drafts = Drafts(send = { false }, say = {}, clockMs = { 0L }),
     /**
-     * Answers "hub status" or "hub details" ([HubReports.ask]); returns what to
+     * Answers "hub status" or "hub details" ([StatusQueries.ask]); returns what to
      * say now, or null when the hub was asked and its report will be said.
-     * Must return at once.
+     * Called on the writing thread: it may read the phone's own files, never wait on the hub.
      */
-    private val hubReport: (HubReports.Detail) -> String? = { HubReport.NO_HUB },
+    private val hubReport: (StatusQueries.Detail) -> String? = { HubReport.NO_HUB },
     /** This Session's summaries ("summarize bucket"); by default over no Corpus and no hub. */
     private val summaries: BucketSummaries = BucketSummaries(NoteSource.NONE, SummaryMarks(null), { false }, { false }, { _, _ -> }, { 0L }),
     private val listener: Listener,

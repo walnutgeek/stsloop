@@ -94,7 +94,7 @@ POLL_S = 2.0
 #: Polls herdr may fail in a row before its agents' Buckets go.
 GRACE = 3
 #: herdr's error code for a client binary that does not speak the running server's protocol.
-MISMATCH = "protocol_mismatch"
+MISMATCH = p.HERDR_PROTOCOL_MISMATCH
 
 NOT_ANSWERING = "herdr is not answering."
 NOTHING_BLOCKED = "nothing is blocked."
@@ -277,8 +277,8 @@ class AgentsProvider:
                 log.info("herdr did not answer (%d in a row): %s", self._failures, e)
                 return False
             if (self._answering or self._first) and e.code == MISMATCH:
-                log.warning("herdr is not answering: %s. The herdr binary the hub runs is not the running herdr "
-                            "server's version: run `stsloop-hub init` to find the one that is", e)
+                log.warning("herdr does not speak the running herdr server's protocol (%s): run `stsloop-hub init` "
+                            "to find the herdr binary that does", e)
             elif self._answering or self._first:
                 log.warning("herdr is not answering: %s", e)
             self._answering, self._first = False, False
@@ -396,7 +396,7 @@ class AgentsProvider:
             else:
                 primitives, commands = ("request", "speak_item"), (STATUS, READ, SEND_NEEDS_HERDR)
             out.append(p.Descriptor(
-                id=bucket_id, name=name, aliases=aliases, type="agent", primitives=primitives, commands=commands,
+                id=bucket_id, name=name, aliases=aliases, type=p.AGENT, primitives=primitives, commands=commands,
             ))
         return tuple(out)
 

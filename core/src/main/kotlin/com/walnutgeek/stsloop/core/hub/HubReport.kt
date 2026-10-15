@@ -14,22 +14,25 @@ data class HubFacts(
     /** The agent Buckets in the last snapshot of Descriptors ([HubReport.agents]); null when the phone has none. */
     val agents: Int?,
     /** How many Turns wait to upload to the hub; null when that is not known (or not asked: "hub status"). */
-    val backlog: Int?,
+    val toUpload: Int?,
     /** Wall time now, in milliseconds. */
     val nowMs: Long,
 ) {
     companion object {
         /**
          * The facts as [store] keeps them, for a link at [status]: `reach.json`,
-         * the cached Descriptors, and, when [backlog] is asked for, the Turns of
-         * [corpus] the hub has not acknowledged. Reads files: not for a thread
-         * the loop waits on. A file that cannot be read leaves its fact unknown.
+         * the cached Descriptors, and, when [toUpload] is asked for, the Turns of
+         * [corpus] the hub has not acknowledged. Reads files: for the writing
+         * (STT) thread, never the capture thread or the hub connection's. A file
+         * that cannot be read leaves its fact unknown. The hub was last there
+         * when its last welcomed connection ended; if the app stopped before it
+         * saw that end, when that connection began ([HubReach.lastSeenAtMs]).
          */
-        fun read(status: HubStatus, offline: Boolean, store: HubStore, corpus: UploadSource?, backlog: Boolean, nowMs: Long) =
+        fun read(status: HubStatus, offline: Boolean, store: HubStore, corpus: UploadSource?, toUpload: Boolean, nowMs: Long) =
             HubFacts(
                 status, offline, store.reach(),
-                agents = runCatching { HubReport.agents(store.descriptors()) }.getOrNull(),
-                backlog = if (!backlog || corpus == null || status == HubStatus.Unpaired) {
+                agents = runCatching { store.descriptors()?.let(HubReport::agents) }.getOrNull(),
+                toUpload = if (!toUpload || corpus == null || status == HubStatus.Unpaired) {
                     null
                 } else {
                     runCatching { store.uploads().uploaded().let { done -> corpus.turns().count { it !in done } } }.getOrNull()
@@ -97,11 +100,11 @@ object HubReport {
                 facts.agents?.takeIf { facts.reach.lastSeenAtMs != null }?.let { "last saw ${count(it.toLong(), "agent")}." },
             )
         }
-        return (parts + listOfNotNull(facts.backlog?.let(::backlog))).joinToString(" ")
+        return (parts + listOfNotNull(facts.toUpload?.let(::toUpload))).joinToString(" ")
     }
 
-    /** How many agent Buckets [descriptors] holds; null without a snapshot. */
-    fun agents(descriptors: Descriptors?): Int? = descriptors?.buckets?.count { it.type == AGENT }
+    /** How many agent Buckets [descriptors] holds. */
+    fun agents(descriptors: Descriptors): Int = descriptors.buckets.count { it.type == AGENT }
 
     /** How long [ms] is, in words a TTS engine reads well: "for 12 minutes", "for 1 hour 5 minutes", "for 3 days". */
     fun duration(ms: Long): String {
@@ -131,7 +134,7 @@ object HubReport {
         else -> "herdr ${h.state.replace('_', ' ')}."
     }
 
-    private fun backlog(n: Int): String = when (n) {
+    private fun toUpload(n: Int): String = when (n) {
         0 -> "no Turns wait to upload."
         1 -> "1 Turn waits to upload."
         else -> "$n Turns wait to upload."

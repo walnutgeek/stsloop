@@ -39,7 +39,7 @@ import com.walnutgeek.stsloop.core.turn.SttTiming
 import com.walnutgeek.stsloop.core.Wav
 import com.walnutgeek.stsloop.core.hub.CorpusDirectory
 import com.walnutgeek.stsloop.core.hub.HubFacts
-import com.walnutgeek.stsloop.core.hub.HubReports
+import com.walnutgeek.stsloop.core.hub.StatusQueries
 import com.walnutgeek.stsloop.core.hub.HubStore
 import com.walnutgeek.stsloop.core.hub.HubStartNotice
 import com.walnutgeek.stsloop.core.hub.HubStatus
@@ -428,7 +428,7 @@ class SessionService : Service() {
                 hubFacts = { detail ->
                     HubFacts.read(
                         hubLink.status, hubLink.offline, hubStore, CorpusDirectory(corpusDir(this)),
-                        backlog = detail == HubReports.Detail.LONG, nowMs = System.currentTimeMillis(),
+                        toUpload = detail == StatusQueries.Detail.LONG, nowMs = System.currentTimeMillis(),
                     )
                 },
                 testOf = testMode?.let { t -> t::turnTest },

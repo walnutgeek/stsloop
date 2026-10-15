@@ -18,7 +18,7 @@ import com.walnutgeek.stsloop.core.hub.HubProvider
 import com.walnutgeek.stsloop.core.hub.Drafts
 import com.walnutgeek.stsloop.core.hub.HubFacts
 import com.walnutgeek.stsloop.core.hub.HubReach
-import com.walnutgeek.stsloop.core.hub.HubReports
+import com.walnutgeek.stsloop.core.hub.StatusQueries
 import com.walnutgeek.stsloop.core.hub.HubRequests
 import com.walnutgeek.stsloop.core.hub.HubStatus
 import com.walnutgeek.stsloop.core.hub.StatusReport
@@ -127,7 +127,7 @@ class TurnCapture(
      * What the phone knows of its hub for "hub status" and "hub details"
      * (#75); called on the STT thread, so it may read files.
      */
-    hubFacts: (HubReports.Detail) -> HubFacts = { HubFacts(HubStatus.Unpaired, true, HubReach.EMPTY, null, null, System.currentTimeMillis()) },
+    hubFacts: (StatusQueries.Detail) -> HubFacts = { HubFacts(HubStatus.Unpaired, true, HubReach.EMPTY, null, null, System.currentTimeMillis()) },
     /** Test mode (#27): each Turn's `test` block, computed on the STT thread; null outside test mode. */
     testOf: ((Utterance) -> TurnTest?)? = null,
     /** Speaks each Turn's echo, reporting its end through [spoken]; null means no echo, and the mic never closes. */
@@ -223,13 +223,13 @@ class TurnCapture(
         },
     )
 
-    private val reports = HubReports(
+    private val reports = StatusQueries(
         send = hubSend,
         say = { text -> if (!ending) loop.announce(text) },
         facts = hubFacts,
         clockMs = SystemClock::elapsedRealtime,
-        listener = object : HubReports.Listener {
-            override fun asked(request: StatusRequest, detail: HubReports.Detail) {
+        listener = object : StatusQueries.Listener {
+            override fun asked(request: StatusRequest, detail: StatusQueries.Detail) {
                 Log.i(TAG, "Session $sessionId: asked the hub how it is (${request.id}, ${detail.name.lowercase()})")
             }
 

@@ -53,15 +53,15 @@ class HubStatusCommandTest {
         val said = mutableListOf<String>()
         val turns = mutableListOf<Turn>()
         val sent = mutableListOf<Message>()
-        val asked = mutableListOf<HubReports.Detail>()
+        val asked = mutableListOf<StatusQueries.Detail>()
         var nowMs = 0L
         private var at = 0L
-        val reports = HubReports(
+        val reports = StatusQueries(
             send = { m -> status is HubStatus.Online && sent.add(m) },
             say = { said += it },
             facts = { detail ->
                 asked += detail
-                HubFacts(status, offline, reach, HubReport.agents(herdr), backlog = if (detail == HubReports.Detail.LONG) 2 else null, nowMs = now)
+                HubFacts(status, offline, reach, HubReport.agents(herdr), toUpload = if (detail == StatusQueries.Detail.LONG) 2 else null, nowMs = now)
             },
             clockMs = { nowMs },
             newId = { "b7e2d4" },
@@ -122,7 +122,7 @@ class HubStatusCommandTest {
         assertTrue("\"name\": \"hub_status\"" in TurnJson.encode(turn), TurnJson.encode(turn))
         s.hubSays("status_report/herdr.json")
         assertEquals(listOf("hub connected, 3 agents, 1 blocked."), s.said)
-        assertEquals(listOf(HubReports.Detail.SHORT), s.asked, "the backlog is counted only for hub details")
+        assertEquals(listOf(StatusQueries.Detail.SHORT), s.asked, "the Turns to upload are counted only for hub details")
     }
 
     @Test
@@ -170,11 +170,11 @@ class HubStatusCommandTest {
     @Test
     fun `a link that drops as it is asked says hub offline`() {
         // The facts still say online, as they may in the moment the link drops, but the send fails.
-        val reports = HubReports(
+        val reports = StatusQueries(
             send = { false }, say = {}, clockMs = { 0 },
             facts = { HubFacts(HubStatus.Online(welcome), false, HubReach.EMPTY, 0, null, now) },
         )
-        assertEquals(SessionCommands.HUB_OFFLINE, reports.ask(HubReports.Detail.SHORT))
+        assertEquals(SessionCommands.HUB_OFFLINE, reports.ask(StatusQueries.Detail.SHORT))
         assertEquals(0, reports.pending)
     }
 

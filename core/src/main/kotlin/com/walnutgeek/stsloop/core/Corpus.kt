@@ -227,7 +227,7 @@ enum class Command(val json: String, val phrases: List<String>) {
 
     /**
      * Says how the hub is, at length: the last failure, herdr, the hooks, the
-     * upload backlog (#75). The recogniser often hears "hub" in "hub status"
+     * Turns waiting to upload (#75). The recogniser often hears "hub" in "hub status"
      * and "hub details" as "hob" or "hog"; the other phrases it hears every
      * time (the recognisability check, #49).
      */

@@ -13,13 +13,13 @@ class HubReportTest {
     private val minute = 60_000L
     private val now = 1_760_000_000_000L
 
-    private fun online(connectedMinutesAgo: Long = 40, backlog: Int? = 3) = HubFacts(
+    private fun online(connectedMinutesAgo: Long = 40, toUpload: Int? = 3) = HubFacts(
         HubStatus.Online(welcome), offline = false, reach = HubReach.EMPTY.connected(now - connectedMinutesAgo * minute),
-        agents = 3, backlog = backlog, nowMs = now,
+        agents = 3, toUpload = toUpload, nowMs = now,
     )
 
-    private fun offline(reach: HubReach, agents: Int? = 6, status: HubStatus = HubStatus.Offline("x", unreachable), backlog: Int? = 3) =
-        HubFacts(status, offline = true, reach = reach, agents = agents, backlog = backlog, nowMs = now)
+    private fun offline(reach: HubReach, agents: Int? = 6, status: HubStatus = HubStatus.Offline("x", unreachable), toUpload: Int? = 3) =
+        HubFacts(status, offline = true, reach = reach, agents = agents, toUpload = toUpload, nowMs = now)
 
     @Test
     fun `online, short`() {
@@ -53,7 +53,7 @@ class HubReportTest {
     @Test
     fun `online, long, each herdr state and the hooks`() {
         val bare = StatusReport("r", agents = 0, blocked = 0)
-        fun said(h: HerdrReport?, hooks: Boolean? = null) = HubReport.long(online(backlog = null), bare.copy(herdr = h, hooksInstalled = hooks))
+        fun said(h: HerdrReport?, hooks: Boolean? = null) = HubReport.long(online(toUpload = null), bare.copy(herdr = h, hooksInstalled = hooks))
         assertEquals("hub connected for 40 minutes. no agents.", said(null))
         assertEquals("hub connected for 40 minutes. no agents. herdr ok.", said(HerdrReport(HerdrReport.OK)))
         assertEquals("hub connected for 40 minutes. no agents. herdr protocol mismatch.", said(HerdrReport(HerdrReport.PROTOCOL_MISMATCH, "0.8.2")))
@@ -67,14 +67,14 @@ class HubReportTest {
     @Test
     fun `online, long, a hub that has not told the phone when it connected`() {
         val facts = online().copy(reach = HubReach.EMPTY)
-        assertEquals("hub connected. 3 agents, 1 blocked.", HubReport.long(facts.copy(backlog = null), herdr.copy(herdr = null, hooksInstalled = null)))
+        assertEquals("hub connected. 3 agents, 1 blocked.", HubReport.long(facts.copy(toUpload = null), herdr.copy(herdr = null, hooksInstalled = null)))
     }
 
     @Test
-    fun `the upload backlog`() {
+    fun `the Turns waiting to upload`() {
         val bare = StatusReport("r", agents = 0, blocked = 0)
-        assertEquals("hub connected for 40 minutes. no agents. no Turns wait to upload.", HubReport.long(online(backlog = 0), bare))
-        assertEquals("hub connected for 40 minutes. no agents. 1 Turn waits to upload.", HubReport.long(online(backlog = 1), bare))
+        assertEquals("hub connected for 40 minutes. no agents. no Turns wait to upload.", HubReport.long(online(toUpload = 0), bare))
+        assertEquals("hub connected for 40 minutes. no agents. 1 Turn waits to upload.", HubReport.long(online(toUpload = 1), bare))
     }
 
     @Test
@@ -105,7 +105,7 @@ class HubReportTest {
         )
         assertEquals(
             "hub offline for 1 hour 5 minutes. last saw 6 agents.",
-            HubReport.long(offline(lost, status = HubStatus.Offline("closed 1006"), backlog = null), null),
+            HubReport.long(offline(lost, status = HubStatus.Offline("closed 1006"), toUpload = null), null),
             "lost, and no retry has failed yet",
         )
     }
@@ -119,7 +119,7 @@ class HubReportTest {
 
     @Test
     fun `no hub paired`() {
-        val facts = HubFacts(HubStatus.Unpaired, offline = true, reach = HubReach.EMPTY, agents = null, backlog = null, nowMs = now)
+        val facts = HubFacts(HubStatus.Unpaired, offline = true, reach = HubReach.EMPTY, agents = null, toUpload = null, nowMs = now)
         assertEquals("no hub paired.", HubReport.short(facts, null))
         assertEquals("no hub paired. pair one in settings.", HubReport.long(facts, null))
     }
@@ -154,10 +154,10 @@ class HubReportTest {
             override fun audio(name: String, offset: Long, length: Int) = throw UnsupportedOperationException()
         }
         val offline = HubStatus.Offline("x", unreachable)
-        assertEquals(HubFacts(offline, true, HubReach.EMPTY.connected(5).left(9), 3, 1, now), HubFacts.read(offline, true, store, corpus, backlog = true, nowMs = now))
-        assertEquals(null, HubFacts.read(offline, true, store, corpus, backlog = false, nowMs = now).backlog, "hub status does not count")
+        assertEquals(HubFacts(offline, true, HubReach.EMPTY.connected(5).left(9), 3, 1, now), HubFacts.read(offline, true, store, corpus, toUpload = true, nowMs = now))
+        assertEquals(null, HubFacts.read(offline, true, store, corpus, toUpload = false, nowMs = now).toUpload, "hub status does not count")
         File(files, "hub/${HubStore.DESCRIPTORS}").writeText("garbage")
-        assertEquals(null, HubFacts.read(offline, true, store, null, backlog = true, nowMs = now).agents, "an unreadable cache")
+        assertEquals(null, HubFacts.read(offline, true, store, null, toUpload = true, nowMs = now).agents, "an unreadable cache")
     }
 
     @Test
@@ -165,6 +165,5 @@ class HubReportTest {
         val herdrBuckets = Protocol.decode(Fixtures.text("v1", "descriptors/herdr.json")) as Descriptors
         assertEquals(3, HubReport.agents(herdrBuckets))
         assertEquals(0, HubReport.agents(Protocol.decode(Fixtures.text("v1", "descriptors/stub.json")) as Descriptors))
-        assertEquals(null, HubReport.agents(null))
     }
 }

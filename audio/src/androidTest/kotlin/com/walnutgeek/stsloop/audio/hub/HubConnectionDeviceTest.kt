@@ -304,7 +304,7 @@ class HubConnectionDeviceTest {
         assertTrue(c.send(StatusRequest("d2")))
         assertTrue("no report within ${HubRequests.REPLY_TIMEOUT_MS} ms", answered.await(HubRequests.REPLY_TIMEOUT_MS, TimeUnit.MILLISECONDS))
         assertEquals("d2", report!!.id)
-        val facts = HubFacts.read(c.status, c.offline, store, null, backlog = false, nowMs = System.currentTimeMillis())
+        val facts = HubFacts.read(c.status, c.offline, store, null, toUpload = false, nowMs = System.currentTimeMillis())
         val said = HubReport.short(facts, report)
         Log.i("HubConnectionDeviceTest", "hub status: $report: \"$said\"")
         assertTrue(said, said.startsWith("hub connected, "))

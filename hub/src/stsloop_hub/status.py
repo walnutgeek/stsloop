@@ -22,7 +22,7 @@ from . import protocol as p
 
 log = logging.getLogger("stsloop.hub")
 
-AGENT = "agent"
+AGENT = p.AGENT
 
 
 def hooks_installed(path: Path, port: int) -> Callable[[], bool]:

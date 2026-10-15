@@ -225,6 +225,9 @@ class StatusRequest:
     id: str
 
 
+#: The Descriptor type of an agent Bucket, which a `StatusReport` counts.
+AGENT = "agent"
+
 #: herdr states a `StatusReport` names (status_report.schema.json); the field is open, so a phone degrades.
 HERDR_OK = "ok"
 HERDR_NOT_ANSWERING = "not_answering"

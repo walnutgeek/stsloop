@@ -9,17 +9,17 @@ import com.walnutgeek.stsloop.core.turn.SessionCommands
  * when it comes, into the next Silence like any reply ([HubReport]);
  * otherwise the phone answers alone, at once, from what it kept.
  *
- * The loop never waits on the hub: [ask] returns at once, with the words to
- * say now, or null when the hub was asked. What the phone knows ([facts]) is
- * read when the command is heard, so the answer is not held up by disk reads
- * on the hub connection's thread. A report not come within [timeoutMs] is
+ * The loop never waits on the hub: [ask] returns with the words to say now,
+ * or null when the hub was asked. What the phone knows ([facts]) is read by
+ * [ask], on the caller's thread (the STT thread, which writes Turns and may
+ * read a few files), never on the hub connection's, whose listener holds its lock. A report not come within [timeoutMs] is
  * given up on, and the loop says [HubRequests.NO_ANSWER] ([tick]); a hub
  * too old to know `status_request` ignores it, and ends there too.
  *
  * Thread-safe, like [HubRequests]: [say] is called with the lock held, so it
  * must return at once; [send] is called without it.
  */
-class HubReports(
+class StatusQueries(
     /** Sends one message to the hub; false when it cannot. Must return at once. */
     private val send: (Message) -> Boolean,
     /** Says an answer as it is written. */
@@ -56,12 +56,12 @@ class HubReports(
             while (id in waiting) id = newId()
             StatusRequest(id).also { waiting[id] = Waiting(it, detail, known, clockMs()) }
         }
+        listener.asked(request, detail) // before the send, so a fast report is never logged first
         if (!send(request)) {
             // The link dropped since the status was read: the record of it is not written yet.
             synchronized(this) { waiting.remove(request.id) }
             return SessionCommands.HUB_OFFLINE
         }
-        listener.asked(request, detail)
         return null
     }
 
