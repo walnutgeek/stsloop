@@ -33,15 +33,18 @@ class SummaryMarks(files: File?) {
         val m = loaded()
         val was = m[bucket]
         if (was != null && was >= through) return
-        m[bucket] = through
-        val f = file ?: return
-        f.parentFile?.let { if (!it.isDirectory && !it.mkdirs()) throw IOException("cannot create $it") }
-        val tmp = File(f.parentFile, "${f.name}.tmp")
-        FileOutputStream(tmp).use { out ->
-            out.write(JsonWriter.pretty(mapOf("marks" to m.toSortedMap())).toByteArray(Charsets.UTF_8))
-            out.fd.sync()
+        val next = (m + (bucket to through)).toSortedMap()
+        // Written first: a mark that failed to write must not move in memory either, or a restart would differ.
+        file?.let { f ->
+            f.parentFile?.let { if (!it.isDirectory && !it.mkdirs()) throw IOException("cannot create $it") }
+            val tmp = File(f.parentFile, "${f.name}.tmp")
+            FileOutputStream(tmp).use { out ->
+                out.write(JsonWriter.pretty(mapOf("marks" to next)).toByteArray(Charsets.UTF_8))
+                out.fd.sync()
+            }
+            if (!tmp.renameTo(f)) throw IOException("cannot replace $f")
         }
-        if (!tmp.renameTo(f)) throw IOException("cannot replace $f")
+        m[bucket] = through
     }
 
     private fun loaded(): MutableMap<String, String> = marks ?: read().also { marks = it }

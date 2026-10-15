@@ -54,7 +54,7 @@ data class NoteRange(val bucket: String, val since: String?, val notes: List<Sum
             for (t in newestFirst) {
                 if (!after(t.directoryName)) break
                 if (t.kind == TurnKind.COMMAND.json) t.tombstones?.let { tombstoned += it }
-                if (t.problem != null || t.directoryName in tombstoned) continue
+                if (t.problem != null || t.tombstoned || t.directoryName in tombstoned) continue
                 val text = when {
                     inbox && t.kind == TurnKind.UNCLASSIFIED.json -> t.transcript
                     !inbox && t.kind == TurnKind.NOTE.json && t.bucket == bucket -> t.content ?: t.transcript

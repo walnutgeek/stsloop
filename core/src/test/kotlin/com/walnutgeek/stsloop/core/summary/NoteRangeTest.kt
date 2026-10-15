@@ -93,6 +93,12 @@ class NoteRangeTest {
     }
 
     @Test
+    fun `a Note that says it was tombstoned (an old Turn's tombstoned_by) is left out too`() {
+        val r = range(listOf(note(2.0, "000001").copy(tombstonedBy = name(1.0, "000002")), note(1.0, "000003")))
+        assertEquals(listOf(name(1.0, "000003")), r.notes.map { it.turn })
+    }
+
+    @Test
     fun `Turns that are not the bucket's Notes are not covered`() {
         val r = range(
             listOf(

@@ -3,6 +3,7 @@ package com.walnutgeek.stsloop.core.summary
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 
@@ -53,6 +54,14 @@ class SummaryMarksTest {
         assertNull(marks.since("errands"))
         assertNull(marks.since("home"))
         assertEquals(a, marks.since("work"))
+    }
+
+    @Test
+    fun `a mark that cannot be written does not move`() {
+        val blocked = File(files, "not-a-dir").apply { writeText("a file where the directory should be") }
+        val marks = SummaryMarks(blocked)
+        assertThrows<java.io.IOException> { marks.move("errands", a) }
+        assertNull(marks.since("errands"))
     }
 
     @Test
