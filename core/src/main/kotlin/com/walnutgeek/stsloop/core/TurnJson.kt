@@ -65,6 +65,8 @@ object TurnJson {
                     append(", \"bucket_id\": ").str(d.bucketId)
                     append(", \"text\": ").strOrNull(d.text)
                     if (cmd.command == Command.SEND) append(", \"key\": ").strOrNull(d.key)
+                    if (cmd.command == Command.OPTION) append(", \"option\": ").append(d.option?.toString() ?: "null")
+                    d.dialog?.let { append(", \"dialog\": ").str(it) }
                     append(" },\n")
                 }
                 cmd.summary?.let { s ->

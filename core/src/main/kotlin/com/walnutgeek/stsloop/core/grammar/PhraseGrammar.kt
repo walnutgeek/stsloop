@@ -150,7 +150,7 @@ class PhraseGrammar(buckets: BucketRegistry) {
             val id = bucket?.id ?: return@let
             if (command.primitive == Primitive.DRAFT) {
                 val draft = Command.draftOf(command.id) ?: return@let
-                return CommandInvocation(draft, matched, draft = DraftCommand(name, id))
+                return CommandInvocation(draft, matched, draft = DraftCommand(name, id, option = Command.optionOf(command.id)))
             }
             return CommandInvocation(Command.REQUEST, matched, request = BucketRequest(name, id, command.id, command.replyWithinMs))
         }

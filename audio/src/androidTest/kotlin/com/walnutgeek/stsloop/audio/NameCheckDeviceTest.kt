@@ -55,6 +55,9 @@ class NameCheckDeviceTest {
                "commands": [{"id": "status", "phrases": ["status"], "primitive": "request"}, {"id": "read", "phrases": ["what does it say", "read it"], "primitive": "request"},
                  {"id": "read_back", "phrases": ["read it back"], "primitive": "draft"}, {"id": "send", "phrases": ["send it", "send"], "primitive": "draft"},
                  {"id": "cancel", "phrases": ["cancel"], "primitive": "draft"},
+                 {"id": "option_1", "phrases": ["option one"], "primitive": "draft"}, {"id": "option_2", "phrases": ["option two"], "primitive": "draft"},
+                 {"id": "option_3", "phrases": ["option three"], "primitive": "draft"}, {"id": "option_4", "phrases": ["option four"], "primitive": "draft"},
+                 {"id": "my_answer", "phrases": ["my answer", "answer with my draft"], "primitive": "draft"},
                  {"id": "quiet", "phrases": ["quiet", "mute alerts"], "primitive": "request"}, {"id": "unmute", "phrases": ["unmute", "unmute alerts"], "primitive": "request"}]}
             ]}
         """.trimIndent()

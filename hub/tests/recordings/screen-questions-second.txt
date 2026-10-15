@@ -1,0 +1,23 @@
+
+ ▐▛███▛█   Claude Code v2.1.291
+▝▜██████▀  Sonnet 4.5 · API Usage Billing
+ ▝▝   ▝▝   /home/user/w/woodglue
+
+
+❯ ASK-TWO: please
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Update  ☐ Tests  ✔ Submit  →
+
+Which test suite should run after?
+
+❯ 1. Unit
+     Fast
+  2. Device
+     Slow
+  3. Both
+     Slowest
+  4. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

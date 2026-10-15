@@ -77,6 +77,12 @@ on request and always before it is sent; kept, never sent, when Focus times
 out.
 _Avoid_: prompt (that is what it becomes once sent), message
 
+**Answer**:
+The reply to an agent's question dialog, put together by voice a question
+at a time (an option, or the Draft as its own answer), read back, and sent
+like a Draft. Permission prompts are never answered.
+_Avoid_: response, approval (that is rung 5)
+
 **Hub**:
 The person's own machine running `stsloop-hub`, where the hub-side Providers,
 the summariser and the Corpus store live. Optional: the loop runs without it.

@@ -1,0 +1,21 @@
+
+ ▐▛███▛█   Claude Code v2.1.291
+▝▜██████▀  Sonnet 4.5 · API Usage Billing
+ ▝▝   ▝▝   /home/user/w/woodglue
+
+
+❯ ASK-TWO: please
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Update  ☐ Tests  ✔ Submit  →
+
+Should I rebase onto main or merge it?
+
+❯ 1. Rebase
+     Linear history
+  2. Merge
+     Keep the branch's commits
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

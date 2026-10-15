@@ -3,6 +3,8 @@ package com.walnutgeek.stsloop.core.hub
 import com.walnutgeek.stsloop.core.corpus.Json
 import com.walnutgeek.stsloop.core.corpus.JsonException
 import com.walnutgeek.stsloop.core.corpus.JsonWriter
+import com.walnutgeek.stsloop.core.grammar.Dialog
+import com.walnutgeek.stsloop.core.grammar.DialogQuestion
 import java.security.SecureRandom
 import java.util.Base64
 
@@ -47,6 +49,8 @@ data class HubDescriptor(
     val type: String,
     val primitives: List<String>,
     val commands: List<HubCommand>,
+    /** The dialog the agent is blocked on, while it is (#80). */
+    val dialog: Dialog? = null,
 )
 
 /** Hub to phone: every hub Bucket, a full snapshot that replaces the last. */
@@ -145,9 +149,19 @@ data class TurnAck(
  * id is [bucket], at most once for its idempotency [key]. The same [Send],
  * key and all, goes again after a reconnect until a [Sent] answers it.
  */
-data class Send(val key: String, val bucket: String, val text: String) : Message {
-    override fun toString() = "Send(key=$key, bucket=$bucket, ${text.length} chars)" // keeps the Draft out of logs
+data class Send(val key: String, val bucket: String, val text: String, val answer: Answer? = null) : Message {
+    override fun toString() = "Send(key=$key, bucket=$bucket, ${text.length} chars${if (answer != null) ", an answer" else ""})" // keeps the Draft out of logs
 }
+
+/** One question's answer (#80): the [option] picked (1 is the first), or a free-text [text]; exactly one of them. */
+data class Choice(val option: Int? = null, val text: String? = null) {
+    init {
+        require((option == null) != (text == null)) { "a choice is an option or a text" }
+    }
+}
+
+/** A [Send]'s answer to the question dialog [dialog] (its [Dialog.id]): one [Choice] per question, in order. */
+data class Answer(val dialog: String, val choices: List<Choice>)
 
 /**
  * Hub to phone: the answer to the [Send] [key], to be spoken as it is.
@@ -269,7 +283,7 @@ object Protocol {
                 "send" -> {
                     val key = o.string("key")
                     if (key.length < MIN_KEY) throw BadMessage("send needs a key of at least $MIN_KEY characters")
-                    Send(key, o.string("bucket"), o.string("text"))
+                    Send(key, o.string("bucket"), o.string("text"), if ("answer" in obj) answer(o.map["answer"]) else null)
                 }
                 "sent" -> Sent(o.string("key"), o.string("say"), if ("reason" in obj) o.string("reason") else null)
                 "item" -> Item(o.string("id"), o.strings("buckets", minItems = 1), o.string("say"))
@@ -363,7 +377,15 @@ object Protocol {
             put("notes", message.notes.map { mapOf("turn" to it.turn, "text" to it.text) })
             if (message.more) put("more", true)
         }
-        is Send -> mapOf("type" to "send", "key" to message.key, "bucket" to message.bucket, "text" to message.text)
+        is Send -> buildMap {
+            put("type", "send")
+            put("key", message.key)
+            put("bucket", message.bucket)
+            put("text", message.text)
+            message.answer?.let { a ->
+                put("answer", mapOf("dialog" to a.dialog, "choices" to a.choices.map { c -> if (c.option != null) mapOf("option" to c.option) else mapOf("text" to c.text) }))
+            }
+        }
         is Sent -> buildMap {
             put("type", "sent")
             put("key", message.key)
@@ -400,22 +422,77 @@ object Protocol {
 
     private fun v(version: Version) = mapOf("major" to version.major, "minor" to version.minor)
 
-    private fun descriptorJson(d: HubDescriptor) = mapOf(
-        "id" to d.id,
-        "name" to d.name,
-        "aliases" to d.aliases,
-        "type" to d.type,
-        "primitives" to d.primitives,
-        "commands" to d.commands.map { c ->
-            buildMap {
-                put("id", c.id)
-                put("phrases", c.phrases)
-                put("primitive", c.primitive)
-                if (c.anywhere) put("anywhere", true)
-                c.replyWithinMs?.let { put("reply_within_ms", it) }
+    private fun descriptorJson(d: HubDescriptor) = buildMap {
+        put("id", d.id)
+        put("name", d.name)
+        put("aliases", d.aliases)
+        put("type", d.type)
+        put("primitives", d.primitives)
+        put(
+            "commands",
+            d.commands.map { c ->
+                buildMap {
+                    put("id", c.id)
+                    put("phrases", c.phrases)
+                    put("primitive", c.primitive)
+                    if (c.anywhere) put("anywhere", true)
+                    c.replyWithinMs?.let { put("reply_within_ms", it) }
+                }
+            },
+        )
+        d.dialog?.let { put("dialog", dialogJson(it)) }
+    }
+
+    private fun dialogJson(d: Dialog) = buildMap {
+        put("kind", d.kind)
+        d.id?.let { put("id", it) }
+        if (d.questions.isNotEmpty()) {
+            put(
+                "questions",
+                d.questions.map { q ->
+                    buildMap {
+                        put("question", q.question)
+                        put("options", q.options)
+                        if (q.multiSelect) put("multi_select", true)
+                        if (q.other) put("other", true)
+                    }
+                },
+            )
+        }
+    }
+
+    /** A Descriptor's `dialog`. One the phone cannot read is dropped, not the whole Descriptor: it then cannot be answered. */
+    private fun dialog(value: Any?, what: String): Dialog? = try {
+        val o = Obj(value as? Map<*, *> ?: throw BadMessage("$what's dialog is not an object"), "$what's dialog")
+        val kind = o.string("kind")
+        val questions = if (kind == Dialog.QUESTION || "questions" in o.map) {
+            o.list("questions").map { q ->
+                val qo = Obj(q as? Map<*, *> ?: throw BadMessage("${o.what}'s question is not an object"), "${o.what}'s question")
+                DialogQuestion(qo.string("question"), qo.strings("options", minItems = 1), qo.boolean("multi_select"), qo.boolean("other"))
+            }.ifEmpty { throw BadMessage("${o.what} needs at least one question") }
+        } else {
+            emptyList()
+        }
+        Dialog(kind, if (kind == Dialog.QUESTION || "id" in o.map) o.string("id") else null, questions)
+    } catch (e: BadMessage) {
+        null
+    }
+
+    private fun answer(value: Any?): Answer {
+        val o = Obj(value as? Map<*, *> ?: throw BadMessage("send needs answer as an object"), "send's answer")
+        val choices = o.list("choices").map { c ->
+            val co = Obj(c as? Map<*, *> ?: throw BadMessage("send's answer's choice is not an object"), "send's answer's choice")
+            if (("option" in co.map) == ("text" in co.map)) throw BadMessage("send's answer's choice needs an option or a text")
+            if ("option" in co.map) {
+                val n = co.positiveOrNull("option")!!
+                if (n > Int.MAX_VALUE) throw BadMessage("send's answer's choice has an option out of range")
+                Choice(option = n.toInt())
+            } else {
+                Choice(text = co.string("text"))
             }
-        },
-    )
+        }.ifEmpty { throw BadMessage("send's answer needs at least one choice") }
+        return Answer(o.string("dialog"), choices)
+    }
 
     private fun descriptor(value: Any?): HubDescriptor {
         val map = value as? Map<*, *> ?: throw BadMessage("a Descriptor is not an object")
@@ -434,6 +511,7 @@ object Protocol {
                     co.positiveOrNull("reply_within_ms"),
                 )
             },
+            dialog = if ("dialog" in map) dialog(map["dialog"], o.what) else null,
         )
         for (c in d.commands) {
             if (c.primitive !in d.primitives) throw BadMessage("${o.what}'s command \"${c.id}\" uses \"${c.primitive}\", not in its primitives")

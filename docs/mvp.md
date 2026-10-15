@@ -127,7 +127,24 @@ Starting set for agent Buckets (primary first, then aliases):
 | "read it back" | Read the Draft |
 | "send it" (or "send") | Read the Draft back, then send it |
 | "cancel" | Drop the Draft |
+| "option one" … "option four" | Pick an option of the question the agent's dialog asks next, and read it back |
+| "my answer" (or "answer with my draft") | Take the Draft as the free-text answer to that question |
 | "quiet" (or "mute alerts") / "unmute" (or "unmute alerts") | Mute or unmute this Bucket's alerts |
+
+Settled in #80: an agent blocked on Claude Code's question dialog
+(AskUserQuestion, known from the hooks) can be answered. "What does it
+say" reads each question with its numbered options. "Option two" picks one
+and the loop reads it back ("option two: Merge. say send it to answer.");
+a dialog of several questions is answered in order, and after each choice
+the loop reads the next question. "Send it" then reads the whole answer back
+and sends it with an idempotency key, at most once, like a Draft. The hub
+reads the agent's screen, checks that it shows that dialog and no permission
+prompt, and types the answer with `herdr agent send-keys`, one key at a time
+(a free-text answer through `herdr pane send-text`). "Cancel" drops the
+answer. A permission prompt is refused ("that's a permission prompt. I don't
+approve those."), and so is a dialog the hub cannot tell (herdr without
+hooks, an MCP elicitation). By voice a multi-select question takes one
+option, and only a one-choice question takes a free-text answer.
 
 Loop-wide, whatever has Focus:
 

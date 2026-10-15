@@ -42,6 +42,9 @@ from collections import deque
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 
+from . import dialogs
+from . import protocol as p
+
 log = logging.getLogger("stsloop.claude_code")
 
 WORKING, BLOCKED, DONE, IDLE, STOPPED = "working", "blocked", "done", "idle", "stopped"
@@ -102,6 +105,9 @@ class Session:
     #: How many dialogs it has been seen to open: a new one while blocked (a second permission prompt) is a
     #: new block, said again.
     dialogs: int = 0
+    #: When blocked on an AskUserQuestion dialog: its questions, and its id (`dialogs.dialog_id`). Else empty.
+    questions: tuple[p.DialogQuestion, ...] = ()
+    dialog_id: str | None = None
     context: deque[str] = field(default_factory=lambda: deque(maxlen=CONTEXT_LINES))
 
     def text(self) -> str:
@@ -213,15 +219,22 @@ class Sessions:
                 else:
                     s.context.append("It asks the owner to approve its plan.")
                 self._dialog(s, DIALOG_TOOLS[tool], tool, now)
+                if tool == "AskUserQuestion":
+                    self._ask(s, tool_input, _str(payload, "tool_use_id"))
             else:
                 s.context.append(f"It uses {_tool_use(tool, tool_input)}")
                 if s.status != BLOCKED:
                     self._set(s, WORKING, now, begins=False)
         elif event == "PermissionRequest":
             why = DIALOG_TOOLS.get(tool, PERMISSION)
+            if s.status == BLOCKED and tool in DIALOG_TOOLS and s.waiting_on == tool:
+                # Claude Code asks permission for the dialog its PreToolUse just opened: the same dialog, not a new one.
+                return
             if why == PERMISSION and tool != "ExitPlanMode":
                 s.context.append(f"It asks permission to use {_tool_use(tool, tool_input)}")
             self._dialog(s, why, tool or None, now)
+            if tool == "AskUserQuestion":
+                self._ask(s, tool_input, None)
         elif event in ("PostToolUse", "PostToolUseFailure"):
             if event == "PostToolUseFailure":
                 s.context.append(f"{tool or 'A tool'} failed.")
@@ -253,6 +266,14 @@ class Sessions:
         s.dialogs += 1
         s.status, s.why, s.waiting_on = BLOCKED, why, tool
         s.since, s.observed = now, True
+        s.questions, s.dialog_id = (), None
+
+    @staticmethod
+    def _ask(s: Session, tool_input: object, tool_use_id: str | None) -> None:
+        """The dialog just opened is AskUserQuestion's: keep its questions, when they are readable, to answer it."""
+        asked = dialogs.questions(tool_input)
+        if asked is not None:
+            s.questions, s.dialog_id = asked, dialogs.dialog_id(tool_use_id, asked)
 
     @staticmethod
     def _set(s: Session, status: str, now: float, why: str | None = None, waiting_on: str | None = None,
@@ -262,6 +283,8 @@ class Sessions:
         if status != s.status or why != s.why:
             s.since, s.observed = now, begins or s.status != UNKNOWN
         s.status, s.why, s.waiting_on = status, why if status == BLOCKED else None, waiting_on
+        if status != BLOCKED:
+            s.questions, s.dialog_id = (), None
 
     def prune(self, alive: Callable[[int], bool] = alive) -> bool:
         """Forgets the sessions whose Claude Code has stopped running, or, with no pid to check, that have been

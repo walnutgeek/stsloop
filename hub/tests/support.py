@@ -75,11 +75,16 @@ class FakeHerdr:
         #: herdr's error code for `error` (`protocol_mismatch`), if it gave one.
         self.code = code
         self.calls = 0
-        #: Each pane's screen, as `read` gives it; a pane not here cannot be read.
-        self.screens: dict[str, str] = {}
+        #: Each pane's screen, as `read` gives it (a list: one per read, then its last for good); a pane not here
+        #: cannot be read.
+        self.screens: dict[str, str | list[str]] = {}
         self.reads: list[tuple[str, int]] = []
         self.prompts: list[tuple[str, str]] = []
         self.prompt_error: Exception | None = None
+        #: Each key pressed and text typed, in order, as (pane, "key", key) or (pane, "text", text).
+        self.typed: list[tuple[str, str, str]] = []
+        #: When set, (n, error): the n-th key or text (0 is the first) fails with `error`, and none after it is typed.
+        self.type_error: tuple[int, Exception] | None = None
 
     def agents(self):
         self.calls += 1
@@ -91,7 +96,10 @@ class FakeHerdr:
         self.reads.append((pane_id, lines))
         if pane_id not in self.screens:
             raise HerdrError(f"agent_not_found: {pane_id}")
-        return self.screens[pane_id]
+        screen = self.screens[pane_id]
+        if isinstance(screen, list):  # one screen per read, the last for good
+            return screen.pop(0) if len(screen) > 1 else screen[0]
+        return screen
 
     def prompt(self, pane_id: str, text: str) -> None:
         if isinstance(self.prompt_error, HerdrRefused):
@@ -99,6 +107,18 @@ class FakeHerdr:
         self.prompts.append((pane_id, text))
         if self.prompt_error is not None:
             raise self.prompt_error
+
+    def send_keys(self, pane_id: str, keys: list[str]) -> None:
+        for key in keys:
+            self._type(pane_id, "key", key)
+
+    def send_text(self, pane_id: str, text: str) -> None:
+        self._type(pane_id, "text", text)
+
+    def _type(self, pane_id: str, kind: str, value: str) -> None:
+        if self.type_error is not None and self.type_error[0] == len(self.typed):
+            raise self.type_error[1]
+        self.typed.append((pane_id, kind, value))
 
 
 class FakeBackend:
@@ -129,6 +149,11 @@ class Clock:
 
 
 RECORDINGS = Path(__file__).resolve().parent / "recordings"
+
+
+def screen(name: str) -> str:
+    """A Claude Code 2.1 dialog as its terminal showed it (`screen-*.txt`, captured from a real one)."""
+    return (RECORDINGS / f"screen-{name}.txt").read_text()
 
 
 def recording(name: str) -> list[tuple[str | None, int | None, dict]]:

@@ -67,7 +67,14 @@ class BucketsTest(Setup):
 
     def test_a_change_of_state_alone_sends_no_new_snapshot(self):
         self.poll(agent("w8:p1", "stsloop", "working"))
-        self.assertFalse(self.poll(agent("w8:p1", "stsloop", "blocked", seq=2), after=2))
+        self.assertFalse(self.poll(agent("w8:p1", "stsloop", "done", seq=2), after=2))
+
+    def test_a_blocked_agent_shows_its_dialog_and_herdr_alone_cannot_tell_what_it_is(self):
+        self.poll(agent("w8:p1", "stsloop", "working"))
+        self.assertTrue(self.poll(agent("w8:p1", "stsloop", "blocked", seq=2), after=2))
+        self.assertEqual(self.provider.descriptors()[0].dialog, p.Dialog(kind="unknown"))
+        self.assertTrue(self.poll(agent("w8:p1", "stsloop", "working", seq=3), after=2))
+        self.assertIsNone(self.provider.descriptors()[0].dialog)
 
     def test_the_hub_bucket_carries_whats_blocked_heard_anywhere(self):
         hub = self.buckets.descriptors()[0]

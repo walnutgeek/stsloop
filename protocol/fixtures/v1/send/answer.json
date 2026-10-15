@@ -1,0 +1,1 @@
+{ "type": "send", "key": "5d2c8e1f0a3b4c6d7e8f9a0b1c2d3e4f", "bucket": "herdr:w4:p1", "text": "option one: Rebase; your answer: Only the fast ones", "answer": { "dialog": "toolu_1792049416875", "choices": [{ "option": 1 }, { "text": "Only the fast ones" }] } }

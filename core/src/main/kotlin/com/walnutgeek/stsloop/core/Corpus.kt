@@ -214,6 +214,16 @@ enum class Command(val json: String, val phrases: List<String>) {
     CANCEL("cancel", emptyList()),
 
     /**
+     * Picks an option of the question the focused agent's dialog asks next
+     * (#80; command ids `option_1` … `option_9`, "option one" …): the
+     * loop reads the choice back, and "send it" sends the whole answer.
+     */
+    OPTION("option", emptyList()),
+
+    /** Takes the Draft as the free-text answer to the question the focused agent's dialog asks next (#80; `my_answer`). */
+    MY_ANSWER("my_answer", emptyList()),
+
+    /**
      * Speaks a short summary of the Notes said in the focused capture Bucket
      * since its last summary (#76): the hub's summariser when it can, the
      * phone alone otherwise ([com.walnutgeek.stsloop.core.summary.BucketSummaries]).
@@ -239,7 +249,7 @@ enum class Command(val json: String, val phrases: List<String>) {
     ;
 
     /** Whether it is one of the `draft` Primitive's commands, which carry a [DraftCommand]. */
-    val draft: Boolean get() = this == READ_BACK || this == SEND || this == CANCEL
+    val draft: Boolean get() = this == READ_BACK || this == SEND || this == CANCEL || this == OPTION || this == MY_ANSWER
 
     companion object {
         /** The `draft` command a Descriptor's command id names, or null when the phone knows no such one. */
@@ -247,8 +257,14 @@ enum class Command(val json: String, val phrases: List<String>) {
             "read_back" -> READ_BACK
             "send" -> SEND
             "cancel" -> CANCEL
-            else -> null
+            "my_answer" -> MY_ANSWER
+            else -> if (optionOf(id) != null) OPTION else null
         }
+
+        /** The option a command id `option_<n>` picks (1 is the first), or null for any other id. */
+        fun optionOf(id: String): Int? = OPTION_ID.matchEntire(id)?.groupValues?.get(1)?.toInt()
+
+        private val OPTION_ID = Regex("option_([1-9])")
     }
 }
 
@@ -259,7 +275,20 @@ enum class Command(val json: String, val phrases: List<String>) {
  * [key] (null when nothing was sent: no Draft, the hub offline, or a send
  * still waiting on the hub).
  */
-data class DraftCommand(val bucket: String, val bucketId: String, val text: String? = null, val key: String? = null)
+data class DraftCommand(
+    val bucket: String,
+    val bucketId: String,
+    val text: String? = null,
+    val key: String? = null,
+    /** For [Command.OPTION]: the option picked, 1 for the first. */
+    val option: Int? = null,
+    /**
+     * For [Command.OPTION] and [Command.MY_ANSWER] that took, and a [Command.SEND]
+     * that sent, an answer to a dialog (#80): that dialog's id. Its [text] is then
+     * the option's label, the answer's own text, or the whole answer as read back.
+     */
+    val dialog: String? = null,
+)
 
 /**
  * A [Command.REQUEST] as invoked: the [command] id of the Bucket named

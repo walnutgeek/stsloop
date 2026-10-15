@@ -638,7 +638,7 @@ Design notes worth keeping:
   was always null, and `jq` reads a missing key as null too.
 - `command` is present only on a command Turn: `name` is permanent once
   written (`scratch_that`, `repeat`, `what_bucket`, `stop_listening`; from
-  #40 `where_am_i` and `focus`; from #43 `request`; from #45 `read_back`, `send`, `cancel`; from #76
+  #40 `where_am_i` and `focus`; from #43 `request`; from #45 `read_back`, `send`, `cancel`; from #80 `option`, `my_answer`; from #76
   `summarize`; from #75 `hub_status`, `hub_details`, which record nothing
   more: the answer is the hub's state at that moment), `matched` the phrase
   as heard, normalised.
@@ -682,6 +682,16 @@ Design notes worth keeping:
   still waiting). "Scratch that" on a Draft Turn takes its words back out of
   the Draft. Whether the hub delivered a send is not recorded in the Corpus:
   the hub keeps every key and its answer in `sends.jsonl`.
+- **Answers (#80, additive within `schema: 1`).** Answering an agent's
+  question dialog adds the command names `option` ("option one" …) and
+  `my_answer`, with the same top-level `draft` object. An `option` adds
+  `"option"`, the option picked (1 for the first). A choice that was taken
+  adds `"dialog"`, the dialog's id, and its `text` is the option's label or,
+  for `my_answer`, the Draft it took as the answer; a refused one (no dialog,
+  a permission prompt, no such option) has no `dialog`. A `send`, `cancel`
+  or `read_back` that acted on an answer, not the Draft, also adds
+  `"dialog"`, with `text` the answer as read back ("option one: Rebase;
+  your answer: only the fast ones").
 - **Summaries (#76, additive within `schema: 1`).** "Summarize bucket" on a
   capture Bucket is a command Turn with `command.name` `summarize` and a
   top-level

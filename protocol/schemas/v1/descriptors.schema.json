@@ -49,6 +49,58 @@
           "description": "The phrases that are commands while the Bucket has Focus (or whatever has Focus, with `anywhere`), in a deterministic grammar.",
           "type": "array",
           "items": { "$ref": "#/$defs/command" }
+        },
+        "dialog": { "$ref": "#/$defs/dialog" }
+      }
+    },
+    "dialog": {
+      "description": "The dialog an agent Bucket is blocked on, while it is (#80); absent when it is not known to wait on one. Only a `question` can be answered by voice (rung 4 of the ladder), with the `draft` Primitive's option commands and a `send` carrying an `answer`. A `permission` prompt is rung 5 and is never answered; nor is an `unknown` dialog (the hub sees the agent blocked but cannot tell on what, as with herdr and no Claude Code hooks), nor one of a kind the phone does not know. A phone that does not know this field cannot answer dialogs.",
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "description": "Known in v1.0: `question` (Claude Code's AskUserQuestion), `permission`, `unknown`. A phone treats any other kind as `unknown`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "description": "For a `question`: which dialog this is. A `send` that answers it names it, and the hub refuses an answer to a dialog that is no longer the open one.",
+          "type": "string",
+          "minLength": 1
+        },
+        "questions": {
+          "description": "For a `question`: its questions, in the order they are answered.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/question" }
+        }
+      },
+      "if": { "properties": { "kind": { "const": "question" } } },
+      "then": { "required": ["id", "questions"] }
+    },
+    "question": {
+      "description": "One question of a `question` dialog.",
+      "type": "object",
+      "required": ["question", "options"],
+      "properties": {
+        "question": {
+          "description": "The question, as the agent asked it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "options": {
+          "description": "The options' labels, in order: \"option one\" is the first.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "multi_select": {
+          "description": "True: the agent lets the person pick several options (by voice, one is picked). Absent means false.",
+          "type": "boolean"
+        },
+        "other": {
+          "description": "True: the question also takes a free-text answer, which a `send`'s choice carries as `text`. Absent means false.",
+          "type": "boolean"
         }
       }
     },

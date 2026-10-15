@@ -60,7 +60,13 @@ class Drafts(
 
     private class Draft(var name: String, val pieces: MutableList<Piece> = mutableListOf())
 
-    private class Pending(val send: Send, val name: String, val pieces: List<Piece>) {
+    /** An answer being put together for one agent's [dialog] (#80): the choices so far, and the Draft's pieces "my answer" took. */
+    private class Answering(val dialog: String, val name: String) {
+        val choices = mutableListOf<Choice>()
+        val pieces = mutableListOf<Piece>()
+    }
+
+    private class Pending(val send: Send, val name: String, val pieces: List<Piece>, val answering: Answering? = null) {
         var dispatched = false
         var sentAtMs = 0L
         var told = false
@@ -68,6 +74,7 @@ class Drafts(
 
     private val drafts = LinkedHashMap<String, Draft>()
     private val pending = LinkedHashMap<String, Pending>()
+    private val answers = LinkedHashMap<String, Answering>()
 
     /** Appends [text], said in the Turn [turn], to the Draft of the agent Bucket [name] whose Descriptor id is [bucketId]. */
     @Synchronized
@@ -88,6 +95,58 @@ class Drafts(
     /** "Scratch that" tombstoned the Turn [turn]: its words leave whichever Draft holds them. True when one did. */
     @Synchronized
     fun drop(turn: String): Boolean = drafts.values.any { d -> d.pieces.removeAll { it.turn == turn } }
+
+    /** The choices made so far in answering the dialog [dialog] of [bucketId]; empty when none, or when they were for another dialog. */
+    @Synchronized
+    fun choices(bucketId: String, dialog: String): List<Choice> = answers[bucketId]?.takeIf { it.dialog == dialog }?.choices?.toList().orEmpty()
+
+    /**
+     * Adds [choice] to the answer of the dialog [dialog] of the agent Bucket
+     * [name] ([bucketId]), starting it when there is none for that dialog (one
+     * for another dialog is dropped, its Draft words put back). A [Choice.text]
+     * takes the Draft's Turns with it, so the Draft is empty again.
+     */
+    @Synchronized
+    fun choose(bucketId: String, name: String, dialog: String, choice: Choice) {
+        val a = answers[bucketId]?.takeIf { it.dialog == dialog } ?: Answering(dialog, name).also { fresh ->
+            answers.remove(bucketId)?.let { restorePieces(bucketId, it.name, it.pieces) }
+            answers[bucketId] = fresh
+        }
+        if (choice.text != null) drafts.remove(bucketId)?.let { a.pieces += it.pieces }
+        a.choices += choice
+    }
+
+    /**
+     * Forgets an answer [bucketId] was putting together for a dialog that is no
+     * longer the open one ([dialog]; null: none is), its Draft words put back,
+     * so "my answer" never strands them when the dialog is answered elsewhere.
+     */
+    @Synchronized
+    fun forgetStaleAnswer(bucketId: String, dialog: String?) {
+        val a = answers[bucketId]?.takeIf { it.dialog != dialog } ?: return
+        answers.remove(bucketId)
+        restorePieces(bucketId, a.name, a.pieces)
+    }
+
+    /** Drops the answer being put together for [bucketId], its Draft words put back. True when there was one. */
+    @Synchronized
+    fun cancelAnswer(bucketId: String): Boolean {
+        val a = answers.remove(bucketId) ?: return false
+        restorePieces(bucketId, a.name, a.pieces)
+        return true
+    }
+
+    /**
+     * Takes the answer of [bucketId] into a send under [key], as the person
+     * heard it read back ([text]). False when there was none. Nothing goes to
+     * the hub before [dispatch].
+     */
+    @Synchronized
+    fun takeAnswer(bucketId: String, key: String, text: String): Boolean {
+        val a = answers.remove(bucketId) ?: return false
+        pending[key] = Pending(Send(key, bucketId, text, Answer(a.dialog, a.choices.toList())), a.name, a.pieces.toList(), a)
+        return true
+    }
 
     /** Drops the Draft of [bucketId]; returns what it said, or null when there was none. */
     @Synchronized
@@ -118,7 +177,7 @@ class Drafts(
         if (!send(p.send)) {
             synchronized(this) {
                 if (pending.remove(key) != null) restore(p)
-                say(OFFLINE)
+                say(if (p.answering != null) ANSWER_OFFLINE else OFFLINE)
             }
             return
         }
@@ -138,9 +197,18 @@ class Drafts(
     fun sent(sent: Sent) {
         val p = pending.remove(sent.key) ?: return listener.ignored(sent)
         listener.answered(p.send, sent, clockMs() - p.sentAtMs)
-        when (sent.reason) {
-            null -> say(sent.say)
-            UNCERTAIN -> {
+        when {
+            sent.reason == null -> say(sent.say)
+            p.answering != null && sent.reason == UNCERTAIN -> {
+                // It may have been typed: the answer is not kept, so "send it" cannot type it twice; its Draft words are.
+                restorePieces(p.send.bucket, p.name, p.pieces)
+                say("${sent.say} $ANSWER_MAYBE_ARRIVED")
+            }
+            p.answering != null -> {
+                restore(p)
+                say("${sent.say} $ANSWER_KEPT")
+            }
+            sent.reason == UNCERTAIN -> {
                 restore(p)
                 say("${sent.say} $MAYBE_ARRIVED")
             }
@@ -179,10 +247,21 @@ class Drafts(
     @Synchronized
     fun unanswered(): List<Send> = pending.values.map { it.send }
 
-    /** Puts a send's Turns back in front of its Bucket's Draft. Lock held. */
+    /**
+     * Puts a send back: a Draft's Turns in front of its Bucket's Draft, and an
+     * answer back as the answer being put together, unless another has been
+     * started since (then only its Draft words go back). Lock held.
+     */
     private fun restore(p: Pending) {
-        val draft = drafts.getOrPut(p.send.bucket) { Draft(p.name) }
-        draft.pieces.addAll(0, p.pieces)
+        val a = p.answering
+        if (a != null && p.send.bucket !in answers) answers[p.send.bucket] = a else restorePieces(p.send.bucket, p.name, p.pieces)
+    }
+
+    /** Puts [pieces] back in front of the Draft of [bucketId]. Lock held. */
+    private fun restorePieces(bucketId: String, name: String, pieces: List<Piece>) {
+        if (pieces.isEmpty()) return
+        val draft = drafts.getOrPut(bucketId) { Draft(name) }
+        draft.pieces.addAll(0, pieces)
     }
 
     companion object {
@@ -201,6 +280,15 @@ class Drafts(
          * did arrive.
          */
         const val MAYBE_ARRIVED = "it may have arrived. draft kept; check before you send it again."
+
+        /** Said after an answer the hub did not type (#80): it can be sent again, or cancelled. */
+        const val ANSWER_KEPT = "answer kept."
+
+        /** Said after an [UNCERTAIN] answer to a dialog: it is not kept, so it cannot be typed twice. */
+        const val ANSWER_MAYBE_ARRIVED = "it may have been answered; check before you answer again."
+
+        /** Said when "send it" finds the hub offline with an answer to send. */
+        const val ANSWER_OFFLINE = "hub offline, answer kept."
 
         /** Said when "send" finds the hub offline. */
         const val OFFLINE = "hub offline, draft kept."

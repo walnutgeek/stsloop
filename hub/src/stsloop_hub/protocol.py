@@ -75,6 +75,31 @@ class Command:
     reply_within_ms: int | None = None
 
 
+#: Dialog kinds (`descriptors.schema.json`, `dialog`): only a question can be answered by voice.
+QUESTION_DIALOG, PERMISSION_DIALOG, UNKNOWN_DIALOG = "question", "permission", "unknown"
+
+
+@dataclass(frozen=True)
+class DialogQuestion:
+    """One question of a question dialog: its text, its options' labels in order, and whether it lets the person
+    pick several (`multi_select`) or type their own answer (`other`)."""
+
+    question: str
+    options: tuple[str, ...]
+    multi_select: bool = False
+    other: bool = False
+
+
+@dataclass(frozen=True)
+class Dialog:
+    """The dialog an agent Bucket is blocked on: a `question` (with its `id` and `questions`), a `permission`
+    prompt, or `unknown`."""
+
+    kind: str
+    id: str | None = None
+    questions: tuple[DialogQuestion, ...] = ()
+
+
 @dataclass(frozen=True)
 class Descriptor:
     id: str
@@ -83,6 +108,8 @@ class Descriptor:
     type: str
     primitives: tuple[str, ...]
     commands: tuple[Command, ...] = field(default=())
+    #: The dialog the agent is blocked on, while it is; None otherwise.
+    dialog: Dialog | None = None
 
 
 @dataclass(frozen=True)
@@ -178,13 +205,31 @@ class TurnAck:
 
 
 @dataclass(frozen=True)
+class Choice:
+    """One question's answer: the `option` picked (1 is the first), or a free-text `text`."""
+
+    option: int | None = None
+    text: str | None = None
+
+
+@dataclass(frozen=True)
+class Answer:
+    """A send's answer to the question dialog `dialog`: one choice per question, in order."""
+
+    dialog: str
+    choices: tuple[Choice, ...]
+
+
+@dataclass(frozen=True)
 class Send:
     """Phone to hub: deliver the Draft `text` to the agent Bucket whose Descriptor id is `bucket`, at most once
-    for its idempotency `key` (see send.schema.json)."""
+    for its idempotency `key` (see send.schema.json). With `answer`, it answers the agent's question dialog
+    instead, and `text` is the answer as the person heard it read back."""
 
     key: str
     bucket: str
     text: str
+    answer: Answer | None = None
 
 
 @dataclass(frozen=True)
@@ -385,6 +430,51 @@ def _reply_within(obj: dict, what: str) -> int | None:
     return value
 
 
+def _flag(obj: dict, key: str, what: str) -> bool:
+    return _get(obj, key, bool, what) if key in obj else False
+
+
+def _dialog(obj: dict, what: str) -> Dialog:
+    kind = _string(obj, "kind", what)
+    questions = []
+    if kind == QUESTION_DIALOG or "questions" in obj:
+        for q in _get(obj, "questions", list, what):
+            if not isinstance(q, dict):
+                raise BadMessage(f"{what}'s question is not an object")
+            qw = f"{what}'s question"
+            questions.append(DialogQuestion(
+                question=_string(q, "question", qw),
+                options=_strings(q, "options", qw, min_items=1),
+                multi_select=_flag(q, "multi_select", qw),
+                other=_flag(q, "other", qw),
+            ))
+        if not questions:
+            raise BadMessage(f"{what} needs at least one question")
+    return Dialog(
+        kind=kind,
+        id=_string(obj, "id", what) if kind == QUESTION_DIALOG or "id" in obj else None,
+        questions=tuple(questions),
+    )
+
+
+def _answer(obj: dict) -> Answer:
+    what = "send's answer"
+    choices = []
+    for c in _get(obj, "choices", list, what):
+        if not isinstance(c, dict) or ("option" in c) == ("text" in c):
+            raise BadMessage(f"{what}'s choice needs an option or a text")
+        if "option" in c:
+            option = _get(c, "option", int, f"{what}'s choice")
+            if option < 1:
+                raise BadMessage(f"{what}'s choice has an option below 1")
+            choices.append(Choice(option=option))
+        else:
+            choices.append(Choice(text=_string(c, "text", f"{what}'s choice")))
+    if not choices:
+        raise BadMessage(f"{what} needs at least one choice")
+    return Answer(dialog=_string(obj, "dialog", what), choices=tuple(choices))
+
+
 def _descriptor(obj) -> Descriptor:
     if not isinstance(obj, dict):
         raise BadMessage("a Descriptor is not an object")
@@ -396,6 +486,7 @@ def _descriptor(obj) -> Descriptor:
         type=_string(obj, "type", what),
         primitives=_strings(obj, "primitives", what),
         commands=tuple(_command(c, f"{what}'s command") for c in _get(obj, "commands", list, what)),
+        dialog=_dialog(_get(obj, "dialog", dict, what), f"{what}'s dialog") if "dialog" in obj else None,
     )
     for command in descriptor.commands:
         if command.primitive not in descriptor.primitives:
@@ -519,6 +610,7 @@ _READERS = {
         key=_key(o, "send"),
         bucket=_string(o, "bucket", "send"),
         text=_string(o, "text", "send"),
+        answer=_answer(_get(o, "answer", dict, "send")) if "answer" in o else None,
     ),
     "sent": lambda o: Sent(
         key=_string(o, "key", "sent"),
@@ -569,13 +661,39 @@ def _v(version: Version) -> dict:
 
 
 def _descriptor_json(d: Descriptor) -> dict:
-    return {
+    obj = {
         "id": d.id,
         "name": d.name,
         "aliases": list(d.aliases),
         "type": d.type,
         "primitives": list(d.primitives),
         "commands": [_command_json(c) for c in d.commands],
+    }
+    if d.dialog is not None:
+        obj["dialog"] = _dialog_json(d.dialog)
+    return obj
+
+
+def _dialog_json(d: Dialog) -> dict:
+    obj: dict = {"kind": d.kind}
+    if d.id is not None:
+        obj["id"] = d.id
+    if d.questions:
+        obj["questions"] = []
+        for q in d.questions:
+            qo: dict = {"question": q.question, "options": list(q.options)}
+            if q.multi_select:
+                qo["multi_select"] = True
+            if q.other:
+                qo["other"] = True
+            obj["questions"].append(qo)
+    return obj
+
+
+def _answer_json(a: Answer) -> dict:
+    return {
+        "dialog": a.dialog,
+        "choices": [{"option": c.option} if c.option is not None else {"text": c.text} for c in a.choices],
     }
 
 
@@ -630,8 +748,11 @@ def to_json(message: Message) -> dict:
                 if value is not None:
                     obj[key] = value
             return obj
-        case Send(key=key, bucket=bucket, text=text):
-            return {"type": "send", "key": key, "bucket": bucket, "text": text}
+        case Send(key=key, bucket=bucket, text=text, answer=answer):
+            obj = {"type": "send", "key": key, "bucket": bucket, "text": text}
+            if answer is not None:
+                obj["answer"] = _answer_json(answer)
+            return obj
         case Sent(key=key, say=say, reason=reason):
             obj = {"type": "sent", "key": key}
             if reason is not None:

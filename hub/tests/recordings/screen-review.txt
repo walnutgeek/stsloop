@@ -1,0 +1,22 @@
+
+ ▐▛███▛█   Claude Code v2.1.291
+▝▜██████▀  Sonnet 4.5 · API Usage Billing
+ ▝▝   ▝▝   /home/user/w/woodglue
+
+
+❯ ASK-TWO: please
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Update  ☒ Tests  ✔ Submit  →
+
+Review your answers
+
+ ● Should I rebase onto main or merge it?
+   → Rebase
+ ● Which test suite should run after?
+   → Both
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel
