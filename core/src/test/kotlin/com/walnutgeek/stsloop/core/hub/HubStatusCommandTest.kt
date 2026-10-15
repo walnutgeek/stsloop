@@ -105,7 +105,7 @@ class HubStatusCommandTest {
     }
 
     @Test
-    fun `the primaries are the phrases heard 6 of 6, and the two-word ones stay aliases`() {
+    fun `the longer phrases come first, and the two-word ones stay aliases`() {
         // #82: "hub status" is heard 3 times in 6 on the dev phone, "hub details" 2; the primaries every time.
         assertEquals(listOf("how is the hub", "hub status", "hub health"), Command.HUB_STATUS.phrases)
         assertEquals(listOf("details of the hub", "hub details", "hub info"), Command.HUB_DETAILS.phrases)

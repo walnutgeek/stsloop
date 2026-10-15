@@ -66,8 +66,8 @@ eventually makes declaring optional.
 `stsloop-hub` runs on the machine where your agents run, and publishes Buckets
 to the phone over one WebSocket on your tailnet
 ([ADR-0008](./docs/adr/0008-python-hub.md)). It always publishes its own
-Bucket, "the hub", and one Bucket per coding agent: each herdr agent, with herdr (the
-terminal multiplexer for coding agents) installed, and each Claude Code
+Bucket, "the hub", and one Bucket per coding agent: each herdr agent, with
+herdr (the terminal multiplexer for coding agents) installed, and each Claude Code
 session, with its hooks installed.
 It is not on PyPI yet, so install it from the repo with
 [uv](https://docs.astral.sh/uv/):
