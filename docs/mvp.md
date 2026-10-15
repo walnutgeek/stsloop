@@ -125,6 +125,20 @@ Loop-wide, whatever has Focus:
 | "where am I" | Say the focused Bucket |
 | "what's blocked" | List blocked agents |
 | "inbox" | Focus the Inbox |
+| "hub status" (or "hub health", "how is the hub") | "hub connected, 6 agents, 2 blocked."; offline, the phone alone: "hub offline for 12 minutes, last saw 6 agents." |
+| "hub details" (or "hub info", "details of the hub") | Connected for how long, or offline and the last failure; agents; herdr's state; the Claude Code hooks; Turns waiting to upload |
+
+Settled in #75: "hub status" and "hub details" are the loop's own
+commands, so they are heard with no hub and no cached Descriptors. Online,
+the phone asks the hub (`status_request`) and words its `status_report`
+itself; offline it answers at once from `reach.json` (since when the last
+welcomed connection ended, `left_at`, and the last failure) and the cached
+Descriptors. Only the phone knows how long it has been connected and how
+many Turns wait to upload, so it adds those. `stsloop-hub init` tries each
+herdr binary (`$HERDR_BIN_PATH`, every `herdr` on the PATH, `~/.local/bin/herdr`)
+against the running herdr server and saves the first it answers in
+`hub.json` for `serve`; a binary that does not match is said, at `init` and
+when `serve` starts.
 
 Phase 0's commands ("scratch that", "repeat", "stop listening") keep working.
 "What bucket" stays as an alias of "where am I". Every phrase here goes

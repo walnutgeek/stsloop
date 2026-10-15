@@ -75,10 +75,30 @@ class HubReachTest {
     }
 
     @Test
+    fun `losing a welcomed connection records when the hub was last there`() {
+        val connected = HubReach.EMPTY.connected(1)
+        val lost = connected.record(HubStatus.Offline("closed 1006"), 9, wasOnline = true)
+        assertEquals(9L, lost.leftAtMs)
+        assertEquals(9L, lost.lastSeenAtMs)
+        assertEquals(1L, lost.connectedAtMs, "the line still says when it connected")
+        assertEquals(lost, lost.record(HubStatus.Offline("stopped"), 12), "a link that was not online leaves nothing")
+        val failing = lost.record(HubStatus.Offline("x", unreachable), 15)
+        assertEquals(9L, failing.lastSeenAtMs, "a failure keeps when the hub was last there")
+        assertEquals(connected.connected(20), failing.connected(20), "a welcome starts afresh")
+    }
+
+    @Test
+    fun `the hub was last seen when its last connection began, if the phone never saw it end`() {
+        assertNull(HubReach.EMPTY.lastSeenAtMs)
+        assertEquals(1L, HubReach.EMPTY.connected(1).failed(unreachable, 5).lastSeenAtMs)
+    }
+
+    @Test
     fun `the record reads back from its JSON`() {
         val records = listOf(
             HubReach.EMPTY,
             HubReach.EMPTY.connected(1_760_000_000_000),
+            HubReach.EMPTY.connected(1_760_000_000_000).left(1_760_000_000_500).failed(unreachable, 1_760_000_001_000),
             HubReach.EMPTY.connected(1_760_000_000_000).failed(HubFailure.ProtocolRefused(null, "No."), 1_760_000_001_000).ignore(),
             HubReach.EMPTY.failed(unreachable, 1_760_000_002_000),
         )

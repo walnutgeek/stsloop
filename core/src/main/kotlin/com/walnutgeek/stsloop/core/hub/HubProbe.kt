@@ -12,7 +12,7 @@ class HubProbe(private val done: (Outcome) -> Unit) {
 
         data class Connected(val descriptors: Descriptors) : Outcome {
             override val said: String
-                get() = when (val n = descriptors.buckets.count { it.type == "agent" }) {
+                get() = when (val n = HubReport.agents(descriptors)) {
                     1 -> "connected, 1 agent."
                     else -> "connected, $n agents."
                 }

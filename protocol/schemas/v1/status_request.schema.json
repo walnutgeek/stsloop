@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stsloop:protocol:v1:status_request",
+  "title": "status_request",
+  "description": "Phone to hub, once welcomed: how is the hub? Sent for the loop's \"hub status\" and \"hub details\". The hub answers one `status_report` with the same `id`, at once, from what it already knows. No capability is needed: a hub that does not know this message ignores it, and the phone says the hub did not answer.",
+  "type": "object",
+  "required": ["type", "id"],
+  "properties": {
+    "type": { "const": "status_request" },
+    "id": {
+      "description": "Chosen by the phone, unique among its requests waiting for an answer; the `status_report` carries it back.",
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

@@ -37,6 +37,9 @@ import com.walnutgeek.stsloop.core.StartRefusal
 import com.walnutgeek.stsloop.core.Transition
 import com.walnutgeek.stsloop.core.turn.SttTiming
 import com.walnutgeek.stsloop.core.Wav
+import com.walnutgeek.stsloop.core.hub.CorpusDirectory
+import com.walnutgeek.stsloop.core.hub.HubFacts
+import com.walnutgeek.stsloop.core.hub.StatusQueries
 import com.walnutgeek.stsloop.core.hub.HubStore
 import com.walnutgeek.stsloop.core.hub.HubStartNotice
 import com.walnutgeek.stsloop.core.hub.HubStatus
@@ -348,6 +351,7 @@ class SessionService : Service() {
                     if (s is HubStatus.Online) turnCapture?.welcomed()
                 },
                 onItem = { i -> turnCapture?.item(i) },
+                onStatusReport = { r -> turnCapture?.statusReport(r) },
                 corpus = corpusDir(this),
             )
             hub = hubLink
@@ -420,6 +424,13 @@ class SessionService : Service() {
                 hubSummarises = { (hubLink.status as? HubStatus.Online)?.welcome?.capabilities?.contains(Protocol.SUMMARIES) == true },
                 summaryNotes = CorpusNotes(corpusDir(this)),
                 summaryMarks = SummaryMarks(filesDir),
+                // "hub status" and "hub details" (#75): read on the STT thread when said.
+                hubFacts = { detail ->
+                    HubFacts.read(
+                        hubLink.status, hubLink.offline, hubStore, CorpusDirectory(corpusDir(this)),
+                        toUpload = detail == StatusQueries.Detail.LONG, nowMs = System.currentTimeMillis(),
+                    )
+                },
                 testOf = testMode?.let { t -> t::turnTest },
                 speaker = echo,
                 endSession = { turn ->

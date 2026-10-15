@@ -11,6 +11,8 @@
     { "fixture": "sent/extras.json", "reads_as": "sent/delivered.json" },
     { "fixture": "item/extras.json", "reads_as": "item/blocked.json" },
     { "fixture": "item_spoken/extras.json", "reads_as": "item_spoken/basic.json" },
-    { "fixture": "summarize/extras.json", "reads_as": "summarize/basic.json" }
+    { "fixture": "summarize/extras.json", "reads_as": "summarize/basic.json" },
+    { "fixture": "status_request/extras.json", "reads_as": "status_request/basic.json" },
+    { "fixture": "status_report/extras.json", "reads_as": "status_report/herdr.json" }
   ]
 }

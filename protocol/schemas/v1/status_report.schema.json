@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stsloop:protocol:v1:status_report",
+  "title": "status_report",
+  "description": "Hub to phone: the answer to one `status_request`, as facts, not words. The phone words them itself, so \"hub status\" and \"hub details\" sound alike whether the hub answers or the phone answers alone while the hub is offline. What only the phone knows (how long it has been connected, how many Turns wait to upload) it adds itself.",
+  "type": "object",
+  "required": ["type", "id", "agents", "blocked"],
+  "properties": {
+    "type": { "const": "status_report" },
+    "id": {
+      "description": "The `id` of the status_request this answers. A phone ignores a report it is not waiting for.",
+      "type": "string",
+      "minLength": 1
+    },
+    "agents": {
+      "description": "How many agent Buckets (Descriptor `type` `agent`) the hub publishes now.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "blocked": {
+      "description": "How many of those agents are blocked now.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "herdr": {
+      "description": "How the hub's herdr is doing. Absent when the hub has nothing to say about herdr.",
+      "type": "object",
+      "required": ["state"],
+      "properties": {
+        "state": {
+          "description": "Known in v1.0: `ok` (herdr answers), `not_answering` (installed, but it does not answer: its server is down, say), `protocol_mismatch` (the herdr binary the hub runs is older or newer than the running herdr server; `stsloop-hub init` finds the one that matches), `not_installed` (the hub found no herdr), `checking` (the hub has not heard from herdr yet). A phone says a state it does not know as its words.",
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "description": "The version of the herdr binary the hub runs, as herdr prints it (`0.9.1`), when the hub knows it.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "hooks": {
+      "description": "Whether the hub's Claude Code hooks are installed in the Claude Code settings file it checks. Absent when the hub does not check.",
+      "type": "object",
+      "required": ["installed"],
+      "properties": {
+        "installed": { "type": "boolean" }
+      }
+    }
+  }
+}

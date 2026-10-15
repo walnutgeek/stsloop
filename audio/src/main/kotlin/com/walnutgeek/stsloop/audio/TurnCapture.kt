@@ -16,7 +16,13 @@ import com.walnutgeek.stsloop.core.BucketRequest
 import com.walnutgeek.stsloop.core.hub.HubAliases
 import com.walnutgeek.stsloop.core.hub.HubProvider
 import com.walnutgeek.stsloop.core.hub.Drafts
+import com.walnutgeek.stsloop.core.hub.HubFacts
+import com.walnutgeek.stsloop.core.hub.HubReach
+import com.walnutgeek.stsloop.core.hub.StatusQueries
 import com.walnutgeek.stsloop.core.hub.HubRequests
+import com.walnutgeek.stsloop.core.hub.HubStatus
+import com.walnutgeek.stsloop.core.hub.StatusReport
+import com.walnutgeek.stsloop.core.hub.StatusRequest
 import com.walnutgeek.stsloop.core.hub.Send
 import com.walnutgeek.stsloop.core.hub.Sent
 import com.walnutgeek.stsloop.core.hub.Item
@@ -117,6 +123,11 @@ class TurnCapture(
     summaryNotes: NoteSource = NoteSource.NONE,
     /** Where each capture Bucket's last summary got to. */
     summaryMarks: SummaryMarks = SummaryMarks(null),
+    /**
+     * What the phone knows of its hub for "hub status" and "hub details"
+     * (#75); called on the STT thread, so it may read files.
+     */
+    hubFacts: (StatusQueries.Detail) -> HubFacts = { HubFacts(HubStatus.Unpaired, true, HubReach.EMPTY, null, null, System.currentTimeMillis()) },
     /** Test mode (#27): each Turn's `test` block, computed on the STT thread; null outside test mode. */
     testOf: ((Utterance) -> TurnTest?)? = null,
     /** Speaks each Turn's echo, reporting its end through [spoken]; null means no echo, and the mic never closes. */
@@ -212,6 +223,30 @@ class TurnCapture(
         },
     )
 
+    private val reports = StatusQueries(
+        send = hubSend,
+        say = { text -> if (!ending) loop.announce(text) },
+        facts = hubFacts,
+        clockMs = SystemClock::elapsedRealtime,
+        listener = object : StatusQueries.Listener {
+            override fun asked(request: StatusRequest, detail: StatusQueries.Detail) {
+                Log.i(TAG, "Session $sessionId: asked the hub how it is (${request.id}, ${detail.name.lowercase()})")
+            }
+
+            override fun answered(request: StatusRequest, report: StatusReport, afterMs: Long) {
+                Log.i(TAG, "Session $sessionId: the hub answered ${request.id} in $afterMs ms: $report")
+            }
+
+            override fun timedOut(request: StatusRequest, afterMs: Long) {
+                Log.w(TAG, "Session $sessionId: no status report from the hub to ${request.id} in $afterMs ms")
+            }
+
+            override fun ignored(report: StatusReport) {
+                Log.w(TAG, "Session $sessionId: ignored a status report ${report.id}, which nothing is waiting for")
+            }
+        },
+    )
+
     private val attention = AttentionQueue()
     private val hubSend = hubSend
     private val hasSpeaker = speaker != null
@@ -222,6 +257,7 @@ class TurnCapture(
         request = requests::request,
         drafts = drafts,
         summaries = summaries,
+        hubReport = reports::ask,
         listener = object : CorpusSink.Listener {
             override fun readBack(turn: Turn, say: String, send: () -> Unit, withdraw: () -> Unit) {
                 // Read back, then sent: a readback the Session ends before is never heard, so nothing is sent,
@@ -378,6 +414,7 @@ class TurnCapture(
         requests.tick()
         drafts.tick()
         summaries.tick()
+        reports.tick()
     }
 
     /** Any thread: the hub answered a send; its answer is said into the next Silence. */
@@ -408,6 +445,9 @@ class TurnCapture(
         val told = hubSend(ItemSpoken(item.id))
         Log.i(TAG, "Session $sessionId: item ${item.id} $why; " + if (told) "told the hub" else "the hub is offline, it will send it again")
     }
+
+    /** Any thread: the hub answered "hub status" or "hub details"; the answer is said into the next Silence. */
+    fun statusReport(report: StatusReport) = reports.answered(report)
 
     /** Any thread: the hub answered a request or a summary; its reply is said into the next Silence. */
     fun replied(reply: Reply) {

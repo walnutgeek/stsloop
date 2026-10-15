@@ -1,0 +1,8 @@
+{
+  "type": "status_report",
+  "id": "b7e2d4",
+  "agents": 0,
+  "blocked": 0,
+  "herdr": { "state": "protocol_mismatch", "version": "0.8.2" },
+  "hooks": { "installed": false }
+}

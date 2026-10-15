@@ -222,6 +222,41 @@ class SummarizeTest(unittest.IsolatedAsyncioTestCase):
                     await asyncio.wait_for(ws.recv(), 0.2)
 
 
+class StatusRequestTest(unittest.IsolatedAsyncioTestCase):
+    async def test_a_status_request_gets_the_report_its_status_gives(self):
+        def status(request):
+            return p.StatusReport(id=request.id, agents=3, blocked=1, herdr=p.HerdrReport("ok", "0.9.1"), hooks_installed=True)
+
+        async with running_hub(status=status) as (_, url):
+            async with phone(url, pairing_token()) as ws:
+                await ws.send(HELLO)
+                await ws.recv(), await ws.recv()
+                await ws.send(json.dumps(fixture("v1", "status_request/basic.json")))
+                self.assertEqual(json.loads(await asyncio.wait_for(ws.recv(), 5)), fixture("v1", "status_report/herdr.json"))
+
+    async def test_a_status_that_raises_still_gets_a_report_of_what_the_hub_publishes(self):
+        def status(request):
+            raise RuntimeError("bug")
+
+        async with running_hub(status=status) as (_, url):
+            async with phone(url, pairing_token()) as ws:
+                await ws.send(HELLO)
+                await ws.recv(), await ws.recv()
+                with self.assertLogs("stsloop.hub", "ERROR"):
+                    await ws.send(json.dumps(fixture("v1", "status_request/basic.json")))
+                    report = json.loads(await asyncio.wait_for(ws.recv(), 5))
+        self.assertEqual(report, fixture("v1", "status_report/stub.json"))
+
+    async def test_a_status_request_before_the_welcome_is_ignored(self):
+        async with running_hub(status=lambda r: self.fail("answered before hello")) as (_, url):
+            async with phone(url, pairing_token()) as ws:
+                await ws.send(json.dumps(fixture("v1", "status_request/basic.json")))
+                await ws.send(HELLO)
+                await ws.recv(), await ws.recv()
+                with self.assertRaises(asyncio.TimeoutError):
+                    await asyncio.wait_for(ws.recv(), 0.2)
+
+
 class BucketsChangedTest(unittest.IsolatedAsyncioTestCase):
     async def test_the_welcomed_phone_gets_a_new_snapshot(self):
         buckets = [STUB_BUCKETS]

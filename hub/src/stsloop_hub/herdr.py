@@ -7,6 +7,14 @@ agent read` for one agent's recent output ("what does it say"), and `herdr
 agent prompt <pane> <text>`, to submit a Draft the person sent (rung 4). The
 hub never sends keys, renames, focuses, starts or stops anything in herdr.
 
+Which herdr binary: a herdr client only talks to a herdr server of its own
+protocol, and an older herdr earlier on the PATH (`/usr/bin/herdr` 0.8.2
+before `~/.local/bin/herdr` 0.9.1) gets `protocol_mismatch` from the running
+server. So `stsloop-hub init` tries each `candidates` binary with `probe`
+(`herdr --version` and one `herdr api snapshot`, both read-only) and saves
+the first the server answers (`resolve`) in `hub.json`; `serve` runs that one
+(`binary`), unless `$HERDR_BIN_PATH` names one, as it does inside herdr's panes.
+
 herdr's agent detection states are `idle`, `working`, `blocked`, `done` and
 `unknown` (`herdr api schema`, `AgentStatus`): `blocked` means herdr sees an
 approval or question UI; `done` is `idle` after background work nobody has
@@ -59,15 +67,19 @@ class Agent:
 
 class HerdrError(Exception):
     """herdr is installed but did not answer: its server is down, or speaks another protocol. For a prompt:
-    it is not known whether the agent got it."""
+    it is not known whether the agent got it. `code` is herdr's own error code when it gave one
+    (`protocol_mismatch`, `server_not_running`)."""
+
+    def __init__(self, message: str = "", code: str | None = None):
+        super().__init__(message)
+        self.code = code
 
 
 class HerdrRefused(HerdrError):
     """herdr refused a prompt before writing anything to the agent; `code` is herdr's reason."""
 
     def __init__(self, code: str, message: str = ""):
-        super().__init__(f"herdr: {code}: {message}" if message else f"herdr: {code}")
-        self.code = code
+        super().__init__(f"herdr: {code}: {message}" if message else f"herdr: {code}", code)
 
 
 class Herdr(Protocol):
@@ -85,13 +97,109 @@ class Herdr(Protocol):
         ...
 
 
-def binary(env: Mapping[str, str] = os.environ, which: Callable[[str], str | None] = shutil.which) -> str | None:
-    """The herdr binary: the one herdr names in `$HERDR_BIN_PATH` (set inside its panes), else `herdr` on
-    the PATH. None when herdr is not installed."""
-    named = env.get("HERDR_BIN_PATH")
-    if named and os.access(named, os.X_OK):
-        return named
+def binary(
+    env: Mapping[str, str] = os.environ,
+    which: Callable[[str], str | None] | None = None,
+    saved: str | None = None,
+) -> str | None:
+    """The herdr binary: the one herdr names in `$HERDR_BIN_PATH` (set inside its panes), else the one
+    `init` saved (`saved`, which matched the running herdr server then), else `herdr` on `env`'s PATH.
+    None when herdr is not installed."""
+    for path in (env.get("HERDR_BIN_PATH"), saved):
+        if path and _executable(path):
+            return path
+    if saved:
+        log.warning("the herdr init saved, %s, is not there any more; using the PATH's", saved)
+    if which is None:
+        return shutil.which("herdr", path=env["PATH"]) if env.get("PATH") else None
     return which("herdr")
+
+
+def _executable(path: str) -> bool:
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+# --- finding the herdr that matches the running server (`stsloop-hub init`) -------------------
+
+#: What `herdr --version` prints: "herdr 0.9.1".
+VERSION = ("--version",)
+_VERSION = re.compile(r"\bherdr\s+v?(\S+)")
+
+
+@dataclass(frozen=True)
+class Probe:
+    """One herdr binary, tried against the running herdr server with `herdr api snapshot`."""
+
+    path: str
+    #: What `herdr --version` says ("0.9.1"); None when it could not tell.
+    version: str | None
+    #: True when its snapshot answered: it speaks the running server's protocol.
+    answers: bool
+    #: herdr's error code when it did not answer (`protocol_mismatch`, `server_not_running`), else None.
+    code: str | None = None
+    #: Why it did not answer, as herdr or the system said it.
+    error: str | None = None
+
+    def describe(self) -> str:
+        """For the person: "/usr/bin/herdr (0.8.2)"."""
+        return f"{self.path} ({self.version})" if self.version else self.path
+
+
+def candidates(env: Mapping[str, str] = os.environ, executable: Callable[[str], bool] = _executable) -> list[str]:
+    """Every herdr binary worth trying, in order, each once: `$HERDR_BIN_PATH`, each `herdr` on the PATH
+    (not just the first: an old one may shadow the one that matches), then `~/.local/bin/herdr`, where
+    herdr's own installer puts it."""
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def add(path: str) -> None:
+        if not executable(path):
+            return
+        real = os.path.realpath(path)
+        if real not in seen:
+            seen.add(real)
+            found.append(path)
+
+    if env.get("HERDR_BIN_PATH"):
+        add(env["HERDR_BIN_PATH"])
+    for directory in (env.get("PATH") or "").split(os.pathsep):
+        if directory:
+            add(os.path.join(directory, "herdr"))
+    home = env.get("HOME")
+    if home:
+        add(os.path.join(home, ".local", "bin", "herdr"))
+    return found
+
+
+def version(path: str, run=subprocess.run, timeout: float = TIMEOUT_S) -> str | None:
+    """The version `path --version` prints ("0.9.1"), or None when it does not say."""
+    try:
+        result = run([path, *VERSION], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    match = _VERSION.search(result.stdout or "") if result.returncode == 0 else None
+    return match.group(1) if match else None
+
+
+def probe(path: str, run=subprocess.run) -> Probe:
+    """Tries `path` against the running herdr server: its version, and one `herdr api snapshot`. Read-only."""
+    try:
+        HerdrCli(path, run=run).agents()
+    except HerdrError as e:
+        return Probe(path, version(path, run), answers=False, code=e.code, error=str(e))
+    return Probe(path, version(path, run), answers=True)
+
+
+def resolve(paths: list[str], probe: Callable[[str], Probe] = probe) -> tuple[Probe | None, list[Probe]]:
+    """The first of `paths` whose snapshot the running herdr server answers, and every probe made on the
+    way, in order. None when none answers: no server is running, or no binary matches it."""
+    tried = []
+    for path in paths:
+        found = probe(path)
+        tried.append(found)
+        if found.answers:
+            return found, tried
+    return None, tried
 
 
 def parse_snapshot(text: str) -> list[Agent]:
@@ -104,7 +212,8 @@ def parse_snapshot(text: str) -> list[Agent]:
         raise HerdrError("herdr answered something that is not an object")
     if "error" in obj:
         error = obj["error"] if isinstance(obj["error"], dict) else {}
-        raise HerdrError(f"herdr: {error.get('code', 'error')}: {error.get('message', obj['error'])}")
+        code = error.get("code") if isinstance(error.get("code"), str) and error.get("code") else None
+        raise HerdrError(f"herdr: {code or 'error'}: {error.get('message', obj['error'])}", code)
     snapshot = (obj.get("result") or {}).get("snapshot")
     if not isinstance(snapshot, dict):
         raise HerdrError("herdr's answer has no snapshot")

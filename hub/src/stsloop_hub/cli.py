@@ -13,8 +13,14 @@ and writes it only when the person says yes (or passes `--hooks`); with no
 terminal to ask on, it writes nothing. `--remove-hooks` takes them out again,
 and does nothing else.
 
+`init` also finds the herdr binary that matches the running herdr server: it
+tries `$HERDR_BIN_PATH`, each `herdr` on the PATH and `~/.local/bin/herdr`,
+read-only (`herdr --version`, `herdr api snapshot`), says each one that does
+not match, and saves the first that does in `hub.json` (`herdr.py`).
+
 `serve` publishes one Bucket per coding agent (`agents.py`): each herdr agent
-when herdr is installed (`$HERDR_BIN_PATH`, else `herdr` on the PATH), and
+when herdr is installed (`$HERDR_BIN_PATH`, else the herdr `init` saved, else
+`herdr` on the PATH; tried once at start, and a mismatch is said), and
 each Claude Code session its hooks report (on 127.0.0.1, `hooks_port`) that
 herdr does not show. An agent's "what does it say" is summarised by the
 backend `hub.json` names (`claude -p` by default; see `config.py`). It stores the
@@ -40,6 +46,7 @@ from pathlib import Path
 from typing import TextIO
 
 from . import alerts, claude_settings, config, herdr, hook_server, pairing, summary, tailnet
+from . import protocol as p
 from .alerts import Mutes
 from .agents import AgentsProvider
 from .claude_code import Sessions
@@ -48,6 +55,7 @@ from .corpus import CorpusStore
 from .sends import FILE as SENDS_FILE
 from .sends import Deliveries, SendLog
 from .hub import Hub
+from .status import Status, hooks_installed
 
 #: Background work that runs while the hub serves.
 Poller = Callable[[], Awaitable[None]]
@@ -137,6 +145,7 @@ def main(
     make_backend: Callable[[config.SummariserConfig], summary.Backend] = summary.backend,
     ask: Callable[[str], bool] | None = None,
     which: Callable[[str], str | None] = shutil.which,
+    probe_herdr: Callable[[str], herdr.Probe] = herdr.probe,
 ) -> int:
     out, err = out or sys.stdout, err or sys.stderr
     args = _parser().parse_args(argv)
@@ -161,6 +170,7 @@ def main(
             cfg.port = args.port
         if args.hooks_port:
             cfg.hooks_port = args.hooks_port
+        _find_herdr(cfg, env, probe_herdr, out, err)
         path = config.save(directory, cfg)
         print(f"Pairing token {'kept in' if saved and not args.new_token else 'written to'} {path}", file=out)
         if not args.no_hooks:
@@ -192,7 +202,10 @@ def main(
         print(f"stsloop-hub: cannot use {corpus_root} for the Corpus: {e}", file=err)
         return 1
     print(f"stsloop-hub: storing uploaded Turns in {corpus.root}", file=err)
-    found = (find_herdr or (lambda: _herdr(env)))()
+    if find_herdr is not None:
+        found, herdr_version = find_herdr(), None
+    else:
+        found, herdr_version = _herdr(env, saved.herdr, probe_herdr, err)
     if not found:
         logging.getLogger("stsloop.hub").info("herdr is not installed; agent Buckets come from Claude Code hooks only")
     summariser = saved.summariser or config.SummariserConfig()
@@ -209,10 +222,15 @@ def main(
     except OSError as e:
         print(f"stsloop-hub: cannot read {directory / SENDS_FILE}: {e}", file=err)
         return 1
+    status = Status(
+        buckets.descriptors, buckets.blocked, herdr_state=provider.herdr_state, herdr_version=herdr_version,
+        hooks=hooks_installed(claude_settings.default_path(env), saved.hooks_port),
+    )
     hub = Hub(token=saved.token, descriptors=buckets.descriptors, answer=buckets.answer, corpus=corpus,
               deliver=Deliveries(buckets.prepare_send, sends).deliver,
               items=buckets.outstanding, spoken=buckets.spoken,
-              summarise=summary.NoteSummaries(model, summariser.timeout_s).answer)
+              summarise=summary.NoteSummaries(model, summariser.timeout_s).answer,
+              status=status.report)
 
     def polled(changed: bool) -> None:
         """After each poll, on the event loop: a new snapshot if the Buckets changed, and any new Item."""
@@ -301,8 +319,49 @@ def _remove_hooks(path: Path, out: TextIO, err: TextIO) -> int:
     return 0
 
 
-def _herdr(env: Mapping[str, str]) -> herdr.Herdr | None:
-    path = herdr.binary(env)
-    if path:
-        logging.getLogger("stsloop.hub").info("herdr found at %s; one Bucket per agent", path)
-    return herdr.HerdrCli(path) if path else None
+def _herdr(env: Mapping[str, str], saved: str | None, probe: Callable[[str], herdr.Probe],
+           err: TextIO) -> tuple[herdr.Herdr | None, str | None]:
+    """The herdr `serve` runs, and its version. It is tried once, so a herdr that does not match the
+    running server is said at start, not found out from a quiet phone."""
+    path = herdr.binary(env, saved=saved)
+    if not path:
+        return None, None
+    found = probe(path)
+    if found.answers:
+        print(f"stsloop-hub: herdr {found.describe()} answers; one Bucket per agent", file=err)
+    elif found.code == p.HERDR_PROTOCOL_MISMATCH:
+        print(f"stsloop-hub: warning: herdr {found.describe()} does not speak the running herdr server's protocol, "
+              "so no agents are published from herdr. Run `stsloop-hub init` to find the herdr that does.", file=err)
+    else:
+        print(f"stsloop-hub: warning: herdr {found.describe()} does not answer yet ({found.error}); "
+              "the hub keeps trying", file=err)
+    return herdr.HerdrCli(path), found.version
+
+
+def _find_herdr(cfg: config.HubConfig, env: Mapping[str, str], probe: Callable[[str], herdr.Probe],
+                out: TextIO, err: TextIO) -> None:
+    """Tries every herdr binary against the running herdr server and keeps the first it answers in `cfg`,
+    for `serve`. Says what it tried; a binary that does not match is said, never skipped silently."""
+    paths = herdr.candidates(env)
+    if not paths:
+        print("herdr not found; agent Buckets come from Claude Code hooks only.", file=out)
+        return
+    found, tried = herdr.resolve(paths, probe)
+    for t in tried:
+        if t.answers:
+            continue
+        if t.code == p.HERDR_PROTOCOL_MISMATCH:
+            print(f"herdr {t.describe()} does not speak the running herdr server's protocol; skipped.", file=out)
+        else:
+            print(f"herdr {t.describe()} does not answer: {t.error}", file=out)
+    if found is not None:
+        cfg.herdr = found.path
+        print(f"herdr {found.describe()} answers the running herdr server; serve will use it.", file=out)
+        return
+    kept = f" serve keeps using {cfg.herdr}." if cfg.herdr else ""
+    if all(t.code == p.HERDR_PROTOCOL_MISMATCH for t in tried):
+        print("stsloop-hub: no herdr here speaks the running herdr server's protocol: update herdr, then run "
+              f"init again.{kept}", file=err)
+    else:
+        print(f"stsloop-hub: no herdr answered; is the herdr server running? Start herdr, then run init again.{kept}",
+              file=err)

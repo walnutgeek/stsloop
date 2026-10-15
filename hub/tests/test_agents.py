@@ -89,6 +89,32 @@ class BucketsTest(Setup):
         self.assertEqual(self.say("hub", "blocked"), "herdr is not answering.")
         self.assertEqual(answer(self.buckets, request("herdr:w8:p1")).reason, "unknown_bucket")
 
+    def test_herdr_state_for_hub_details(self):
+        self.assertEqual(self.provider.herdr_state(), p.HERDR_CHECKING, "not polled yet")
+        self.poll(agent("w8:p1", "stsloop", "working"))
+        self.assertEqual(self.provider.herdr_state(), p.HERDR_OK)
+        self.herdr.error = "herdr: server_not_running: no herdr server is running"
+        self.herdr.code = "server_not_running"
+        with self.assertLogs("stsloop.herdr", "INFO"):
+            for _ in range(GRACE - 1):
+                self.provider.refresh()
+        self.assertEqual(self.provider.herdr_state(), p.HERDR_OK, "a hiccup is not news")
+        with self.assertLogs("stsloop.herdr", "WARNING"):
+            self.provider.refresh()
+        self.assertEqual(self.provider.herdr_state(), p.HERDR_NOT_ANSWERING)
+        self.herdr.error = None
+        self.poll(agent("w8:p1", "stsloop", "working"))
+        self.assertEqual(self.provider.herdr_state(), p.HERDR_OK)
+        self.assertEqual(AgentsProvider(None, sessions=None).herdr_state(), p.HERDR_NOT_INSTALLED)
+
+    def test_a_herdr_of_another_protocol_is_said_and_told_how_to_fix(self):
+        self.herdr.error, self.herdr.code = "herdr: protocol_mismatch: client protocol 20 is older", "protocol_mismatch"
+        with self.assertLogs("stsloop.herdr", "INFO") as logs:
+            for _ in range(GRACE):
+                self.provider.refresh()
+        self.assertEqual(self.provider.herdr_state(), p.HERDR_PROTOCOL_MISMATCH)
+        self.assertIn("stsloop-hub init", logs.output[-1])
+
 
 class StatusTest(Setup):
     def test_status_says_the_state_and_for_how_long(self):

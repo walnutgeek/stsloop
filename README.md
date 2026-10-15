@@ -102,9 +102,19 @@ then say "status": the loop says whether it is blocked, working or done, and
 for how long. "What's blocked", said whatever has Focus, lists the blocked
 agents. "What does it say" (or "read it") summarises the agent's screen in a
 sentence or two. The hub only reads herdr (`herdr api snapshot`, every 2 s,
-and `herdr agent read` for a summary); it never types into an agent. It runs
-`$HERDR_BIN_PATH` when set, else `herdr` on the PATH, so start `serve` where
-that is the herdr your server runs. Without herdr, the hub starts as before.
+and `herdr agent read` for a summary); it never types into an agent. `init`
+finds the herdr that matches your running herdr server: it tries
+`$HERDR_BIN_PATH`, each `herdr` on the PATH and `~/.local/bin/herdr`, says
+any that speaks another protocol (an older `/usr/bin/herdr`, say), and saves
+the first that answers for `serve`. `serve` runs `$HERDR_BIN_PATH` when set,
+else that one, else `herdr` on the PATH, and says at start if it does not
+match. Without herdr, the hub starts as before.
+
+"Hub status" (or "hub health", "how is the hub"), said whatever has Focus, gives the hub in one line ("hub
+connected, 6 agents, 2 blocked."); "hub details" (or "hub info", "details of the hub") adds how long it has been
+connected (or the last failure, while it is offline), herdr's state, whether
+the Claude Code hooks are installed, and how many Turns wait to upload. With
+the hub offline, the phone answers them alone.
 
 **Claude Code hooks.** When `init` finds Claude Code, it offers hooks that
 tell the hub each session's state the moment it changes. It prints exactly

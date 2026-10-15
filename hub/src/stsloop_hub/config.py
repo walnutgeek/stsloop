@@ -1,6 +1,7 @@
 """The hub's config file: the pairing token, an optional host and port, the port
 Claude Code's hooks post to (`hooks_port`, on 127.0.0.1, default 7718), and the
-summariser; and where the uploaded Corpus is kept.
+summariser; the herdr binary `init` found (`herdr`, see `herdr.py`); and where
+the uploaded Corpus is kept.
 
 `hub.json` lives in `$STSLOOP_HUB_HOME`, else `$XDG_CONFIG_HOME/stsloop-hub`,
 else `~/.config/stsloop-hub`. The directory is 0700 and the file 0600: the
@@ -72,6 +73,8 @@ class HubConfig:
     hooks_port: int = DEFAULT_HOOKS_PORT
     #: As `hub.json` has it: None when it has none, and the defaults apply.
     summariser: SummariserConfig | None = None
+    #: The herdr binary `init` found to match the running herdr server; None: `herdr` on the PATH.
+    herdr: str | None = None
 
 
 def new_token() -> str:
@@ -119,7 +122,10 @@ def load(directory: Path) -> HubConfig | None:
     if not isinstance(hooks_port, int) or isinstance(hooks_port, bool) or not 0 < hooks_port < 65536:
         raise ConfigError(f"{path} has an unusable hooks_port {hooks_port!r}")
     summariser = _summariser(obj["summariser"], path) if "summariser" in obj else None
-    return HubConfig(token=token, host=host, port=port, hooks_port=hooks_port, summariser=summariser)
+    herdr = obj.get("herdr")
+    if herdr is not None and (not isinstance(herdr, str) or not herdr):
+        raise ConfigError(f"{path}: herdr must be the path of a herdr binary; run `stsloop-hub init` to find it")
+    return HubConfig(token=token, host=host, port=port, hooks_port=hooks_port, summariser=summariser, herdr=herdr)
 
 
 def _summariser(obj, path: Path) -> SummariserConfig:
@@ -150,6 +156,8 @@ def save(directory: Path, config: HubConfig) -> Path:
         obj["hooks_port"] = config.hooks_port
     if config.summariser:
         obj["summariser"] = config.summariser.to_json()
+    if config.herdr:
+        obj["herdr"] = config.herdr
     path = directory / FILE
     tmp = directory / f".{FILE}.tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

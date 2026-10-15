@@ -639,7 +639,8 @@ Design notes worth keeping:
 - `command` is present only on a command Turn: `name` is permanent once
   written (`scratch_that`, `repeat`, `what_bucket`, `stop_listening`; from
   #40 `where_am_i` and `focus`; from #43 `request`; from #45 `read_back`, `send`, `cancel`; from #76
-  `summarize`), `matched` the phrase
+  `summarize`; from #75 `hub_status`, `hub_details`, which record nothing
+  more: the answer is the hub's state at that moment), `matched` the phrase
   as heard, normalised.
   A name keeps its meaning: `what_bucket` (the previous Turn's Bucket) is no
   longer written, because "what bucket" now says the focused Bucket and is

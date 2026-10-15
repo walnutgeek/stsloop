@@ -151,6 +151,16 @@
         { "from": "phone", "fixture": "summarize/basic.json" },
         { "from": "hub", "fixture": "reply/summary-fallback.json" }
       ]
+    },
+    {
+      "name": "a status request is answered with a status report",
+      "steps": [
+        { "from": "phone", "fixture": "hello/basic.json" },
+        { "from": "hub", "fixture": "welcome/basic.json" },
+        { "from": "hub", "fixture": "descriptors/stub.json" },
+        { "from": "phone", "fixture": "status_request/basic.json" },
+        { "from": "hub", "fixture": "status_report/stub.json" }
+      ]
     }
   ]
 }

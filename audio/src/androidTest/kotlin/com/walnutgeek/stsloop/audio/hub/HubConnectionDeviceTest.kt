@@ -1,9 +1,12 @@
 package com.walnutgeek.stsloop.audio.hub
 
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.walnutgeek.stsloop.core.hub.Descriptors
+import com.walnutgeek.stsloop.core.hub.HubFacts
 import com.walnutgeek.stsloop.core.hub.HubFailure
+import com.walnutgeek.stsloop.core.hub.HubReport
 import com.walnutgeek.stsloop.core.hub.HubLink
 import com.walnutgeek.stsloop.core.hub.HubRequests
 import com.walnutgeek.stsloop.core.hub.HubStatus
@@ -14,6 +17,8 @@ import com.walnutgeek.stsloop.core.hub.Reply
 import com.walnutgeek.stsloop.core.hub.Request
 import com.walnutgeek.stsloop.core.hub.Send
 import com.walnutgeek.stsloop.core.hub.Sent
+import com.walnutgeek.stsloop.core.hub.StatusReport
+import com.walnutgeek.stsloop.core.hub.StatusRequest
 import com.walnutgeek.stsloop.core.hub.Summarize
 import com.walnutgeek.stsloop.core.hub.SummaryNote
 import com.walnutgeek.stsloop.core.summary.BucketSummaries
@@ -273,6 +278,43 @@ class HubConnectionDeviceTest {
         val reach = store.reach()
         assertNull(reach.failure)
         assertTrue(reach.connectedAtMs!! > 1)
+    }
+
+    /**
+     * "Hub status" (#75) over OkHttp: a `status_request` gets one
+     * `status_report` with its id, and the phone words it. Stopping while
+     * welcomed records when the hub was last there, for "hub offline for …".
+     */
+    @Test
+    fun aStatusRequestIsAnsweredAndStoppingRecordsWhenTheHubWasLastThere() {
+        val p = pairing
+        assumeTrue("no hubUrl and hubToken arguments", p != null)
+        store.pair(p!!)
+        val welcomed = CountDownLatch(1)
+        val answered = CountDownLatch(1)
+        var report: StatusReport? = null
+        val c = HubConnection(
+            context, store, "device test",
+            onDescriptors = { welcomed.countDown() },
+            onStatusReport = { report = it; answered.countDown() },
+        )
+        connection = c
+        c.start()
+        assertTrue("not welcomed within 10 s; status ${c.status}", welcomed.await(10, TimeUnit.SECONDS))
+        assertTrue(c.send(StatusRequest("d2")))
+        assertTrue("no report within ${HubRequests.REPLY_TIMEOUT_MS} ms", answered.await(HubRequests.REPLY_TIMEOUT_MS, TimeUnit.MILLISECONDS))
+        assertEquals("d2", report!!.id)
+        val facts = HubFacts.read(c.status, c.offline, store, null, toUpload = false, nowMs = System.currentTimeMillis())
+        val said = HubReport.short(facts, report)
+        Log.i("HubConnectionDeviceTest", "hub status: $report: \"$said\"")
+        assertTrue(said, said.startsWith("hub connected, "))
+        val before = System.currentTimeMillis()
+        c.stop()
+        connection = null
+        val left = store.reach().leftAtMs
+        assertTrue("left_at $left", left != null && left >= before)
+        val offline = HubReport.short(HubFacts.read(HubStatus.Offline("x", HubFailure.NoWelcome), true, store, null, false, left!! + 12 * 60_000), null)
+        assertTrue(offline, offline.startsWith("hub offline for 12 minutes"))
     }
 
     // --- why the hub cannot be used (#74), no hub needed ------------------------------

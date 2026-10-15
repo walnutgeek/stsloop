@@ -93,6 +93,8 @@ SEND_NEEDS_HERDR = p.Command(id="send", phrases=("send",), primitive="request")
 POLL_S = 2.0
 #: Polls herdr may fail in a row before its agents' Buckets go.
 GRACE = 3
+#: herdr's error code for a client binary that does not speak the running server's protocol.
+MISMATCH = p.HERDR_PROTOCOL_MISMATCH
 
 NOT_ANSWERING = "herdr is not answering."
 NOTHING_BLOCKED = "nothing is blocked."
@@ -197,6 +199,8 @@ class AgentsProvider:
         self._answering = False
         self._first = True
         self._failures = 0
+        #: herdr's error code from the last poll that failed, while it is failing.
+        self._error_code: str | None = None
         self._descriptors: tuple[p.Descriptor, ...] = ()
         self._entries: dict[str, _Entry] = {}
         #: Each live agent's (spoken label, number within it), by Bucket id: kept for the agent's
@@ -209,6 +213,16 @@ class AgentsProvider:
 
     def descriptors(self) -> tuple[p.Descriptor, ...]:
         return self._descriptors
+
+    def herdr_state(self) -> str:
+        """How herdr is doing, as a `status_report` says it (`p.HERDR_*`)."""
+        if self._herdr is None:
+            return p.HERDR_NOT_INSTALLED
+        if self._answering:
+            return p.HERDR_OK
+        if self._first:
+            return p.HERDR_CHECKING
+        return p.HERDR_PROTOCOL_MISMATCH if self._error_code == MISMATCH else p.HERDR_NOT_ANSWERING
 
     def hub_commands(self) -> tuple[p.Command, ...]:
         """Commands this Provider adds to the hub Bucket, heard anywhere."""
@@ -258,16 +272,21 @@ class AgentsProvider:
             # One slow or failed poll is a hiccup: the agents keep their Buckets (and Focus on the phone)
             # until herdr has failed GRACE polls in a row.
             self._failures += 1
+            self._error_code = e.code
             if self._failures < GRACE:
                 log.info("herdr did not answer (%d in a row): %s", self._failures, e)
                 return False
-            if self._answering or self._first:
+            if (self._answering or self._first) and e.code == MISMATCH:
+                log.warning("herdr does not speak the running herdr server's protocol (%s): run `stsloop-hub init` "
+                            "to find the herdr binary that does", e)
+            elif self._answering or self._first:
                 log.warning("herdr is not answering: %s", e)
             self._answering, self._first = False, False
             self._seen = {}
             return self._publish()
         agents = polled
         self._failures = 0
+        self._error_code = None
         # The first poll that answers, at start or after herdr was away, cannot know how old a state is.
         first = not self._answering
         if first:
@@ -377,7 +396,7 @@ class AgentsProvider:
             else:
                 primitives, commands = ("request", "speak_item"), (STATUS, READ, SEND_NEEDS_HERDR)
             out.append(p.Descriptor(
-                id=bucket_id, name=name, aliases=aliases, type="agent", primitives=primitives, commands=commands,
+                id=bucket_id, name=name, aliases=aliases, type=p.AGENT, primitives=primitives, commands=commands,
             ))
         return tuple(out)
 
