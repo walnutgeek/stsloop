@@ -6,6 +6,9 @@ import com.walnutgeek.stsloop.core.Ids
 import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
 import com.walnutgeek.stsloop.core.hub.Drafts
+import com.walnutgeek.stsloop.core.summary.BucketSummaries
+import com.walnutgeek.stsloop.core.summary.NoteSource
+import com.walnutgeek.stsloop.core.summary.SummaryMarks
 import com.walnutgeek.stsloop.core.testmode.TurnTest
 
 /**
@@ -26,6 +29,10 @@ import com.walnutgeek.stsloop.core.testmode.TurnTest
  * utterance ended, and once its Turn is published goes to [request], which
  * sends it to the hub (the reply is spoken later) or says why it cannot.
  * Every Turn published restarts the [focus] timeout, at the end of its utterance.
+ *
+ * "Summarize bucket" (#76) records the Notes it covers in its Turn, and once
+ * that is published goes to [summaries], which sends them to the hub (the
+ * summary is spoken later) or reads them out itself.
  *
  * Under an agent Bucket's Focus a Turn that is no command goes to its Draft
  * in [drafts] (#45). "Send" is said as a readback ([Listener.readBack]), and
@@ -55,6 +62,8 @@ class CorpusSink(
     private val request: (BucketRequest) -> String? = { SessionCommands.HUB_OFFLINE },
     /** This Session's Drafts; shared with whatever hears the hub's answers to their sends. */
     private val drafts: Drafts = Drafts(send = { false }, say = {}, clockMs = { 0L }),
+    /** This Session's summaries ("summarize bucket"); by default over no Corpus and no hub. */
+    private val summaries: BucketSummaries = BucketSummaries(NoteSource.NONE, SummaryMarks(null), { false }, { false }, { _, _ -> }, { 0L }),
     private val listener: Listener,
 ) {
     interface Listener {
@@ -85,7 +94,7 @@ class CorpusSink(
         fun discarded(event: TurnEvent.Discarded) {}
     }
 
-    private val commands = SessionCommands(focus, hubOnline, drafts)
+    private val commands = SessionCommands(focus, hubOnline, drafts, summaries)
 
     /** Turns published so far. */
     var published = 0
@@ -131,6 +140,7 @@ class CorpusSink(
             val say = when {
                 command == null -> transcript?.text
                 command.request != null -> request(command.request)
+                command.summarize -> summaries.summarize(command.range)
                 else -> command.say
             }
             listener.published(turn, utterance, transcription?.timing, say)

@@ -487,4 +487,33 @@ class HalfDuplexTest {
         loop.finish()
         assertEquals(listOf(1, 1, 1), listOf(speaking, queued, late))
     }
+
+    // --- announce with then: whether it was heard (a summary's mark, #76) ---
+
+    @Test
+    fun `an announcement's then hears it was said once its end is reported`() {
+        val heard = mutableListOf<Boolean>()
+        quiet(100)
+        loop.announce("Errands: four things.") { heard += it }
+        quiet(10)
+        tts(200)
+        done()
+        tts(10)
+        assertEquals(listOf("Errands: four things."), speaker.said.map { it.second }, "said as written")
+        assertEquals(listOf(true), heard)
+    }
+
+    @Test
+    fun `an announcement lost, never started, or with no speaker was not said`() {
+        val heard = mutableListOf<Pair<String, Boolean>>()
+        quiet(100)
+        loop.announce("lost") { heard += "lost" to it }
+        quiet(10)
+        tts(HalfDuplex.speakingLimitMs("lost").toInt() + 10)
+        HalfDuplex(segmenter, timings, 1000, speaker = null, listener = events).announce("none") { heard += "none" to it }
+        loop.announce("queued") { heard += "queued" to it }
+        loop.finish()
+        loop.announce("late") { heard += "late" to it }
+        assertEquals(listOf("lost" to false, "none" to false, "queued" to false, "late" to false), heard)
+    }
 }

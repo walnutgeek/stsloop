@@ -55,8 +55,36 @@ data class Descriptors(val buckets: List<HubDescriptor>) : Message
 /** Phone to hub: run the `request` command [command] of the Bucket whose Descriptor id is [bucket]. */
 data class Request(val id: String, val bucket: String, val command: String) : Message
 
-/** Hub to phone: the answer to the [Request] [id], to be spoken as it is. [reason] is null when the command ran. */
-data class Reply(val id: String, val say: String, val reason: String? = null) : Message
+/**
+ * Hub to phone: the answer to the [Request] or [Summarize] [id], to be spoken
+ * as it is. [reason] is null when the command ran; [FALLBACK] on a summary
+ * means the summariser did not answer and [say] reads the Notes raw.
+ */
+data class Reply(val id: String, val say: String, val reason: String? = null) : Message {
+    companion object {
+        const val FALLBACK = "fallback"
+    }
+}
+
+/** One Note sent for a summary: its Turn's directory name, and its words. */
+data class SummaryNote(val turn: String, val text: String)
+
+/**
+ * Phone to hub, with the `summaries` capability: summarise [notes] (oldest
+ * first), the Notes said in the capture Bucket named [bucket] since its last
+ * summary, which covered Notes up to the Turn [since] (null: the first
+ * summary, over the last day). [more] says older Notes in that range were
+ * left out. The hub answers with one [Reply] carrying [id].
+ */
+data class Summarize(
+    val id: String,
+    val bucket: String,
+    val notes: List<SummaryNote>,
+    val since: String? = null,
+    val more: Boolean = false,
+) : Message {
+    override fun toString() = "Summarize(id=$id, bucket=$bucket, ${notes.size} notes, since=$since, more=$more)" // keeps the Notes out of logs
+}
 
 /**
  * Hub to phone: an Item for the Attention Queue (`item.schema.json`), said
@@ -147,10 +175,13 @@ object Protocol {
     /** The one version the phone speaks (ADR-0006: the phone supports only its own major). */
     val VERSION = Version(1, 0)
 
-    /** The capabilities the phone can use: Descriptors from the hub, and Corpus upload to it. */
-    val CAPABILITIES: List<String> = listOf("descriptors", CORPUS)
+    /** The capabilities the phone can use: Descriptors from the hub, Corpus upload to it, and summaries of Notes. */
+    val CAPABILITIES: List<String> = listOf("descriptors", CORPUS, SUMMARIES)
 
     const val CORPUS = "corpus"
+
+    /** The hub summarises a capture Bucket's Notes the phone sends it ([Summarize]). */
+    const val SUMMARIES = "summaries"
 
     /** What the phone says first on every connection. */
     val HELLO = Hello(VERSION, CAPABILITIES)
@@ -193,6 +224,16 @@ object Protocol {
                 "descriptors" -> Descriptors(o.list("buckets").map(::descriptor))
                 "request" -> Request(o.string("id"), o.string("bucket"), o.string("command"))
                 "reply" -> Reply(o.string("id"), o.string("say"), if ("reason" in obj) o.string("reason") else null)
+                "summarize" -> Summarize(
+                    o.string("id"),
+                    o.string("bucket"),
+                    o.list("notes").map { n ->
+                        val no = Obj(n as? Map<*, *> ?: throw BadMessage("a summarize's note is not an object"), "summarize's note")
+                        SummaryNote(no.turnName("turn"), no.string("text"))
+                    }.ifEmpty { throw BadMessage("summarize needs at least one note") },
+                    if ("since" in obj) o.turnName("since") else null,
+                    o.boolean("more"),
+                )
                 "send" -> {
                     val key = o.string("key")
                     if (key.length < MIN_KEY) throw BadMessage("send needs a key of at least $MIN_KEY characters")
@@ -263,6 +304,14 @@ object Protocol {
             put("id", message.id)
             message.reason?.let { put("reason", it) }
             put("say", message.say)
+        }
+        is Summarize -> buildMap {
+            put("type", "summarize")
+            put("id", message.id)
+            put("bucket", message.bucket)
+            message.since?.let { put("since", it) }
+            put("notes", message.notes.map { mapOf("turn" to it.turn, "text" to it.text) })
+            if (message.more) put("more", true)
         }
         is Send -> mapOf("type" to "send", "key" to message.key, "bucket" to message.bucket, "text" to message.text)
         is Sent -> buildMap {
@@ -348,6 +397,13 @@ object Protocol {
         }
 
         fun list(key: String): List<*> = map[key] as? List<*> ?: throw BadMessage("$what needs $key as a list")
+
+        /** A Turn directory name (`<started_at>-<id>`). */
+        fun turnName(key: String): String {
+            val s = string(key)
+            if (!TURN_NAME.matches(s)) throw BadMessage("$what's $key \"$s\" is not a Turn directory name")
+            return s
+        }
 
         fun strings(key: String, minItems: Int = 0): List<String> {
             val l = list(key)

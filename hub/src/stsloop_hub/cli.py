@@ -196,7 +196,7 @@ def main(
     if not found:
         logging.getLogger("stsloop.hub").info("herdr is not installed; agent Buckets come from Claude Code hooks only")
     summariser = saved.summariser or config.SummariserConfig()
-    print(f"stsloop-hub: summarising agents with {summariser.backend}, within {summariser.timeout_s:g} s", file=err)
+    print(f"stsloop-hub: summarising agents and notes with {summariser.backend}, within {summariser.timeout_s:g} s", file=err)
     model = make_backend(summariser)
     provider = AgentsProvider(
         found, sessions=Sessions(),
@@ -211,7 +211,8 @@ def main(
         return 1
     hub = Hub(token=saved.token, descriptors=buckets.descriptors, answer=buckets.answer, corpus=corpus,
               deliver=Deliveries(buckets.prepare_send, sends).deliver,
-              items=buckets.outstanding, spoken=buckets.spoken)
+              items=buckets.outstanding, spoken=buckets.spoken,
+              summarise=summary.NoteSummaries(model, summariser.timeout_s).answer)
 
     def polled(changed: bool) -> None:
         """After each poll, on the event loop: a new snapshot if the Buckets changed, and any new Item."""

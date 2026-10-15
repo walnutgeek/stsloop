@@ -111,7 +111,7 @@ class HubLinkTest {
             if (step["from"] == "phone") {
                 // After the welcome the phone's requests are its own, sent through the link: fixture for fixture.
                 val message = (step["fixture"] as String?)?.let { Protocol.decode(Fixtures.text(version, it)) }
-                if (welcomed && (message is Request || message is Send)) {
+                if (welcomed && (message is Request || message is Send || message is Summarize)) {
                     assertTrue(link.send(message))
                     assertEquals(Fixtures.json(version, step["fixture"] as String), Json.parse(socket.sent.last()))
                 }

@@ -638,7 +638,8 @@ Design notes worth keeping:
   was always null, and `jq` reads a missing key as null too.
 - `command` is present only on a command Turn: `name` is permanent once
   written (`scratch_that`, `repeat`, `what_bucket`, `stop_listening`; from
-  #40 `where_am_i` and `focus`; from #43 `request`; from #45 `read_back`, `send`, `cancel`), `matched` the phrase
+  #40 `where_am_i` and `focus`; from #43 `request`; from #45 `read_back`, `send`, `cancel`; from #76
+  `summarize`), `matched` the phrase
   as heard, normalised.
   A name keeps its meaning: `what_bucket` (the previous Turn's Bucket) is no
   longer written, because "what bucket" now says the focused Bucket and is
@@ -680,6 +681,17 @@ Design notes worth keeping:
   still waiting). "Scratch that" on a Draft Turn takes its words back out of
   the Draft. Whether the hub delivered a send is not recorded in the Corpus:
   the hub keeps every key and its answer in `sends.jsonl`.
+- **Summaries (#76, additive within `schema: 1`).** "Summarize bucket" on a
+  capture Bucket is a command Turn with `command.name` `summarize` and a
+  top-level
+  `"summary": { "bucket": <name, or "inbox">, "since": <directory name or null>, "notes": [<directory names>], "more": <bool> }`:
+  `notes` are the Notes it covered, oldest first (empty when there were
+  none), `since` the newest Note the Bucket's previous summary covered
+  (`null` the first time, which covers the last 24 hours), and `more` says
+  older Notes in the range were left out (at most 50 are covered). The
+  summary itself, and whether it came from the hub or was read raw, is not
+  recorded. Under an agent Bucket's Focus the same phrases are recorded as
+  its `read` `request`, as "what does it say" is.
 
 ## Modules
 

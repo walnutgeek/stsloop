@@ -12,6 +12,8 @@ golden fixtures. This module is the hub's reading of it:
 
 Corpus upload (the `corpus` capability) is `TurnOffer` and `TurnAudio` from the
 phone, each answered by a `TurnAck`; `corpus.py` is what the hub does with them.
+Summaries (the `summaries` capability) are `Summarize` from the phone, each
+answered by a `Reply`; `summary.NoteSummaries` words them.
 """
 
 from __future__ import annotations
@@ -36,7 +38,8 @@ SUPPORTED: tuple[Version, ...] = (Version(1, 0),)
 
 #: The capabilities the hub can use, in the order it lists them in `welcome`.
 CORPUS = "corpus"
-CAPABILITIES: tuple[str, ...] = ("descriptors", CORPUS)
+SUMMARIES = "summaries"
+CAPABILITIES: tuple[str, ...] = ("descriptors", CORPUS, SUMMARIES)
 
 #: WebSocket close code sent right after a `refusal`, or when no hello arrives.
 POLICY_VIOLATION = 1008
@@ -105,12 +108,37 @@ class Request:
 
 @dataclass(frozen=True)
 class Reply:
-    """Hub to phone: the answer to the request `id`, as one or two sentences to `say`.
+    """Hub to phone: the answer to the request or summarize `id`, as one or two sentences to `say`.
     `reason` is None when the command ran (see reply.schema.json)."""
 
     id: str
     say: str
     reason: str | None = None
+
+
+#: A `Reply` reason: the summariser did not answer a `Summarize`, so `say` reads the Notes raw.
+FALLBACK = "fallback"
+
+
+@dataclass(frozen=True)
+class SummaryNote:
+    """One Note sent for a summary: its Turn directory name, and its words."""
+
+    turn: str
+    text: str
+
+
+@dataclass(frozen=True)
+class Summarize:
+    """Phone to hub, with the `summaries` capability: summarise `notes` (oldest first), said in the capture
+    Bucket `bucket` since its last summary, which covered Notes up to the Turn `since` (None: its first, over
+    the last day). `more` says older Notes in that range were left out (see summarize.schema.json)."""
+
+    id: str
+    bucket: str
+    notes: tuple[SummaryNote, ...]
+    since: str | None = None
+    more: bool = False
 
 
 @dataclass(frozen=True)
@@ -190,7 +218,8 @@ class ItemSpoken:
     id: str
 
 
-Message = Union[Hello, Welcome, Refusal, Descriptors, Pairing, Request, Reply, TurnOffer, TurnAudio, TurnAck, Send, Sent, Item, ItemSpoken]
+Message = Union[Hello, Welcome, Refusal, Descriptors, Pairing, Request, Reply, Summarize, TurnOffer, TurnAudio, TurnAck, Send,
+                Sent, Item, ItemSpoken]
 
 
 class BadMessage(ValueError):
@@ -346,6 +375,30 @@ def _count(obj: dict, key: str, what: str) -> int:
     return value
 
 
+def _turn_name(obj: dict, key: str, what: str) -> str:
+    name = _string(obj, key, what)
+    if not TURN_NAME.fullmatch(name):
+        raise BadMessage(f"{what}'s {key} {name!r} is not a Turn directory name")
+    return name
+
+
+def _summarize(o: dict) -> Summarize:
+    notes = []
+    for n in _get(o, "notes", list, "summarize"):
+        if not isinstance(n, dict):
+            raise BadMessage("a summarize's note is not an object")
+        notes.append(SummaryNote(turn=_turn_name(n, "turn", "summarize's note"), text=_string(n, "text", "summarize's note")))
+    if not notes:
+        raise BadMessage("summarize needs at least one note")
+    return Summarize(
+        id=_string(o, "id", "summarize"),
+        bucket=_string(o, "bucket", "summarize"),
+        notes=tuple(notes),
+        since=_turn_name(o, "since", "summarize") if "since" in o else None,
+        more=_get(o, "more", bool, "summarize") if "more" in o else False,
+    )
+
+
 def _turn_offer(o: dict) -> TurnOffer:
     turn = _string(o, "turn", "turn_offer")
     if not TURN_NAME.fullmatch(turn):
@@ -418,6 +471,7 @@ _READERS = {
         say=_string(o, "say", "reply"),
         reason=_string(o, "reason", "reply") if "reason" in o else None,
     ),
+    "summarize": _summarize,
     "turn_offer": _turn_offer,
     "turn_audio": _turn_audio,
     "turn_ack": _turn_ack,
@@ -496,6 +550,14 @@ def to_json(message: Message) -> dict:
             if reason is not None:
                 obj["reason"] = reason
             obj["say"] = say
+            return obj
+        case Summarize(id=sid, bucket=bucket, notes=notes, since=since, more=more):
+            obj = {"type": "summarize", "id": sid, "bucket": bucket}
+            if since is not None:
+                obj["since"] = since
+            obj["notes"] = [{"turn": n.turn, "text": n.text} for n in notes]
+            if more:
+                obj["more"] = True
             return obj
         case TurnOffer(turn=turn, turn_json=turn_json, sha256=sha256, bytes=size):
             return {"type": "turn_offer", "turn": turn, "turn_json": turn_json, "audio": {"sha256": sha256, "bytes": size}}

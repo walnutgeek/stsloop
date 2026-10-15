@@ -99,7 +99,26 @@ class TurnJsonTest {
     @Test
     fun `command names are permanent`() {
         // what_bucket (#14) is retired, never reused: "what bucket" is now an alias of where_am_i (#40).
-        assertEquals(listOf("scratch_that", "repeat", "where_am_i", "stop_listening", "focus", "request", "read_back", "send", "cancel"), Command.entries.map { it.json })
+        assertEquals(listOf("scratch_that", "repeat", "where_am_i", "stop_listening", "focus", "request", "read_back", "send", "cancel", "summarize"), Command.entries.map { it.json })
+    }
+
+    @Test
+    fun `a summarize command writes the Bucket and the Notes it covered`() {
+        val notes = listOf("2026-10-14T07:02:11.120Z-a3f1c9", "2026-10-14T07:05:40.904Z-5d20e7")
+        val inv = Classification.command(
+            CommandInvocation(Command.SUMMARIZE, "summarize", summary = SummaryCommand("errands", "2026-10-13T17:40:02.118Z-0c4f1a", notes, more = true)),
+        )
+        val json = TurnJson.encode(turn.copy(transcript = transcript, classification = inv))
+        val parsed = Json.parseObject(json)
+        assertEquals(mapOf("name" to "summarize", "matched" to "summarize"), parsed["command"])
+        assertEquals(mapOf("bucket" to "errands", "since" to "2026-10-13T17:40:02.118Z-0c4f1a", "notes" to notes, "more" to true), parsed["summary"])
+        val first = Classification.command(CommandInvocation(Command.SUMMARIZE, "sum it up", summary = SummaryCommand("inbox")))
+        assertEquals(
+            mapOf("bucket" to "inbox", "since" to null, "notes" to emptyList<String>(), "more" to false),
+            Json.parseObject(TurnJson.encode(turn.copy(classification = first)))["summary"],
+        )
+        assertThrows<IllegalArgumentException> { CommandInvocation(Command.SUMMARIZE, "summarize") }
+        assertThrows<IllegalArgumentException> { CommandInvocation(Command.REPEAT, "repeat", summary = SummaryCommand("errands")) }
     }
 
     @Test

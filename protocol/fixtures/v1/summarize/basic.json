@@ -1,0 +1,12 @@
+{
+  "type": "summarize",
+  "id": "b7e2d0",
+  "bucket": "errands",
+  "since": "2026-10-13T17:40:02.118Z-0c4f1a",
+  "notes": [
+    { "turn": "2026-10-14T07:02:11.120Z-a3f1c9", "text": "order roofing screws" },
+    { "turn": "2026-10-14T07:05:40.904Z-5d20e7", "text": "pick up the dry cleaning before Friday" },
+    { "turn": "2026-10-14T12:31:09.377Z-e19b04", "text": "call the vet about Juno's booster" },
+    { "turn": "2026-10-14T16:58:47.010Z-77c3aa", "text": "return the library books" }
+  ]
+}

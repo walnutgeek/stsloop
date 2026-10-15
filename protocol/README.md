@@ -89,6 +89,19 @@ string `type`.
    `request` commands to every Bucket that uses `speak_item`, answers them
    itself, and keeps the mutes across restarts. No capability is needed.
 
+9. **Summaries.** With the `summaries` capability (a hub always offers
+   it), "summarize bucket" on a capture Bucket sends `summarize`: an `id`,
+   the Bucket's name, the Turn directory name its last summary covered up
+   to (`since`, absent the first time), and the Notes' words, oldest first
+   (`notes`, at most about 50; `more` when older ones were left out). The
+   phone sends the words itself, because the newest Notes may not be
+   uploaded yet. The hub answers one `reply` with the same `id`: a model's
+   summary, or, when there is no model or it fails, the Notes read raw with
+   the reason `fallback`. The phone waits 30 s, then reads them raw itself,
+   and counts the Notes as summarised only once a reply without a reason
+   has been spoken. Under an agent Bucket's Focus the same phrases send its
+   `read` `request` instead.
+
 The hub serves one phone at a time: once a new connection is welcomed, the
 hub closes the older one (code 1000). A refused connection replaces nothing.
 
@@ -124,8 +137,10 @@ Provider produces for a fake herdr and a fake summariser
 `reply/needs-herdr.json` what it publishes and answers for a Claude Code
 session its hooks report without herdr (`hub/tests/test_claude_code.py`,
 which replays recorded hook payloads), the `sent/` fixtures what it answers the
-`send/` ones with (`hub/tests/test_sends.py`), and the `item/` fixtures
-what it raises (`hub/tests/test_alerts.py`). The phone's
+`send/` ones with (`hub/tests/test_sends.py`), the `item/` fixtures
+what it raises (`hub/tests/test_alerts.py`), and `reply/summary.json` and
+`reply/summary-fallback.json` what it answers `summarize/basic.json` with,
+given a fake summariser and none (`hub/tests/test_summary.py`). The phone's
 are in `core/src/test/kotlin/com/walnutgeek/stsloop/core/hub/`
 (`ProtocolFixturesTest`; `HubLinkTest`, which plays each exchange's hub steps
 to the phone and checks where it ends up: online, refused, offline and
@@ -133,5 +148,8 @@ retrying, or unauthorised; and `CorpusUploaderTest`, which plays the hub steps
 of each upload exchange to the uploader, with the offered Turns in its Corpus,
 and checks it sends exactly the phone steps). The phone sends one message,
 `hello/basic.json`, whatever phone a given exchange stands for, then sends the
-exchange's `request`s and `send`s itself, each equal to its fixture
-(`DraftPrimitiveTest` checks the phone's own send against `send/basic.json`).
+exchange's `request`s, `send`s and `summarize`s itself, each equal to its
+fixture (`DraftPrimitiveTest` checks the phone's own send against
+`send/basic.json`, and `BucketSummariesTest` its own summarize against
+`summarize/basic.json`, and its raw reading against the hub's in
+`reply/summary-fallback.json`).

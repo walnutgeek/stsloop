@@ -10,6 +10,7 @@
     { "fixture": "send/extras.json", "reads_as": "send/basic.json" },
     { "fixture": "sent/extras.json", "reads_as": "sent/delivered.json" },
     { "fixture": "item/extras.json", "reads_as": "item/blocked.json" },
-    { "fixture": "item_spoken/extras.json", "reads_as": "item_spoken/basic.json" }
+    { "fixture": "item_spoken/extras.json", "reads_as": "item_spoken/basic.json" },
+    { "fixture": "summarize/extras.json", "reads_as": "summarize/basic.json" }
   ]
 }

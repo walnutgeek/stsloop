@@ -170,6 +170,28 @@ the phone ([ADR-0007](./adr/0007-summariser-on-the-hub.md)). Backends: `claude
 model sees the text and again before it is spoken. When the summariser fails
 or times out, the phone gets herdr's raw state and the last line.
 
+**"Summarize bucket"** (#76; also "summarize", "sum it up") speaks a short
+summary of the Notes said in the focused capture Bucket (the Inbox's
+unlabelled Turns included) **since its last summary**; the first time, those
+of the last 24 hours. Either way at most the newest 50, and tombstoned Notes
+are left out.
+
+- The phone reads the Notes from its own Corpus and sends their words with
+  the request (`summarize`, with the `summaries` capability), so the newest
+  are included before they are uploaded. The hub summarises them with the
+  same backend, redacting as for agent summaries; when that fails it reads
+  them raw.
+- Under an agent Bucket's Focus the same phrases do what "what does it say"
+  does (its `read` command).
+- Hub offline, or no answer within 30 s: the phone answers alone, "errands:
+  7 notes since last time; the latest three: …", reading them raw.
+- The "since last summary" point is kept on the phone per Bucket
+  (`files/summaries.json`), and moves only once a summary from the hub has
+  been spoken. A raw reading does not move it, so those Notes are still in
+  the next summary.
+- The command Turn records the Notes it covered (`docs/phase0.md`, "Corpus
+  format").
+
 ## The settings screen
 
 Phase 0's tunables were adb-only (findings, point 8). Strangers cannot use

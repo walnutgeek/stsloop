@@ -8,6 +8,9 @@ import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.TurnKind
 import com.walnutgeek.stsloop.core.hub.Drafts
 import com.walnutgeek.stsloop.core.grammar.Descriptor
+import com.walnutgeek.stsloop.core.grammar.Primitive
+import com.walnutgeek.stsloop.core.summary.BucketSummaries
+import com.walnutgeek.stsloop.core.summary.NoteRange
 
 /**
  * Carries out whole-utterance commands (`docs/phase0.md`, "Commands") against
@@ -54,6 +57,11 @@ import com.walnutgeek.stsloop.core.grammar.Descriptor
  *   itself; its [Outcome.request] goes to the hub once the Turn is
  *   published, and the reply is spoken when it comes ([HubRequests]).
  * - [Command.STOP_LISTENING]: says [STOPPED_LISTENING] and [Outcome.endsSession].
+ * - [Command.SUMMARIZE] ("summarize bucket", #76): reads the Notes the
+ *   focused capture Bucket's summary covers ([BucketSummaries.range]) and
+ *   records them in its Turn; once that is published, [Outcome.range] is
+ *   summarised ([BucketSummaries.summarize]). A Bucket that holds no Notes
+ *   (a hub Bucket without "what does it say") says [noNotes].
  *
  * The `draft` Primitive's commands (#45) act on the [drafts] of the agent
  * Bucket they name, and record the Draft as it stood ([DraftCommand.text]):
@@ -74,6 +82,8 @@ class SessionCommands(
     private val hubOnline: () -> Boolean = { false },
     /** This Session's Drafts. */
     private val drafts: Drafts,
+    /** This Session's summaries: where "summarize bucket" reads its Notes. */
+    private val summaries: BucketSummaries? = null,
 ) {
     /**
      * What a command does: the [classification] its Turn is written with, what
@@ -87,6 +97,10 @@ class SessionCommands(
         val request: BucketRequest? = null,
         /** For a [Command.SEND] that goes ahead: the key the Draft is sent under, once [say] (its readback) is over. */
         val sendKey: String? = null,
+        /** For [Command.SUMMARIZE] on a capture Bucket: summarise [range] once the Turn is published. */
+        val summarize: Boolean = false,
+        /** The Notes to summarise; null when the Corpus could not be read. */
+        val range: NoteRange? = null,
     )
 
     /** The previous Turn, or null. Its transcript is never null or blank: only such a Turn becomes [previous]. */
@@ -125,7 +139,17 @@ class SessionCommands(
             Command.READ_BACK, Command.CANCEL, Command.SEND -> draft(invocation)
             Command.REQUEST -> Outcome(plain, null, request = invocation.request)
             Command.STOP_LISTENING -> Outcome(plain, STOPPED_LISTENING, endsSession = true)
+            Command.SUMMARIZE -> summary(invocation)
         }
+    }
+
+    private fun summary(invocation: CommandInvocation): Outcome {
+        val s = invocation.summary!!
+        val bucket = focus.named(s.bucket)
+        if (bucket == null || bucket.hub || Primitive.NOTE !in bucket.primitives) return Outcome(Classification.command(invocation), noNotes(s.bucket))
+        val range = summaries?.range(s.bucket)
+        val recorded = s.copy(since = range?.since, notes = range?.notes.orEmpty().map { it.turn }, more = range?.more == true)
+        return Outcome(Classification.command(invocation.copy(summary = recorded)), null, summarize = true, range = range)
     }
 
     private fun draft(invocation: CommandInvocation): Outcome {
@@ -211,6 +235,9 @@ class SessionCommands(
 
         /** Said before "stop listening" ends the Session. */
         const val STOPPED_LISTENING = "stopped listening."
+
+        /** Said when "summarize bucket" is heard under the Focus of a Bucket that holds no Notes. */
+        fun noNotes(bucket: String): String = "${bucketAsWords(bucket).removeSuffix(".")} has no notes to summarize."
 
         /** A Bucket's name as words a TTS engine reads: `house-project` → "house project.". */
         fun bucketAsWords(bucket: String): String = bucket.replace('-', ' ').replace('_', ' ').trim() + "."

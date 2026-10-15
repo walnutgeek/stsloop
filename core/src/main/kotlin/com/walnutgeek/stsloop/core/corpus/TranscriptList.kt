@@ -37,6 +37,8 @@ data class ListedTurn(
     val focus: String? = null,
     val tombstonedBy: String? = null,
     val problem: String? = null,
+    /** A Note's or a Draft Turn's `content`: its words, without the Declaration. */
+    val content: String? = null,
 ) {
     val tombstoned: Boolean get() = tombstonedBy != null
 }
@@ -72,6 +74,7 @@ object TranscriptList {
             bucketSource = root.string("bucket_source"),
             focus = root.string("focus"),
             tombstonedBy = root.string("tombstoned_by"),
+            content = root.string("content"),
         )
     }
 

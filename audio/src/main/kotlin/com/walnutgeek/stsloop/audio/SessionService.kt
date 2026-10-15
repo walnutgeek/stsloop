@@ -40,6 +40,9 @@ import com.walnutgeek.stsloop.core.Wav
 import com.walnutgeek.stsloop.core.hub.HubStore
 import com.walnutgeek.stsloop.core.hub.HubStartNotice
 import com.walnutgeek.stsloop.core.hub.HubStatus
+import com.walnutgeek.stsloop.core.hub.Protocol
+import com.walnutgeek.stsloop.core.summary.CorpusNotes
+import com.walnutgeek.stsloop.core.summary.SummaryMarks
 import com.walnutgeek.stsloop.core.testmode.TestConfig
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -414,6 +417,9 @@ class SessionService : Service() {
                 buckets = registry,
                 hubOnline = { !hubLink.offline },
                 hubSend = hubLink::send,
+                hubSummarises = { (hubLink.status as? HubStatus.Online)?.welcome?.capabilities?.contains(Protocol.SUMMARIES) == true },
+                summaryNotes = CorpusNotes(corpusDir(this)),
+                summaryMarks = SummaryMarks(filesDir),
                 testOf = testMode?.let { t -> t::turnTest },
                 speaker = echo,
                 endSession = { turn ->

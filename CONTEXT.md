@@ -84,7 +84,7 @@ _Avoid_: server, backend, cloud
 
 **Capability**:
 A protocol feature the phone and the hub agree to use, named in the handshake
-(`descriptors` in v1). Not a Primitive: a Capability is about the connection,
+(`descriptors`, `corpus` and `summaries` in v1). Not a Primitive: a Capability is about the connection,
 a Primitive about what the phone does for a Bucket.
 _Avoid_: feature flag
 

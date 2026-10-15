@@ -13,9 +13,10 @@ from unittest import mock
 from pathlib import Path
 
 from stsloop_hub import claude_settings, cli, config, tailnet
+from stsloop_hub import protocol as p
 from stsloop_hub.stub import STUB_BUCKETS
 
-from support import FakeBackend, FakeHerdr, agent, recording
+from support import FakeBackend, FakeHerdr, agent, fixture, recording
 
 
 def free_port() -> int:
@@ -351,7 +352,15 @@ class ServeTest(unittest.TestCase):
         run("init")
         run("serve")
         self.assertEqual(run.summarisers, [config.SummariserConfig(backend="claude")])
-        self.assertIn("summarising agents with claude", run.err.getvalue())
+        self.assertIn("summarising agents and notes with claude", run.err.getvalue())
+
+    def test_the_served_hub_summarises_notes_with_the_same_backend(self):
+        run = Run(self.home)
+        run("init")
+        run("serve")
+        hub = run.served[0][0]
+        reply = hub._summarise(p.from_json(fixture("v1", "summarize/basic.json")))
+        self.assertEqual(reply, p.Reply(id="b7e2d0", say="a summary."), "the fake backend's answer")
 
     def test_the_summariser_named_in_the_config_is_used_and_init_keeps_it(self):
         run = Run(self.home, herdr=FakeHerdr())

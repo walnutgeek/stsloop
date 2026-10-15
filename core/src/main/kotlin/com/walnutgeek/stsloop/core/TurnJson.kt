@@ -67,6 +67,12 @@ object TurnJson {
                     if (cmd.command == Command.SEND) append(", \"key\": ").strOrNull(d.key)
                     append(" },\n")
                 }
+                cmd.summary?.let { s ->
+                    append("  \"summary\": { \"bucket\": ").str(s.bucket)
+                    append(", \"since\": ").strOrNull(s.since)
+                    append(", \"notes\": ").strList(s.notes)
+                    append(", \"more\": ").append(s.more).append(" },\n")
+                }
             }
         }
         turn.test?.let { t ->

@@ -24,6 +24,10 @@ import com.walnutgeek.stsloop.core.hub.ItemSpoken
 import com.walnutgeek.stsloop.core.hub.Message
 import com.walnutgeek.stsloop.core.hub.Reply
 import com.walnutgeek.stsloop.core.hub.Request
+import com.walnutgeek.stsloop.core.hub.Summarize
+import com.walnutgeek.stsloop.core.summary.BucketSummaries
+import com.walnutgeek.stsloop.core.summary.NoteSource
+import com.walnutgeek.stsloop.core.summary.SummaryMarks
 import com.walnutgeek.stsloop.core.speech.StreamingRecognizer
 import com.walnutgeek.stsloop.core.testmode.TestConfig
 import com.walnutgeek.stsloop.core.testmode.TurnTest
@@ -43,6 +47,7 @@ import com.walnutgeek.stsloop.core.turn.Utterance
 import com.walnutgeek.stsloop.core.turn.Worker
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -63,6 +68,11 @@ import java.util.concurrent.TimeUnit
  * Bucket's Focus, Turns make its Draft ([Drafts], #45); "send" reads it back
  * and then sends it through `hubSend`, and the hub's answer, handed to
  * [sent], is said; [welcomed] resends whatever the hub has not answered.
+ * "Summarize bucket" (#76) reads the focused capture Bucket's Notes from
+ * `summaryNotes` and sends them to the hub when it offers `summaries`
+ * (`hubSummarises`); the summary, handed to [replied] like a request's
+ * reply, is said, and once it has been heard the Bucket's mark in
+ * `summaryMarks` moves. Without the hub the loop reads the Notes raw itself.
  * An Item the hub raises (a blocked agent), handed to [item], waits in the
  * Session's [AttentionQueue] and is said after an earcon in the next
  * Silence; once it has been said, the hub is told (`item_spoken`).
@@ -101,6 +111,12 @@ class TurnCapture(
     hubOnline: () -> Boolean = { false },
     /** Sends a message to the hub, false when it cannot; must return at once. Replies come back through [replied]. */
     hubSend: (Message) -> Boolean = { false },
+    /** Whether the hub is welcomed now with the `summaries` capability (a volatile read). */
+    hubSummarises: () -> Boolean = { false },
+    /** Where "summarize bucket" reads Notes: the Corpus. */
+    summaryNotes: NoteSource = NoteSource.NONE,
+    /** Where each capture Bucket's last summary got to. */
+    summaryMarks: SummaryMarks = SummaryMarks(null),
     /** Test mode (#27): each Turn's `test` block, computed on the STT thread; null outside test mode. */
     testOf: ((Utterance) -> TurnTest?)? = null,
     /** Speaks each Turn's echo, reporting its end through [spoken]; null means no echo, and the mic never closes. */
@@ -158,6 +174,44 @@ class TurnCapture(
         },
     )
 
+    private val summaries = BucketSummaries(
+        notes = summaryNotes,
+        marks = summaryMarks,
+        hubSummarises = hubSummarises,
+        send = hubSend,
+        say = { text, heard -> if (ending) heard(false) else loop.announce(text, heard) },
+        clockMs = SystemClock::elapsedRealtime,
+        // The mark is a file write, and a summary is heard on the capture thread: written on the STT thread.
+        io = { task ->
+            try {
+                executor.execute(task)
+            } catch (e: RejectedExecutionException) {
+                Log.w(TAG, "Session $sessionId: a summary was heard as the Session ended; its mark stays", e)
+            }
+        },
+        listener = object : BucketSummaries.Listener {
+            override fun sent(summarize: Summarize) {
+                Log.i(TAG, "Session $sessionId: asked the hub to summarise ${summarize.notes.size} notes of ${summarize.bucket} (${summarize.id})")
+            }
+
+            override fun replied(summarize: Summarize, reply: Reply, afterMs: Long) {
+                Log.i(TAG, "Session $sessionId: the hub summarised ${summarize.id} in $afterMs ms${reply.reason?.let { " ($it)" } ?: ""}")
+            }
+
+            override fun timedOut(summarize: Summarize, afterMs: Long) {
+                Log.w(TAG, "Session $sessionId: no summary from the hub for ${summarize.id} in $afterMs ms; reading the notes raw")
+            }
+
+            override fun moved(bucket: String, through: String) {
+                Log.i(TAG, "Session $sessionId: $bucket summarised through $through")
+            }
+
+            override fun failed(what: String, error: Exception) {
+                Log.e(TAG, "Session $sessionId: $what failed", error)
+            }
+        },
+    )
+
     private val attention = AttentionQueue()
     private val hubSend = hubSend
     private val hasSpeaker = speaker != null
@@ -167,6 +221,7 @@ class TurnCapture(
         hubOnline = hubOnline,
         request = requests::request,
         drafts = drafts,
+        summaries = summaries,
         listener = object : CorpusSink.Listener {
             override fun readBack(turn: Turn, say: String, send: () -> Unit, withdraw: () -> Unit) {
                 // Read back, then sent: a readback the Session ends before is never heard, so nothing is sent,
@@ -322,6 +377,7 @@ class TurnCapture(
         }
         requests.tick()
         drafts.tick()
+        summaries.tick()
     }
 
     /** Any thread: the hub answered a send; its answer is said into the next Silence. */
@@ -353,8 +409,10 @@ class TurnCapture(
         Log.i(TAG, "Session $sessionId: item ${item.id} $why; " + if (told) "told the hub" else "the hub is offline, it will send it again")
     }
 
-    /** Any thread: the hub answered a request; its reply is said into the next Silence. */
-    fun replied(reply: Reply) = requests.replied(reply)
+    /** Any thread: the hub answered a request or a summary; its reply is said into the next Silence. */
+    fun replied(reply: Reply) {
+        if (!summaries.replied(reply)) requests.replied(reply)
+    }
 
     /**
      * Any thread: say [text] into the next Silence, as the loop's own machine

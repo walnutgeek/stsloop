@@ -17,7 +17,7 @@
       }
     },
     "capabilities": {
-      "description": "The protocol features the phone can use. The hub answers with the subset it will use and ignores names it does not know. Known in v1.0: `descriptors` (the hub sends Bucket Descriptors) and `corpus` (the phone uploads its Corpus: `turn_offer`, `turn_audio`, `turn_ack`).",
+      "description": "The protocol features the phone can use. The hub answers with the subset it will use and ignores names it does not know. Known in v1.0: `descriptors` (the hub sends Bucket Descriptors), `corpus` (the phone uploads its Corpus: `turn_offer`, `turn_audio`, `turn_ack`), and `summaries` (the hub summarises a capture Bucket's Notes: `summarize`, answered by `reply`).",
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true
