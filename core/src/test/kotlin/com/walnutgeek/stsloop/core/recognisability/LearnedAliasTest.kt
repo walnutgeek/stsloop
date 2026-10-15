@@ -162,6 +162,16 @@ class LearnedAliasTest {
     }
 
     @Test
+    fun `the longer command phrases of #82 are refused too`() {
+        val s = BucketSettings(null, null, agents)
+        val r = checked(s, mapOf("stsloop" to six("Send it."), "house site" to six("How is the hub?")))
+        assertEquals(
+            mapOf("stsloop" to "\"Send it\" is already the command \"send it\".", "house site" to "\"How is the hub\" is already the command \"how is the hub\"."),
+            s.learn(r, model).refused.associate { it.probe.key to it.why },
+        )
+    }
+
+    @Test
     fun `two Buckets heard as the same words both go without`() {
         val s = BucketSettings("""{"buckets": [{"name": "woodglue"}, {"name": "woodgloo"}]}""", null, null)
         val learning = s.learn(checked(s, mapOf("woodglue" to six("Would glue."), "woodgloo" to six("Would glue."))), model)

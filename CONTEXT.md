@@ -43,6 +43,18 @@ optionally, Inbound Items it can raise. A capture Bucket also owns a Word list
 and is where its Notes live. Absorbed the former Lane (ADR-0005).
 _Avoid_: folder, tag, category, list, destination, lane, channel, context
 
+**Primary**:
+The phrase the docs and every spoken prompt teach for a Bucket or a command:
+a Bucket's name, a command's first phrase. It must be heard as itself every
+time by the recognisability check; any other phrase is an alias.
+_Avoid_: canonical phrase, main alias
+
+**Learned alias**:
+An alias the phone adds to a Bucket because the recogniser consistently hears
+one of its phrases as other words. Shown apart in settings and removable;
+never a command phrase or another Bucket's.
+_Avoid_: auto-alias, correction
+
 **Provider**:
 What publishes a set of Buckets and answers their commands: capture on the
 phone; herdr and Claude Code hooks on the hub; later podcast. The plug-in

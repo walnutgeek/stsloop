@@ -95,6 +95,16 @@ When herdr and the hooks both see the same agent, the hub merges them into one
 Bucket. An agent Bucket's name comes from its herdr workspace or its project
 directory, and its aliases can be edited in settings.
 
+A name the recogniser cannot hear as written gets a **learned alias** (#81):
+when the recognisability check hears a Bucket's name or alias as the same
+other words in at least 5 of its 6 variants, the phone adds those words
+("stsloop agent" heard as "STS loop agent"), unless they are already another
+Bucket's phrase or any command phrase. The loop says it once ("stsloop agent
+also answers to STS loop agent."). Settings shows learned aliases apart, each
+removable; a removed one is not learned again for that phrase and recogniser
+model. A capture Bucket's are kept under `learned` in its `buckets.json`
+entry, a hub Bucket's under `learned` in `files/hub/aliases.json`.
+
 Settled in #47: each hook posts its event to the hub on loopback with the
 session's herdr pane (`$HERDR_PANE_ID`) and Claude Code pid, so a session in
 a herdr pane is that pane's Bucket (`herdr:<pane>`), and one outside herdr is
@@ -257,7 +267,8 @@ adb. v0.1 adds one screen with:
 - focus timeout;
 - hub pairing (scan, forget), and the hub line: connected, or the last
   failure and when;
-- Buckets and their aliases, with each one's recognisability result.
+- Buckets and their aliases, with each one's recognisability result, and
+  their learned aliases, each removable.
 
 ## Phase 0 findings, settled
 
