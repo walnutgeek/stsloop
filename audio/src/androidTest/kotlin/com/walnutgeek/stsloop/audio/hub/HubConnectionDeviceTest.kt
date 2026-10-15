@@ -14,6 +14,9 @@ import com.walnutgeek.stsloop.core.hub.Reply
 import com.walnutgeek.stsloop.core.hub.Request
 import com.walnutgeek.stsloop.core.hub.Send
 import com.walnutgeek.stsloop.core.hub.Sent
+import com.walnutgeek.stsloop.core.hub.Summarize
+import com.walnutgeek.stsloop.core.hub.SummaryNote
+import com.walnutgeek.stsloop.core.summary.BucketSummaries
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -169,6 +172,42 @@ class HubConnectionDeviceTest {
         assertTrue(c.send(Request("d1", "hub", "blocked")))
         assertTrue("no reply within ${HubRequests.REPLY_TIMEOUT_MS} ms", answered.await(HubRequests.REPLY_TIMEOUT_MS, TimeUnit.MILLISECONDS))
         assertEquals("d1", reply!!.id)
+        assertTrue(reply!!.say.isNotBlank())
+    }
+
+    /**
+     * "Summarize bucket" (#76) over OkHttp: the hub offers `summaries`, and a
+     * `summarize` of made-up Notes gets one reply with its id: the summary,
+     * or the Notes read raw (`fallback`) when the hub has no working model.
+     * Run it against a test hub whose summariser cannot answer, so no Note,
+     * made up or not, reaches a model.
+     */
+    @Test
+    fun aSummarizeIsAnsweredWithAReplyToSay() {
+        val p = pairing
+        assumeTrue("no hubUrl and hubToken arguments", p != null)
+        store.pair(p!!)
+        val welcomed = CountDownLatch(1)
+        val answered = CountDownLatch(1)
+        var reply: Reply? = null
+        val c = HubConnection(
+            context, store, "device test",
+            onDescriptors = { welcomed.countDown() },
+            onReply = { reply = it; answered.countDown() },
+        )
+        connection = c
+        c.start()
+        assertTrue("not welcomed within 10 s; status ${c.status}", welcomed.await(10, TimeUnit.SECONDS))
+        assertTrue(Protocol.SUMMARIES in (c.status as HubStatus.Online).welcome.capabilities)
+        val notes = listOf("order roofing screws", "return the library books").mapIndexed { i, text ->
+            SummaryNote(com.walnutgeek.stsloop.core.turnDirectoryName(1_760_421_600_000L + i * 60_000L, "d0000$i"), text)
+        }
+        assertTrue(c.send(Summarize("d2", "device-test", notes)))
+        assertTrue("no reply within ${BucketSummaries.REPLY_TIMEOUT_MS} ms", answered.await(BucketSummaries.REPLY_TIMEOUT_MS, TimeUnit.MILLISECONDS))
+        assertEquals("d2", reply!!.id)
+        if (reply!!.reason == Reply.FALLBACK) {
+            assertEquals("device test: 2 notes in the last day: order roofing screws. return the library books.", reply!!.say)
+        }
         assertTrue(reply!!.say.isNotBlank())
     }
 
