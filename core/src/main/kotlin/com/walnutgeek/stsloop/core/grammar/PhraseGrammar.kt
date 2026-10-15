@@ -7,6 +7,7 @@ import com.walnutgeek.stsloop.core.CommandInvocation
 import com.walnutgeek.stsloop.core.Declaration
 import com.walnutgeek.stsloop.core.DeclarationPosition
 import com.walnutgeek.stsloop.core.DraftCommand
+import com.walnutgeek.stsloop.core.SummaryCommand
 
 /**
  * The phrase grammar (`docs/phase0.md`, "Phrase grammar"): pure string matching
@@ -63,6 +64,10 @@ import com.walnutgeek.stsloop.core.DraftCommand
  * aliases. Each is a [Command.REQUEST] naming its Bucket and command, or,
  * for a command of the `draft` Primitive ("read it back", "send",
  * "cancel"), the [Command] its id names, with a [DraftCommand].
+ *
+ * **Summaries** (#76): [Command.SUMMARIZE] ("summarize bucket") names the
+ * Bucket that has Focus, the Inbox included; under an agent Bucket's Focus
+ * it is that Bucket's [READ] request ("what does it say") instead.
  *
  * **Drafts** (#45): under the Focus of an agent Bucket that uses the `draft`
  * Primitive ([BucketRegistry.takesDrafts]), a Turn that is neither a command
@@ -138,7 +143,7 @@ class PhraseGrammar(buckets: BucketRegistry) {
         while (to > from && words[to - 1] in FILLERS) to--
         val said = words.subList(from, to)
         val matched = said.joinToString(" ")
-        commands[said]?.let { return CommandInvocation(it, matched) }
+        commands[said]?.let { return if (it == Command.SUMMARIZE) summarize(matched, c, focused) else CommandInvocation(it, matched) }
         val own = focused?.let { c.buckets.commandForms[it]?.get(said) }?.let { focused to it }
         (own ?: c.buckets.anywhereForms[said])?.let { (name, command) ->
             val bucket = c.buckets.named(name)
@@ -151,6 +156,21 @@ class PhraseGrammar(buckets: BucketRegistry) {
         }
         val bucket = c.buckets.focusForms[said] ?: return null
         return CommandInvocation(Command.FOCUS, matched, focus = bucket, focusId = c.buckets.named(bucket)?.id)
+    }
+
+    /**
+     * [Command.SUMMARIZE] under the Focus of [focused] (null: the Inbox). On a
+     * hub Bucket that declares a [READ] request ("what does it say"), it is
+     * that request; otherwise it summarises the focused Bucket's Notes.
+     */
+    private fun summarize(matched: String, c: Compiled, focused: String?): CommandInvocation {
+        val bucket = focused?.let(c.buckets::named)
+        val id = bucket?.id?.takeIf { bucket.hub }
+        val read = bucket?.commands?.firstOrNull { it.id == READ && it.primitive == Primitive.REQUEST }
+        if (id != null && read != null) {
+            return CommandInvocation(Command.REQUEST, matched, request = BucketRequest(bucket.name, id, read.id, read.replyWithinMs))
+        }
+        return CommandInvocation(Command.SUMMARIZE, matched, summary = SummaryCommand(bucket?.name ?: c.buckets.inbox.name))
     }
 
     /** [transcript] as a Note's content: its words, fillers at either end aside, or null when nothing is left. */
@@ -234,5 +254,8 @@ class PhraseGrammar(buckets: BucketRegistry) {
          * which people use to start or close a dictation.
          */
         val FILLERS: Set<String> = setOf("um", "umm", "uh", "uhm", "er", "erm", "ah", "hmm", "mm", "so", "okay", "ok")
+
+        /** The command id of an agent Bucket's "what does it say", which "summarize bucket" means under its Focus. */
+        const val READ = "read"
     }
 }

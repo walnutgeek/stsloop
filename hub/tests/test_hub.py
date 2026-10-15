@@ -3,6 +3,7 @@
 import asyncio
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -172,6 +173,55 @@ class RequestTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(json.loads(await asyncio.wait_for(ws.recv(), 5)), fixture("v1", "reply/unknown-bucket.json"))
 
 
+class SummarizeTest(unittest.IsolatedAsyncioTestCase):
+    SUMMARIZE = json.dumps(fixture("v1", "summarize/basic.json"))
+
+    async def test_a_summarize_gets_the_reply_the_summariser_gives_off_the_event_loop(self):
+        release = threading.Event()
+        asked = []
+
+        def summarise(summarize):
+            asked.append(summarize)
+            release.wait(5)  # blocking, as a model is: it must hold up no other message
+            return p.Reply(id=summarize.id, say="Errands: four things.")
+
+        async with running_hub(summarise=summarise) as (_, url):
+            async with phone(url, pairing_token()) as ws:
+                await ws.send(HELLO)
+                await ws.recv(), await ws.recv()
+                await ws.send(self.SUMMARIZE)
+                await ws.send(json.dumps(fixture("v1", "request/unknown-bucket.json")))
+                first = json.loads(await asyncio.wait_for(ws.recv(), 5))
+                release.set()
+                second = json.loads(await asyncio.wait_for(ws.recv(), 5))
+        self.assertEqual(first, fixture("v1", "reply/unknown-bucket.json"))
+        self.assertEqual(second, {"type": "reply", "id": "b7e2d0", "say": "Errands: four things."})
+        self.assertEqual(asked, [p.from_json(fixture("v1", "summarize/basic.json"))])
+
+    async def test_a_summariser_that_raises_still_reads_the_notes_raw(self):
+        def summarise(summarize):
+            raise RuntimeError("bug")
+
+        async with running_hub(summarise=summarise) as (_, url):
+            async with phone(url, pairing_token()) as ws:
+                await ws.send(HELLO)
+                await ws.recv(), await ws.recv()
+                with self.assertLogs("stsloop.hub", "ERROR"):
+                    await ws.send(self.SUMMARIZE)
+                    reply = json.loads(await asyncio.wait_for(ws.recv(), 5))
+        self.assertEqual(reply, fixture("v1", "reply/summary-fallback.json"))
+
+    async def test_a_phone_that_did_not_ask_for_summaries_gets_no_answer(self):
+        async with running_hub(summarise=lambda s: self.fail("summarised without the capability")) as (_, url):
+            async with phone(url, pairing_token()) as ws:
+                await ws.send(json.dumps(fixture("v1", "hello/descriptors-only.json")))
+                self.assertEqual(json.loads(await ws.recv())["capabilities"], ["descriptors"])
+                await ws.recv()
+                await ws.send(self.SUMMARIZE)
+                with self.assertRaises(asyncio.TimeoutError):
+                    await asyncio.wait_for(ws.recv(), 0.2)
+
+
 class BucketsChangedTest(unittest.IsolatedAsyncioTestCase):
     async def test_the_welcomed_phone_gets_a_new_snapshot(self):
         buckets = [STUB_BUCKETS]
@@ -286,7 +336,7 @@ class CorpusUploadTest(unittest.IsolatedAsyncioTestCase):
         async with hub.listen("127.0.0.1", 0) as server:
             url = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/"
             async with phone(url, pairing_token()) as ws:
-                self.assertEqual((await self.welcomed(ws))["capabilities"], ["descriptors"])
+                self.assertEqual((await self.welcomed(ws))["capabilities"], ["descriptors", "summaries"])
                 await ws.send(self.OFFER)
                 with self.assertRaises(asyncio.TimeoutError):
                     await asyncio.wait_for(ws.recv(), 0.2)

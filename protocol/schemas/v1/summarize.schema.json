@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stsloop:protocol:v1:summarize",
+  "title": "summarize",
+  "description": "Phone to hub, once welcomed with the `summaries` capability: summarise the Notes said in one capture Bucket since its last summary (\"summarize bucket\"). The phone sends the Notes' words itself, so Notes not yet uploaded to the hub's Corpus are included. The hub redacts obvious secrets, asks its summariser, and answers with exactly one `reply` carrying `id`: the summary, or, when the summariser fails or times out, the Notes read raw with the reason `fallback`. The phone waits 30 s for it, then reads the Notes raw itself. A summary changes nothing on the hub, so it is safe to send again.",
+  "type": "object",
+  "required": ["type", "id", "bucket", "notes"],
+  "properties": {
+    "type": { "const": "summarize" },
+    "id": {
+      "description": "Chosen by the phone, unique among its requests and summaries on this connection; the `reply` carries it back.",
+      "type": "string",
+      "minLength": 1
+    },
+    "bucket": {
+      "description": "The capture Bucket's name, as the phone's Corpus writes it (`errands`, `house-project`, or `inbox` for unlabelled Turns). A capture Bucket has no Descriptor on the hub.",
+      "type": "string",
+      "minLength": 1
+    },
+    "since": {
+      "description": "The Turn directory name of the newest Note the Bucket's last summary covered: these Notes were all said after it. Absent on a Bucket's first summary, which covers the last 24 hours.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z-[0-9a-f]{1,32}$"
+    },
+    "notes": {
+      "description": "The Notes, oldest first: at most about 50, the newest ones. Tombstoned Notes (\"scratch that\") are left out.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["turn", "text"],
+        "properties": {
+          "turn": {
+            "description": "The Note's Turn directory name, `<started_at>-<id>`: when it was said, and where it is in the Corpus.",
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z-[0-9a-f]{1,32}$"
+          },
+          "text": {
+            "description": "The Note's words, without its Declaration: its `content` in the Corpus.",
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "more": {
+      "description": "True when more Notes than these were said in the range, and the oldest were left out. Absent means false.",
+      "type": "boolean"
+    }
+  }
+}

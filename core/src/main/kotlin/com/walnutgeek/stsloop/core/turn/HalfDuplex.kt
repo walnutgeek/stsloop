@@ -119,7 +119,7 @@ class HalfDuplex(
     private class Ended(val id: Long, val atNs: Long)
 
     /** A machine Turn waiting for Silence, and what runs once it is over. */
-    private class Reply(val text: String, val then: (() -> Unit)?)
+    private class Reply(val text: String, val then: ((said: Boolean) -> Unit)?)
 
     private val guardNs = timings.guardMs * NS_PER_MS
     private val itemSilenceSamples = timings.trailingSilenceMs.toLong() * sampleRate / 1000
@@ -131,7 +131,7 @@ class HalfDuplex(
     // Capture thread only.
     private var phase = Phase.OPEN
     private var lastId = 0L
-    private var current: (() -> Unit)? = null // the speaking machine Turn's then
+    private var current: ((Boolean) -> Unit)? = null // the speaking machine Turn's then
     private var currentItems: List<Item> = emptyList() // the Items the speaking machine Turn says
     private var quietFrom = 0L // the stream sample from which the open mic has been quiet: no Turn, no speech
     private var heardSpeech = false // whether the last chunk left the segmenter capturing
@@ -157,7 +157,7 @@ class HalfDuplex(
     fun echo(said: String?, then: (() -> Unit)? = null) {
         val text = EchoText.of(said)
         if (speaker == null || text == null) return run { then?.invoke() }
-        say(text, then)
+        say(text, then?.let { t -> { _: Boolean -> t() } })
     }
 
     /**
@@ -170,12 +170,23 @@ class HalfDuplex(
         say(text, null)
     }
 
-    private fun say(text: String, then: (() -> Unit)?) {
+    /**
+     * Any thread: [announce] [text], then run [then] once it is over, with
+     * whether it was said: false when it never was (no speaker, the Session
+     * ended first, or the speaker never reported its end). A summary moves
+     * its mark only once it has been heard (#76).
+     */
+    fun announce(text: String, then: (said: Boolean) -> Unit) {
+        if (speaker == null || text.isBlank()) return then(false)
+        say(text, then)
+    }
+
+    private fun say(text: String, then: ((Boolean) -> Unit)?) {
         synchronized(lock) {
             if (!finished) return run { pending.add(Reply(text, then)) }
         }
         listener.unspoken(1) // a transcript finished decoding after the Session ended
-        then?.invoke()
+        then?.invoke(false)
     }
 
     /** Any thread: machine Turn [id] ended (done, error or stopped) at [atNs], on the capture clock. */
@@ -255,7 +266,7 @@ class HalfDuplex(
         }
         if (unspoken.isNotEmpty()) listener.unspoken(unspoken.size)
         over(said = false)
-        for (r in unspoken) r.then?.invoke()
+        for (r in unspoken) r.then?.invoke(false)
     }
 
     /** The speaking machine Turn is over, [said] or not (lost, or the Session ended): run its then, once. */
@@ -269,7 +280,7 @@ class HalfDuplex(
         }
         val then = current ?: return
         current = null
-        then()
+        then(said)
     }
 
     /**

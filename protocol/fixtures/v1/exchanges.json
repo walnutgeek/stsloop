@@ -141,6 +141,16 @@
         { "from": "phone", "fixture": "send/unknown-bucket.json" },
         { "from": "hub", "fixture": "sent/unknown-bucket.json" }
       ]
+    },
+    {
+      "name": "a summarize to a hub with no summariser is answered with the Notes read raw, reason fallback",
+      "steps": [
+        { "from": "phone", "fixture": "hello/basic.json" },
+        { "from": "hub", "fixture": "welcome/basic.json" },
+        { "from": "hub", "fixture": "descriptors/stub.json" },
+        { "from": "phone", "fixture": "summarize/basic.json" },
+        { "from": "hub", "fixture": "reply/summary-fallback.json" }
+      ]
     }
   ]
 }

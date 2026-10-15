@@ -24,6 +24,10 @@
   ready, in the background, while other messages go on being read. Other
   messages are ignored. `buckets_changed` sends the welcomed phone a new
   `descriptors` snapshot.
+- With the `summaries` capability agreed, each `summarize` gets one `reply`
+  from `summarise` (`summary.NoteSummaries`: a model's summary of the
+  phone's Notes, or the Notes read raw), worked out off the event loop. The
+  hub always offers `summaries`: without a model it reads the Notes raw.
 """
 
 from __future__ import annotations
@@ -44,6 +48,7 @@ from . import protocol as p
 from .buckets import Buckets, failed
 from .corpus import CorpusStore
 from .sends import Deliveries
+from .summary import NoteSummaries, notes_fallback
 
 log = logging.getLogger("stsloop.hub")
 
@@ -63,12 +68,15 @@ class Hub:
         deliver: Callable[[p.Send], Awaitable[p.Sent]] | None = None,
         items: Callable[[], tuple[p.Item, ...]] = tuple,
         spoken: Callable[[str], object] = lambda item_id: None,
+        summarise: Callable[[p.Summarize], p.Reply] | None = None,
     ):
         self._items = items
         self._spoken = spoken
         self._token = token.encode()
         self._descriptors = descriptors
         self._answer = answer or Buckets().answer
+        #: Blocking (it may wait on a model), so it runs in a thread.
+        self._summarise = summarise or NoteSummaries(None, 0).answer
         self._deliver = deliver or Deliveries(Buckets().prepare_send).deliver
         self._delivering: set[asyncio.Task] = set()
         #: The welcomed connection, when it asked for `descriptors`: who hears of new snapshots.
@@ -218,6 +226,10 @@ class Hub:
                     task = asyncio.create_task(self._reply(ws, message))
                     self._sending.add(task)
                     task.add_done_callback(self._sending.discard)
+                elif isinstance(message, p.Summarize) and p.SUMMARIES in welcome.capabilities:
+                    task = asyncio.create_task(self._summary(ws, message))
+                    self._sending.add(task)
+                    task.add_done_callback(self._sending.discard)
                 elif isinstance(message, p.Send):
                     task = asyncio.create_task(self._send(ws, message))
                     self._delivering.add(task)
@@ -244,6 +256,20 @@ class Hub:
             await ws.send(p.encode(reply))
         except ConnectionClosed:
             log.info("request %s: the phone left before its reply", request.id)
+
+    async def _summary(self, ws: ServerConnection, summarize: p.Summarize) -> None:
+        try:
+            reply = await asyncio.to_thread(self._summarise, summarize)
+        except Exception:  # noqa: BLE001 - a bug in summarising must not leave the phone waiting in silence
+            log.exception("summarize %s: summarising it failed", summarize.id)
+            reply = p.Reply(id=summarize.id, reason=p.FALLBACK, say=notes_fallback(summarize))
+        # The Notes are the person's own words: only their count goes to the log.
+        log.info("summarize %s: %d notes of %s%s", summarize.id, len(summarize.notes), summarize.bucket,
+                 f" ({reply.reason})" if reply.reason else "")
+        try:
+            await ws.send(p.encode(reply))
+        except ConnectionClosed:
+            log.info("summarize %s: the phone left before its summary", summarize.id)
 
     async def _send(self, ws: ServerConnection, send: p.Send) -> None:
         sent = await self._deliver(send)

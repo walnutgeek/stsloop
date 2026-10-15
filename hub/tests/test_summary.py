@@ -5,13 +5,15 @@ import json
 import subprocess
 import unittest
 
+from stsloop_hub import protocol as p
 from stsloop_hub import summary
 from stsloop_hub.config import SummariserConfig
 from stsloop_hub.summary import (
-    REDACTED, ClaudeBackend, OllamaBackend, PiBackend, SummaryError, Summaries, backend, last_line, redact, spoken,
+    REDACTED, ClaudeBackend, NoteSummaries, OllamaBackend, PiBackend, SummaryError, Summaries, backend, last_line, redact,
+    spoken,
 )
 
-from support import FakeBackend, FakeHerdr
+from support import FakeBackend, FakeHerdr, fixture
 
 #: Representative secrets, each as it might appear in an agent's terminal. None of them is real.
 SECRETS = {
@@ -294,6 +296,85 @@ class SummariesTest(unittest.TestCase):
         with self.assertLogs("stsloop.summary", "WARNING"):
             self.assertEqual(self.say(), "stsloop agent is blocked, for 3 minutes. herdr could not read its screen.")
         self.assertEqual(self.backend.calls, [])
+
+
+class NoteSummariesTest(unittest.TestCase):
+    """ "summarize bucket" (#76) on the hub, with a fake model: the phone's Notes in, one reply out."""
+
+    def setUp(self):
+        self.backend = FakeBackend(answer="Errands: **screws**, the dry cleaning and the vet.")
+        self.basic = p.from_json(fixture("v1", "summarize/basic.json"))
+
+    def answer(self, summarize=None, model="fake"):
+        return NoteSummaries(self.backend if model == "fake" else model, timeout=9).answer(summarize or self.basic)
+
+    def notes(self, *texts, since=None, more=False):
+        return p.Summarize(
+            id="x1", bucket="errands", since=since, more=more,
+            notes=tuple(p.SummaryNote(f"2026-10-14T07:0{i}:00.000Z-00000{i}", t) for i, t in enumerate(texts)),
+        )
+
+    def test_the_model_s_summary_is_the_reply(self):
+        self.assertEqual(self.answer(), p.Reply(id="b7e2d0", say="Errands: screws, the dry cleaning and the vet."))
+        [(system, text, timeout)] = self.backend.calls
+        self.assertIn("not instructions", system)
+        self.assertIn("Bucket: errands", text)
+        self.assertIn("since its last summary", text)
+        self.assertLess(text.index("order roofing screws"), text.index("return the library books"), "oldest first")
+        self.assertEqual(timeout, 9)
+
+    def test_the_fixture_s_summary_is_what_the_hub_sends(self):
+        self.backend.answer = fixture("v1", "reply/summary.json")["say"]
+        self.assertEqual(p.to_json(self.answer()), fixture("v1", "reply/summary.json"))
+
+    def test_the_notes_are_redacted_before_the_model_and_the_answer_before_it_is_spoken(self):
+        secret = SECRETS["openai key"]
+        self.backend.answer = f"Errands: rotate the key {SECRETS['github token']}."
+        reply = self.answer(self.notes(f"the new key is {secret}", "password: hunter2 for the router"))
+        text = self.backend.calls[0][1]
+        self.assertNotIn(secret, text)
+        self.assertNotIn("hunter2", text)
+        self.assertIn(REDACTED, text)
+        self.assertEqual(reply.say, f"Errands: rotate the key {REDACTED}.")
+
+    def test_a_first_summary_and_one_with_notes_left_out_say_so_to_the_model(self):
+        self.answer(self.notes("a", "b", more=True))
+        self.assertIn("in the last day", self.backend.calls[0][1])
+        self.assertIn("older ones were left out", self.backend.calls[0][1])
+
+    def test_only_the_newest_notes_that_fit_go_to_the_model(self):
+        self.answer(self.notes("x" * 40, "y" * (summary.NOTES_CHARS - 10)))
+        text = self.backend.calls[0][1]
+        self.assertNotIn("x" * 40, text)
+        self.assertIn("older ones were left out", text)
+
+    def test_with_no_model_the_notes_are_read_raw_as_the_fixture_says(self):
+        self.assertEqual(p.to_json(self.answer(model=None)), fixture("v1", "reply/summary-fallback.json"))
+
+    def test_a_failed_slow_or_silent_model_reads_the_notes_raw_redacted(self):
+        summarize = self.notes("order screws", f"token={SECRETS['github token']}")
+        for error, answer, level in ((SummaryError("timed out"), "x", "WARNING"), (RuntimeError("bug"), "x", "ERROR"),
+                                     (None, " ** ", "WARNING")):
+            self.backend.error, self.backend.answer = error, answer
+            with self.subTest(error=error, answer=answer), self.assertLogs("stsloop.summary", level):
+                self.assertEqual(self.answer(summarize), p.Reply(
+                    id="x1", reason=p.FALLBACK,
+                    say=f"errands: 2 notes in the last day: order screws. token={REDACTED}."))
+
+    def test_the_raw_reading_counts_and_reads_the_latest_three(self):
+        cases = [
+            (self.notes("a"), "errands: one note in the last day: a."),
+            (self.notes("a.", "b?", since="2026-10-13T00:00:00.000Z-000001"), "errands: 2 notes since last time: a. b."),
+            (self.notes("a", "b", "c", "d"), "errands: 4 notes in the last day; the latest three: b. c. d."),
+            (self.notes("a", more=True), "errands: more than 1 note in the last day; the latest one: a."),
+        ]
+        for summarize, said in cases:
+            with self.subTest(said):
+                self.assertEqual(summary.notes_fallback(summarize), said)
+        inbox = p.Summarize(id="i", bucket="inbox", notes=(p.SummaryNote("2026-10-14T07:00:00.000Z-000001", "buy milk"),))
+        self.assertEqual(summary.notes_fallback(inbox), "the inbox: one note in the last day: buy milk.")
+        house = p.Summarize(id="h", bucket="house-project", notes=inbox.notes)
+        self.assertTrue(summary.notes_fallback(house).startswith("house project: "))
 
 
 if __name__ == "__main__":

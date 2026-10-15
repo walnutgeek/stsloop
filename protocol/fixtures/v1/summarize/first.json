@@ -1,0 +1,10 @@
+{
+  "type": "summarize",
+  "id": "c41a9e",
+  "bucket": "house-project",
+  "notes": [
+    { "turn": "2026-10-14T09:12:30.500Z-1b2c3d", "text": "measure the attic hatch" },
+    { "turn": "2026-10-14T09:14:02.250Z-4e5f60", "text": "ask about permits for the deck" }
+  ],
+  "more": true
+}

@@ -209,6 +209,15 @@ enum class Command(val json: String, val phrases: List<String>) {
 
     /** Drop the Draft (command id `cancel`). */
     CANCEL("cancel", emptyList()),
+
+    /**
+     * Speaks a short summary of the Notes said in the focused capture Bucket
+     * since its last summary (#76): the hub's summariser when it can, the
+     * phone alone otherwise ([com.walnutgeek.stsloop.core.summary.BucketSummaries]).
+     * Under an agent Bucket's Focus the grammar hears it as that Bucket's
+     * `read` request ("what does it say") instead.
+     */
+    SUMMARIZE("summarize", listOf("summarize bucket", "summarize", "sum it up")),
     ;
 
     /** Whether it is one of the `draft` Primitive's commands, which carry a [DraftCommand]. */
@@ -243,11 +252,22 @@ data class DraftCommand(val bucket: String, val bucketId: String, val text: Stri
 data class BucketRequest(val bucket: String, val bucketId: String, val command: String, val replyWithinMs: Long? = null)
 
 /**
+ * A [Command.SUMMARIZE] as invoked, for the capture Bucket named [bucket]
+ * (the Inbox included): [since], the directory name of the newest Note its
+ * last summary covered (null when it has had none), and [notes], the
+ * directory names of the Notes this summary covers, oldest first (empty when
+ * there were none). [more] says that more Notes than these were said in
+ * that range, and the oldest were left out.
+ */
+data class SummaryCommand(val bucket: String, val since: String? = null, val notes: List<String> = emptyList(), val more: Boolean = false)
+
+/**
  * A command as invoked in one Turn: which [command], the words heard
  * (normalised), for [Command.SCRATCH_THAT] the directory name of the Turn
  * it tombstones (null when there was nothing to drop), for [Command.FOCUS]
  * the name of the Bucket it [focus]es (and, for a hub Bucket, its
- * Descriptor id [focusId]), and for [Command.REQUEST] the [request].
+ * Descriptor id [focusId]), for [Command.REQUEST] the [request], and for
+ * [Command.SUMMARIZE] the [summary].
  */
 data class CommandInvocation(
     val command: Command,
@@ -257,6 +277,7 @@ data class CommandInvocation(
     val focusId: String? = null,
     val request: BucketRequest? = null,
     val draft: DraftCommand? = null,
+    val summary: SummaryCommand? = null,
 ) {
     init {
         require(tombstones == null || command == Command.SCRATCH_THAT) { "only scratch_that tombstones a Turn" }
@@ -265,6 +286,7 @@ data class CommandInvocation(
         require((request != null) == (command == Command.REQUEST)) { "a request command, and only a request command, has a request" }
         require((draft != null) == command.draft) { "a draft command, and only a draft command, has a draft" }
         require(draft?.key == null || command == Command.SEND) { "only send has a key" }
+        require((summary != null) == (command == Command.SUMMARIZE)) { "a summarize command, and only a summarize command, has a summary" }
     }
 }
 
