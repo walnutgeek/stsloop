@@ -69,9 +69,11 @@ class FakeHerdr:
     """herdr as the hub sees it: the test sets `agents`, or `error` for a herdr that does not answer.
     Prompts are recorded in `prompts`, never sent anywhere; `prompt_error` makes the next ones fail."""
 
-    def __init__(self, agents=(), error: str | None = None):
+    def __init__(self, agents=(), error: str | None = None, code: str | None = None):
         self.agents_now = list(agents)
         self.error = error
+        #: herdr's error code for `error` (`protocol_mismatch`), if it gave one.
+        self.code = code
         self.calls = 0
         #: Each pane's screen, as `read` gives it; a pane not here cannot be read.
         self.screens: dict[str, str] = {}
@@ -82,7 +84,7 @@ class FakeHerdr:
     def agents(self):
         self.calls += 1
         if self.error:
-            raise HerdrError(self.error)
+            raise HerdrError(self.error, self.code)
         return list(self.agents_now)
 
     def read(self, pane_id: str, lines: int) -> str:

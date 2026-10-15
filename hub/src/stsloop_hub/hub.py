@@ -28,6 +28,9 @@
   from `summarise` (`summary.NoteSummaries`: a model's summary of the
   phone's Notes, or the Notes read raw), worked out off the event loop. The
   hub always offers `summaries`: without a model it reads the Notes raw.
+- Once welcomed, each `status_request` ("hub status", "hub details") gets one
+  `status_report` from `status` (`status.py`), at once: it is built from what
+  the hub already knows.
 """
 
 from __future__ import annotations
@@ -49,6 +52,7 @@ from .buckets import Buckets, failed
 from .corpus import CorpusStore
 from .sends import Deliveries
 from .summary import NoteSummaries, notes_fallback
+from .status import Status
 
 log = logging.getLogger("stsloop.hub")
 
@@ -69,9 +73,11 @@ class Hub:
         items: Callable[[], tuple[p.Item, ...]] = tuple,
         spoken: Callable[[str], object] = lambda item_id: None,
         summarise: Callable[[p.Summarize], p.Reply] | None = None,
+        status: Callable[[p.StatusRequest], p.StatusReport] | None = None,
     ):
         self._items = items
         self._spoken = spoken
+        self._status = status or Status(descriptors).report
         self._token = token.encode()
         self._descriptors = descriptors
         self._answer = answer or Buckets().answer
@@ -234,6 +240,8 @@ class Hub:
                     task = asyncio.create_task(self._send(ws, message))
                     self._delivering.add(task)
                     task.add_done_callback(self._delivering.discard)
+                elif isinstance(message, p.StatusRequest):
+                    await ws.send(p.encode(self._report(message)))
                 elif isinstance(message, p.ItemSpoken):
                     log.info("the phone has spoken item %s", message.id)
                     self._spoken(message.id)
@@ -242,6 +250,13 @@ class Hub:
         finally:
             if receiver is not None:
                 await asyncio.to_thread(receiver.close)
+
+    def _report(self, request: p.StatusRequest) -> p.StatusReport:
+        try:
+            return self._status(request)
+        except Exception:  # noqa: BLE001 - a bug in reporting must not drop the phone's connection
+            log.exception("status request %s: reporting failed", request.id)
+            return Status(self._descriptors).report(request)
 
     async def _reply(self, ws: ServerConnection, request: p.Request) -> None:
         try:

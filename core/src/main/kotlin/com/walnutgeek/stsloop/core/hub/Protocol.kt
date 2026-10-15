@@ -156,6 +156,38 @@ data class Send(val key: String, val bucket: String, val text: String) : Message
  */
 data class Sent(val key: String, val say: String, val reason: String? = null) : Message
 
+/** Phone to hub: how is the hub? ("hub status", "hub details"); answered by one [StatusReport] with the same [id]. */
+data class StatusRequest(val id: String) : Message
+
+/**
+ * How the hub's herdr is doing (`status_report.schema.json`): [state] is an
+ * open string, one of the constants below or a newer one, and [version] the
+ * herdr binary's ("0.9.1") when the hub knows it.
+ */
+data class HerdrReport(val state: String, val version: String? = null) {
+    companion object {
+        const val OK = "ok"
+        const val NOT_ANSWERING = "not_answering"
+        const val PROTOCOL_MISMATCH = "protocol_mismatch"
+        const val NOT_INSTALLED = "not_installed"
+        const val CHECKING = "checking"
+    }
+}
+
+/**
+ * Hub to phone: the answer to the [StatusRequest] [id], as facts the phone
+ * words itself ([HubReport]): the agent Buckets it publishes, how many are
+ * blocked, its [herdr], and whether its Claude Code hooks are installed
+ * ([hooksInstalled]). The last two are null when the hub does not say.
+ */
+data class StatusReport(
+    val id: String,
+    val agents: Long,
+    val blocked: Long,
+    val herdr: HerdrReport? = null,
+    val hooksInstalled: Boolean? = null,
+) : Message
+
 /**
  * A frame that is not a message, or a message of a known type that breaks its
  * schema. [messageType] is the frame's `type` when it had one.
@@ -242,6 +274,24 @@ object Protocol {
                 "sent" -> Sent(o.string("key"), o.string("say"), if ("reason" in obj) o.string("reason") else null)
                 "item" -> Item(o.string("id"), o.strings("buckets", minItems = 1), o.string("say"))
                 "item_spoken" -> ItemSpoken(o.string("id"))
+                "status_request" -> StatusRequest(o.string("id"))
+                "status_report" -> StatusReport(
+                    o.string("id"),
+                    o.count("agents"),
+                    o.count("blocked"),
+                    herdr = if ("herdr" in obj) {
+                        val h = Obj(o.map["herdr"] as? Map<*, *> ?: throw BadMessage("status_report needs herdr as an object"), "status_report's herdr")
+                        HerdrReport(h.string("state"), if ("version" in h.map) h.string("version") else null)
+                    } else {
+                        null
+                    },
+                    hooksInstalled = if ("hooks" in obj) {
+                        val h = Obj(o.map["hooks"] as? Map<*, *> ?: throw BadMessage("status_report needs hooks as an object"), "status_report's hooks")
+                        h.map["installed"] as? Boolean ?: throw BadMessage("status_report's hooks needs installed as a boolean")
+                    } else {
+                        null
+                    },
+                )
                 "pairing" -> {
                     val url = o.string("url")
                     val token = o.string("token")
@@ -337,6 +387,15 @@ object Protocol {
         }
         is Item -> mapOf("type" to "item", "id" to message.id, "buckets" to message.buckets, "say" to message.say)
         is ItemSpoken -> mapOf("type" to "item_spoken", "id" to message.id)
+        is StatusRequest -> mapOf("type" to "status_request", "id" to message.id)
+        is StatusReport -> buildMap {
+            put("type", "status_report")
+            put("id", message.id)
+            put("agents", message.agents)
+            put("blocked", message.blocked)
+            message.herdr?.let { h -> put("herdr", buildMap { put("state", h.state); h.version?.let { put("version", it) } }) }
+            message.hooksInstalled?.let { put("hooks", mapOf("installed" to it)) }
+        }
     }
 
     private fun v(version: Version) = mapOf("major" to version.major, "minor" to version.minor)

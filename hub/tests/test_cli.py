@@ -9,10 +9,11 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from dataclasses import replace
 from unittest import mock
 from pathlib import Path
 
-from stsloop_hub import claude_settings, cli, config, tailnet
+from stsloop_hub import claude_settings, cli, config, herdr, tailnet
 from stsloop_hub import protocol as p
 from stsloop_hub.stub import STUB_BUCKETS
 
@@ -59,17 +60,27 @@ class Run:
         self.pollers = []
         #: The summariser config each serve built its backend from; the backend is a fake.
         self.summarisers = []
+        #: More of the environment: PATH, HERDR_BIN_PATH.
+        self.env = {}
+        #: What probing each herdr binary finds, by path; probing any other fails the test. No herdr is run.
+        self.probes: dict[str, herdr.Probe] = {}
+        self.probed = []
+
+    def probe(self, path: str) -> herdr.Probe:
+        self.probed.append(path)
+        return self.probes[path]
 
     def __call__(self, *argv):
         self.out, self.err = io.StringIO(), io.StringIO()
         self.code = cli.main(
             list(argv),
-            env={"STSLOOP_HUB_HOME": str(self.home), "HOME": str(self.user_home)},
+            env={"STSLOOP_HUB_HOME": str(self.home), "HOME": str(self.user_home), **self.env},
+            probe_herdr=self.probe,
             out=self.out,
             err=self.err,
             find_tailnet=lambda: self.tailnet_ip,
             run_hub=lambda hub, host, port, pollers: (self.served.append((hub, host, port)), self.pollers.append(pollers)),
-            find_herdr=lambda: self.herdr,
+            find_herdr=(lambda: self.herdr) if self.herdr is not None or not self.probes else None,
             make_backend=lambda cfg: (self.summarisers.append(cfg), FakeBackend())[1],
             ask=lambda question: (self.asked.append(question), self.answer)[1],
             which=lambda name: f"/usr/bin/{name}" if name in self.installed else None,
@@ -410,6 +421,135 @@ class ServeTest(unittest.TestCase):
         self.run("serve")
         self.assertNotEqual(self.run.code, 0)
         self.assertIn("hub.json", self.run.err.getvalue())
+
+
+class HerdrTest(unittest.TestCase):
+    """`init` finds the herdr that matches the running herdr server, and `serve` runs it. The binaries are
+    empty files and every probe is faked: no herdr is run."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.home = root / "stsloop-hub"
+        self.run = Run(self.home)
+        self.old = self.binary(root / "usr" / "bin" / "herdr")
+        self.new = self.binary(self.run.user_home / ".local" / "bin" / "herdr")
+        self.run.env = {"PATH": str(root / "usr" / "bin")}
+        self.run.probes = {
+            self.old: herdr.Probe(self.old, "0.8.2", answers=False, code="protocol_mismatch",
+                                  error="herdr: protocol_mismatch: client protocol 20 is older than server protocol 22"),
+            self.new: herdr.Probe(self.new, "0.9.1", answers=True),
+        }
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    @staticmethod
+    def binary(path: Path) -> str:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/bin/false\n")
+        path.chmod(0o700)
+        return str(path)
+
+    def test_init_saves_the_herdr_the_server_answers_and_says_the_one_it_skipped(self):
+        self.run("init", "--no-hooks")
+        self.assertEqual(self.run.code, 0)
+        self.assertEqual(self.run.probed, [self.old, self.new])
+        self.assertEqual(self.run.config["herdr"], self.new)
+        out = self.run.out.getvalue()
+        self.assertIn(f"herdr {self.old} (0.8.2) does not speak the running herdr server's protocol; skipped.", out)
+        self.assertIn(f"herdr {self.new} (0.9.1) answers the running herdr server; serve will use it.", out)
+
+    def test_serve_runs_the_saved_herdr_and_reports_its_version(self):
+        self.run("init", "--no-hooks")
+        self.run.probed.clear()
+        self.run("serve")
+        self.assertEqual(self.run.probed, [self.new], "the PATH's older herdr is not used")
+        [(hub, _, _)] = self.run.served
+        report = hub._status(p.StatusRequest(id="s1"))
+        self.assertEqual(report.herdr, p.HerdrReport(p.HERDR_CHECKING, "0.9.1"), "before the first poll")
+        self.assertIn(f"herdr {self.new} (0.9.1) answers", self.run.err.getvalue())
+
+    def test_herdr_bin_path_still_wins_in_serve(self):
+        self.run("init", "--no-hooks")
+        self.run.probed.clear()
+        self.run.env["HERDR_BIN_PATH"] = self.old
+        self.run("serve")
+        self.assertEqual(self.run.probed, [self.old])
+
+    def test_serve_reports_a_herdr_that_does_not_match(self):
+        self.run.probes[self.new] = herdr.Probe(self.new, "0.9.1", answers=False, code="protocol_mismatch", error="x")
+        self.run("init", "--no-hooks")
+        self.assertNotIn("herdr", self.run.config, "nothing matched, so nothing is saved")
+        self.assertIn("no herdr here speaks the running herdr server's protocol", self.run.err.getvalue())
+        self.run("serve")
+        self.assertEqual(self.run.code, 0)
+        self.assertIn(f"warning: herdr {self.old} (0.8.2) does not speak the running herdr server's protocol",
+                      self.run.err.getvalue())
+        self.assertIn("stsloop-hub init", self.run.err.getvalue())
+
+    def test_init_without_a_herdr_server_keeps_what_it_saved(self):
+        self.run("init", "--no-hooks")
+        down = herdr.Probe("", None, answers=False, code="server_not_running", error="no herdr server is running")
+        self.run.probes = {path: replace(down, path=path) for path in self.run.probes}
+        self.run("init", "--no-hooks")
+        self.assertEqual(self.run.config["herdr"], self.new)
+        self.assertIn(f"is the herdr server running? Start herdr, then run init again. serve keeps using {self.new}.",
+                      self.run.err.getvalue())
+
+    def test_init_without_herdr_says_so(self):
+        os.remove(self.old)
+        os.remove(self.new)
+        self.run("init", "--no-hooks")
+        self.assertEqual(self.run.probed, [])
+        self.assertIn("herdr not found", self.run.out.getvalue())
+
+
+class StatusTest(unittest.TestCase):
+    """What serve reports for "hub status" and "hub details"."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name) / "stsloop-hub"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_serve_reports_agents_blocked_herdr_and_hooks(self):
+        fake = FakeHerdr([agent("w4:p1", "woodglue", "idle"), agent("w8:p1", "stsloop", "blocked"),
+                          agent("w8:p4", "stsloop", "working")])
+        run = Run(self.home, herdr=fake)
+        run.answer = True
+        run("init", "--hooks")
+        run("serve")
+        [(hub, _, _)] = run.served
+        [[poll, _]] = run.pollers
+
+        async def one_poll():
+            task = asyncio.create_task(poll())
+            while fake.calls < 1:
+                await asyncio.sleep(0.01)
+            await asyncio.sleep(0.01)
+            task.cancel()
+
+        asyncio.run(one_poll())
+        report = hub._status(p.StatusRequest(id="b7e2d4"))
+        expected = fixture("v1", "status_report/herdr.json")
+        self.assertEqual(p.to_json(replace(report, herdr=p.HerdrReport(p.HERDR_OK, "0.9.1"))), expected,
+                         "a FakeHerdr has no version; the rest is the fixture")
+        self.assertEqual(report.herdr.state, p.HERDR_OK)
+        claude_settings.save(run.claude_settings, claude_settings.without_ours(claude_settings.load(run.claude_settings)))
+        self.assertFalse(hub._status(p.StatusRequest(id="b7e2d4")).hooks_installed, "read for each report")
+
+    def test_without_herdr_serve_says_so(self):
+        run = Run(self.home)
+        run("init", "--no-hooks")
+        run("serve")
+        [(hub, _, _)] = run.served
+        report = hub._status(p.StatusRequest(id="b7e2d4"))
+        self.assertEqual((report.agents, report.blocked), (0, 0))
+        self.assertEqual(report.herdr, p.HerdrReport(p.HERDR_NOT_INSTALLED))
+        self.assertFalse(report.hooks_installed)
 
 
 class ConfigDirTest(unittest.TestCase):

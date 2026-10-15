@@ -218,8 +218,45 @@ class ItemSpoken:
     id: str
 
 
-Message = Union[Hello, Welcome, Refusal, Descriptors, Pairing, Request, Reply, Summarize, TurnOffer, TurnAudio, TurnAck, Send,
-                Sent, Item, ItemSpoken]
+@dataclass(frozen=True)
+class StatusRequest:
+    """Phone to hub: how is the hub? ("hub status", "hub details"). Answered by one `StatusReport`."""
+
+    id: str
+
+
+#: herdr states a `StatusReport` names (status_report.schema.json); the field is open, so a phone degrades.
+HERDR_OK = "ok"
+HERDR_NOT_ANSWERING = "not_answering"
+HERDR_PROTOCOL_MISMATCH = "protocol_mismatch"
+HERDR_NOT_INSTALLED = "not_installed"
+HERDR_CHECKING = "checking"
+
+
+@dataclass(frozen=True)
+class HerdrReport:
+    """How the hub's herdr is doing: `state` (`HERDR_*`, or a newer one) and the binary's `version`."""
+
+    state: str
+    version: str | None = None
+
+
+@dataclass(frozen=True)
+class StatusReport:
+    """Hub to phone: the answer to the status request `id`, as facts the phone words itself. `herdr` and
+    `hooks_installed` are None when the hub has nothing to say about them."""
+
+    id: str
+    agents: int
+    blocked: int
+    herdr: HerdrReport | None = None
+    hooks_installed: bool | None = None
+
+
+Message = Union[
+    Hello, Welcome, Refusal, Descriptors, Pairing, Request, Reply, Summarize, TurnOffer, TurnAudio, TurnAck, Send, Sent,
+    Item, ItemSpoken, StatusRequest, StatusReport,
+]
 
 
 class BadMessage(ValueError):
@@ -491,7 +528,27 @@ _READERS = {
         say=_string(o, "say", "item"),
     ),
     "item_spoken": lambda o: ItemSpoken(id=_string(o, "id", "item_spoken")),
+    "status_request": lambda o: StatusRequest(id=_string(o, "id", "status_request")),
+    "status_report": lambda o: _status_report(o),
 }
+
+
+def _status_report(o: dict) -> StatusReport:
+    herdr = None
+    if "herdr" in o:
+        h = _get(o, "herdr", dict, "status_report")
+        herdr = HerdrReport(
+            state=_string(h, "state", "status_report's herdr"),
+            version=_string(h, "version", "status_report's herdr") if "version" in h else None,
+        )
+    hooks = _get(_get(o, "hooks", dict, "status_report"), "installed", bool, "status_report's hooks") if "hooks" in o else None
+    return StatusReport(
+        id=_string(o, "id", "status_report"),
+        agents=_count(o, "agents", "status_report"),
+        blocked=_count(o, "blocked", "status_report"),
+        herdr=herdr,
+        hooks_installed=hooks,
+    )
 
 
 def _key(obj: dict, what: str) -> str:
@@ -582,6 +639,17 @@ def to_json(message: Message) -> dict:
             return {"type": "item", "id": iid, "buckets": list(buckets), "say": say}
         case ItemSpoken(id=iid):
             return {"type": "item_spoken", "id": iid}
+        case StatusRequest(id=sid):
+            return {"type": "status_request", "id": sid}
+        case StatusReport(id=sid, agents=agents, blocked=blocked, herdr=herdr, hooks_installed=hooks):
+            obj = {"type": "status_report", "id": sid, "agents": agents, "blocked": blocked}
+            if herdr is not None:
+                obj["herdr"] = {"state": herdr.state}
+                if herdr.version is not None:
+                    obj["herdr"]["version"] = herdr.version
+            if hooks is not None:
+                obj["hooks"] = {"installed": hooks}
+            return obj
     raise TypeError(f"not a message: {message!r}")
 
 

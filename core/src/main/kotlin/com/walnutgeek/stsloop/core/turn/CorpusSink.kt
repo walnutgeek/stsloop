@@ -6,6 +6,8 @@ import com.walnutgeek.stsloop.core.Ids
 import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
 import com.walnutgeek.stsloop.core.hub.Drafts
+import com.walnutgeek.stsloop.core.hub.HubReport
+import com.walnutgeek.stsloop.core.hub.HubReports
 import com.walnutgeek.stsloop.core.summary.BucketSummaries
 import com.walnutgeek.stsloop.core.summary.NoteSource
 import com.walnutgeek.stsloop.core.summary.SummaryMarks
@@ -62,6 +64,12 @@ class CorpusSink(
     private val request: (BucketRequest) -> String? = { SessionCommands.HUB_OFFLINE },
     /** This Session's Drafts; shared with whatever hears the hub's answers to their sends. */
     private val drafts: Drafts = Drafts(send = { false }, say = {}, clockMs = { 0L }),
+    /**
+     * Answers "hub status" or "hub details" ([HubReports.ask]); returns what to
+     * say now, or null when the hub was asked and its report will be said.
+     * Must return at once.
+     */
+    private val hubReport: (HubReports.Detail) -> String? = { HubReport.NO_HUB },
     /** This Session's summaries ("summarize bucket"); by default over no Corpus and no hub. */
     private val summaries: BucketSummaries = BucketSummaries(NoteSource.NONE, SummaryMarks(null), { false }, { false }, { _, _ -> }, { 0L }),
     private val listener: Listener,
@@ -141,6 +149,7 @@ class CorpusSink(
                 command == null -> transcript?.text
                 command.request != null -> request(command.request)
                 command.summarize -> summaries.summarize(command.range)
+                command.hubReport != null -> hubReport(command.hubReport)
                 else -> command.say
             }
             listener.published(turn, utterance, transcription?.timing, say)

@@ -154,8 +154,11 @@ class Buckets:
     def collect(self) -> p.Item | None:
         """After a round of polling: what the Providers raised, as one Item, if anything is not muted."""
         raised = tuple(r for provider in self._providers for r in provider.take_raised())
-        blocked = frozenset(b for provider in self._providers for b in provider.blocked())
-        return self._alerts.raised(raised, blocked)
+        return self._alerts.raised(raised, self.blocked())
+
+    def blocked(self) -> frozenset[str]:
+        """The ids of the Buckets blocked now, whichever Provider's."""
+        return frozenset(b for provider in self._providers for b in provider.blocked())
 
     def outstanding(self) -> tuple[p.Item, ...]:
         """Items not yet spoken that still hold: what a newly welcomed phone is sent."""

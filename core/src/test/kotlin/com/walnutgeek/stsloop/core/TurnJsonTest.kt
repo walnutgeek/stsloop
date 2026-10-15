@@ -99,7 +99,7 @@ class TurnJsonTest {
     @Test
     fun `command names are permanent`() {
         // what_bucket (#14) is retired, never reused: "what bucket" is now an alias of where_am_i (#40).
-        assertEquals(listOf("scratch_that", "repeat", "where_am_i", "stop_listening", "focus", "request", "read_back", "send", "cancel", "summarize"), Command.entries.map { it.json })
+        assertEquals(listOf("scratch_that", "repeat", "where_am_i", "stop_listening", "focus", "request", "read_back", "send", "cancel", "summarize", "hub_status", "hub_details"), Command.entries.map { it.json })
     }
 
     @Test

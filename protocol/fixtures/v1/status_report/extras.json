@@ -1,0 +1,9 @@
+{
+  "type": "status_report",
+  "id": "b7e2d4",
+  "agents": 3,
+  "blocked": 1,
+  "herdr": { "state": "ok", "version": "0.9.1", "path": "/home/me/.local/bin/herdr" },
+  "hooks": { "installed": true, "file": "/home/me/.claude/settings.json" },
+  "uptime_s": 3600
+}

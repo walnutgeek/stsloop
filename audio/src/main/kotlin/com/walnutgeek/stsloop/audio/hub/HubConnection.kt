@@ -24,6 +24,7 @@ import com.walnutgeek.stsloop.core.hub.Pairing
 import com.walnutgeek.stsloop.core.hub.Reply
 import com.walnutgeek.stsloop.core.hub.Scheduler
 import com.walnutgeek.stsloop.core.hub.Sent
+import com.walnutgeek.stsloop.core.hub.StatusReport
 import com.walnutgeek.stsloop.core.hub.TurnAck
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -46,8 +47,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * put while Wi-Fi hands over to mobile data underneath it.
  * Each snapshot of Descriptors is cached in [store], on the timer thread so
  * no disk write happens under the link's lock, before [onDescriptors] hears of it.
- * Each welcome and each failure is recorded in [store] ([HubReach]) the same
- * way, so the app can say why the hub could not be reached when it next
+ * Each welcome, each failure, and the end of each welcomed connection
+ * ("hub offline for 12 minutes", #75) is recorded in [store] ([HubReach]) the
+ * same way, so the app can say why the hub could not be reached when it next
  * opens (#74); [onRecorded] hears of each once it is recorded.
  *
  * Given the [corpus] directory, it also uploads the Corpus while the hub is
@@ -80,6 +82,8 @@ class HubConnection(
     private val onSent: (Sent) -> Unit = {},
     /** The hub raised an Item; called like [onReply], so it must return at once. */
     private val onItem: (Item) -> Unit = {},
+    /** The hub answered "hub status" or "hub details"; called like [onReply]. */
+    private val onStatusReport: (StatusReport) -> Unit = {},
     /** The Corpus to upload; null uploads nothing. */
     corpus: File? = null,
 ) {
@@ -121,17 +125,22 @@ class HubConnection(
     )
 
     private val link: HubLink = HubLink(pairing, OkHttpTransport(client), ExecutorScheduler(timers), object : HubLink.Listener {
+        /** Whether the last status was Online: its end is when the hub was last there ([HubReach.leftAtMs]). */
+        private var wasOnline = false
+
         override fun status(status: HubStatus) {
             Log.i(TAG, "$owner: hub ${describe(status)}")
             uploader?.status(status)
             onStatus(status)
-            if (status !is HubStatus.Online && status.failure == null) return
+            val left = wasOnline
+            wasOnline = status is HubStatus.Online
+            if (status !is HubStatus.Online && status.failure == null && !left) return
             val at = System.currentTimeMillis()
             // On the timer thread, so no disk write happens under the link's lock; dropped once stopped.
             runCatching {
                 timers.execute {
                     try {
-                        store.updateReach { it.record(status, at) }
+                        store.updateReach { it.record(status, at, wasOnline = left) }
                     } catch (e: Exception) {
                         Log.e(TAG, "$owner: cannot record how the hub was reached", e)
                     }
@@ -162,6 +171,8 @@ class HubConnection(
         }
 
         override fun reply(reply: Reply) = onReply(reply)
+
+        override fun statusReport(report: StatusReport) = onStatusReport(report)
 
         override fun sent(sent: Sent) = onSent(sent)
 
@@ -226,10 +237,19 @@ class HubConnection(
     fun stop() {
         for (w in watches) runCatching { connectivity.unregisterNetworkCallback(w) }
         watches.clear()
+        val wasOnline = link.online
         link.stop()
         uploader?.let { Log.i(TAG, "$owner: uploaded ${it.stored} Turns to the hub") }
         uploadThread?.shutdownNow()
         timers.shutdownNow()
+        if (wasOnline) {
+            // Stopped while welcomed: the timer thread that records it is gone, so it is written here.
+            try {
+                store.updateReach { it.left(System.currentTimeMillis()) }
+            } catch (e: Exception) {
+                Log.e(TAG, "$owner: cannot record when the hub was last there", e)
+            }
+        }
         client.dispatcher.executorService.shutdown()
         client.connectionPool.evictAll()
     }

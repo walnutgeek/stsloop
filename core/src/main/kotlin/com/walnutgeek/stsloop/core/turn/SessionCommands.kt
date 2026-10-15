@@ -7,6 +7,7 @@ import com.walnutgeek.stsloop.core.CommandInvocation
 import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.TurnKind
 import com.walnutgeek.stsloop.core.hub.Drafts
+import com.walnutgeek.stsloop.core.hub.HubReports
 import com.walnutgeek.stsloop.core.grammar.Descriptor
 import com.walnutgeek.stsloop.core.grammar.Primitive
 import com.walnutgeek.stsloop.core.summary.BucketSummaries
@@ -57,6 +58,9 @@ import com.walnutgeek.stsloop.core.summary.NoteRange
  *   itself; its [Outcome.request] goes to the hub once the Turn is
  *   published, and the reply is spoken when it comes ([HubRequests]).
  * - [Command.STOP_LISTENING]: says [STOPPED_LISTENING] and [Outcome.endsSession].
+ * - [Command.HUB_STATUS] and [Command.HUB_DETAILS] (#75): say nothing
+ *   themselves; once the Turn is published, [Outcome.hubReport] is answered
+ *   ([HubReports]): by the hub's report when it is online, by the phone alone otherwise.
  * - [Command.SUMMARIZE] ("summarize bucket", #76): reads the Notes the
  *   focused capture Bucket's summary covers ([BucketSummaries.range]) and
  *   records them in its Turn; once that is published, [Outcome.range] is
@@ -101,6 +105,8 @@ class SessionCommands(
         val summarize: Boolean = false,
         /** The Notes to summarise; null when the Corpus could not be read. */
         val range: NoteRange? = null,
+        /** For [Command.HUB_STATUS] and [Command.HUB_DETAILS]: answer it once the Turn is published ([HubReports]). */
+        val hubReport: HubReports.Detail? = null,
     )
 
     /** The previous Turn, or null. Its transcript is never null or blank: only such a Turn becomes [previous]. */
@@ -140,6 +146,8 @@ class SessionCommands(
             Command.REQUEST -> Outcome(plain, null, request = invocation.request)
             Command.STOP_LISTENING -> Outcome(plain, STOPPED_LISTENING, endsSession = true)
             Command.SUMMARIZE -> summary(invocation)
+            Command.HUB_STATUS -> Outcome(plain, null, hubReport = HubReports.Detail.SHORT)
+            Command.HUB_DETAILS -> Outcome(plain, null, hubReport = HubReports.Detail.LONG)
         }
     }
 

@@ -218,6 +218,20 @@ enum class Command(val json: String, val phrases: List<String>) {
      * `read` request ("what does it say") instead.
      */
     SUMMARIZE("summarize", listOf("summarize bucket", "summarize", "sum it up")),
+
+    /**
+     * Says how the hub is, in short (#75): "hub connected, 6 agents, 2
+     * blocked."; offline, the phone answers alone ([com.walnutgeek.stsloop.core.hub.HubReport]).
+     */
+    HUB_STATUS("hub_status", listOf("hub status", "hub health", "how is the hub")),
+
+    /**
+     * Says how the hub is, at length: the last failure, herdr, the hooks, the
+     * upload backlog (#75). The recogniser often hears "hub" in "hub status"
+     * and "hub details" as "hob" or "hog"; the other phrases it hears every
+     * time (the recognisability check, #49).
+     */
+    HUB_DETAILS("hub_details", listOf("hub details", "hub info", "details of the hub")),
     ;
 
     /** Whether it is one of the `draft` Primitive's commands, which carry a [DraftCommand]. */
