@@ -86,10 +86,11 @@ BLOCKED = p.Command(
 )
 #: The `draft` Primitive's commands. The phone knows each by its id and runs it itself.
 READ_BACK = p.Command(id="read_back", phrases=("read it back",), primitive="draft")
-SEND = p.Command(id="send", phrases=("send",), primitive="draft")
+#: "send it" first: "send" alone is heard 2 times in 6 on the dev phone (#82). The phone says the first phrase.
+SEND = p.Command(id="send", phrases=("send it", "send"), primitive="draft")
 CANCEL = p.Command(id="cancel", phrases=("cancel",), primitive="draft")
-#: "send" to a session without herdr: a `request`, answered with why it cannot be sent.
-SEND_NEEDS_HERDR = p.Command(id="send", phrases=("send",), primitive="request")
+#: "send it" to a session without herdr: a `request`, answered with why it cannot be sent.
+SEND_NEEDS_HERDR = p.Command(id="send", phrases=SEND.phrases, primitive="request")
 POLL_S = 2.0
 #: Polls herdr may fail in a row before its agents' Buckets go.
 GRACE = 3

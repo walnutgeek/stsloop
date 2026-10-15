@@ -163,6 +163,9 @@ data class Classification(
  * A whole-utterance command (`docs/phase0.md`, "Commands"): [json] is its
  * `command.name` in `turn.json`, [phrases] what may be said for it. The
  * phrase grammar obeys a phrase only when it is the whole utterance.
+ * The first phrase is the primary, the one the loop and the docs teach: it
+ * must be heard in 6 of 6 variants by the recognisability check on the dev
+ * phone (`docs/mvp.md`, "Commands"); the others are aliases.
  *
  * To add one: an entry here, and its effect in
  * [com.walnutgeek.stsloop.core.turn.SessionCommands.plan]. The grammar needs no change.
@@ -222,16 +225,17 @@ enum class Command(val json: String, val phrases: List<String>) {
     /**
      * Says how the hub is, in short (#75): "hub connected, 6 agents, 2
      * blocked."; offline, the phone answers alone ([com.walnutgeek.stsloop.core.hub.HubReport]).
+     * "How is the hub" is the primary (#82): the recogniser hears "hub" in
+     * "hub status" as "hob" 3 times in 6, so that is only an alias.
      */
-    HUB_STATUS("hub_status", listOf("hub status", "hub health", "how is the hub")),
+    HUB_STATUS("hub_status", listOf("how is the hub", "hub status", "hub health")),
 
     /**
      * Says how the hub is, at length: the last failure, herdr, the hooks, the
-     * Turns waiting to upload (#75). The recogniser often hears "hub" in "hub status"
-     * and "hub details" as "hob" or "hog"; the other phrases it hears every
-     * time (the recognisability check, #49).
+     * Turns waiting to upload (#75). "Details of the hub" is the primary
+     * (#82): "hub details" is heard as "hug" or "hog details" 4 times in 6.
      */
-    HUB_DETAILS("hub_details", listOf("hub details", "hub info", "details of the hub")),
+    HUB_DETAILS("hub_details", listOf("details of the hub", "hub details", "hub info")),
     ;
 
     /** Whether it is one of the `draft` Primitive's commands, which carry a [DraftCommand]. */

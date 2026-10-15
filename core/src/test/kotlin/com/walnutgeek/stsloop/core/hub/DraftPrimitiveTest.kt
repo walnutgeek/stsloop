@@ -195,6 +195,20 @@ class DraftPrimitiveTest {
     }
 
     @Test
+    fun `send it is the send phrase, and send alone still sends`() {
+        // #82: the hub declares "send it" first, because "send" alone is heard 2 times in 6 on the dev phone.
+        assertEquals(listOf("send it", "send"), herdr.buckets[1].commands.single { it.id == "send" }.phrases)
+        for (said in listOf("Send it.", "send")) {
+            val s = Session()
+            s.hear("STSLOOP")
+            s.hear("REBASE ONTO MAIN")
+            s.hear(said)
+            assertEquals(Command.SEND, s.turns.last().classification!!.command!!.command, said)
+            assertEquals("rebase onto main", (s.sent.single() as Send).text, said)
+        }
+    }
+
+    @Test
     fun `nothing is sent until the readback is over, and not at all if it is never heard`() {
         val s = Session(readBackHeard = false)
         s.hear("STSLOOP")

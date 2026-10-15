@@ -3,8 +3,8 @@
   "buckets": [
     {
       "id": "hub",
-      "name": "hub",
-      "aliases": ["the hub"],
+      "name": "the hub",
+      "aliases": ["hub"],
       "type": "hub",
       "primitives": ["request"],
       "commands": [
@@ -21,7 +21,7 @@
         { "id": "status", "phrases": ["status"], "primitive": "request" },
         { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 },
         { "id": "read_back", "phrases": ["read it back"], "primitive": "draft" },
-        { "id": "send", "phrases": ["send"], "primitive": "draft" },
+        { "id": "send", "phrases": ["send it", "send"], "primitive": "draft" },
         { "id": "cancel", "phrases": ["cancel"], "primitive": "draft" },
         { "id": "quiet", "phrases": ["quiet", "mute alerts"], "primitive": "request" },
         { "id": "unmute", "phrases": ["unmute", "unmute alerts"], "primitive": "request" }
@@ -37,7 +37,7 @@
         { "id": "status", "phrases": ["status"], "primitive": "request" },
         { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 },
         { "id": "read_back", "phrases": ["read it back"], "primitive": "draft" },
-        { "id": "send", "phrases": ["send"], "primitive": "draft" },
+        { "id": "send", "phrases": ["send it", "send"], "primitive": "draft" },
         { "id": "cancel", "phrases": ["cancel"], "primitive": "draft" },
         { "id": "quiet", "phrases": ["quiet", "mute alerts"], "primitive": "request" },
         { "id": "unmute", "phrases": ["unmute", "unmute alerts"], "primitive": "request" }
@@ -53,7 +53,7 @@
         { "id": "status", "phrases": ["status"], "primitive": "request" },
         { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 },
         { "id": "read_back", "phrases": ["read it back"], "primitive": "draft" },
-        { "id": "send", "phrases": ["send"], "primitive": "draft" },
+        { "id": "send", "phrases": ["send it", "send"], "primitive": "draft" },
         { "id": "cancel", "phrases": ["cancel"], "primitive": "draft" },
         { "id": "quiet", "phrases": ["quiet", "mute alerts"], "primitive": "request" },
         { "id": "unmute", "phrases": ["unmute", "unmute alerts"], "primitive": "request" }

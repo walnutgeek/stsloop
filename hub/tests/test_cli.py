@@ -324,7 +324,7 @@ class ServeTest(unittest.TestCase):
             asyncio.run(asyncio.wait_for(hear(), 5))
         self.assertTrue(all(a.startswith(b"HTTP/1.1 204 ") for a in answers), answers)
         self.assertEqual(changed, [True], "one new snapshot: the session came")
-        self.assertEqual([d.name for d in hub._descriptors()], ["hub", "woodglue agent"])
+        self.assertEqual([d.name for d in hub._descriptors()], ["the hub", "woodglue agent"])
         self.assertEqual([i.say for i in items], ["woodglue agent is blocked."])
 
     def test_with_herdr_serve_publishes_its_agents_and_polls_it(self):

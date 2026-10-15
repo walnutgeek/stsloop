@@ -103,7 +103,7 @@ class HubConnectionDeviceTest {
         c.start()
         assertTrue("no Descriptors within 10 s; status ${c.status}", got.await(10, TimeUnit.SECONDS))
         assertTrue(c.online)
-        assertEquals("the hub Bucket comes first; herdr's agents, if any, follow", "hub", snapshot!!.buckets.first().name)
+        assertEquals("the hub Bucket comes first; herdr's agents, if any, follow", "the hub", snapshot!!.buckets.first().name)
         // The cache survives the connection, as it must survive a restart.
         c.stop()
         connection = null

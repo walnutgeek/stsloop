@@ -174,7 +174,7 @@ class HubLinkTest {
         welcomed()
         assertTrue(link.online)
         hub("descriptors/stub.json")
-        assertEquals("hub", snapshots.single().buckets.single().name)
+        assertEquals("the hub", snapshots.single().buckets.single().name)
         assertEquals(listOf(HubStatus.Connecting, HubStatus.Online(Protocol.decode(Fixtures.text("v1", "welcome/basic.json")) as Welcome)), statuses)
     }
 

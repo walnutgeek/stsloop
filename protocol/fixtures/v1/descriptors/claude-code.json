@@ -3,8 +3,8 @@
   "buckets": [
     {
       "id": "hub",
-      "name": "hub",
-      "aliases": ["the hub"],
+      "name": "the hub",
+      "aliases": ["hub"],
       "type": "hub",
       "primitives": ["request"],
       "commands": [
@@ -20,7 +20,7 @@
       "commands": [
         { "id": "status", "phrases": ["status"], "primitive": "request" },
         { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 },
-        { "id": "send", "phrases": ["send"], "primitive": "request" },
+        { "id": "send", "phrases": ["send it", "send"], "primitive": "request" },
         { "id": "quiet", "phrases": ["quiet", "mute alerts"], "primitive": "request" },
         { "id": "unmute", "phrases": ["unmute", "unmute alerts"], "primitive": "request" }
       ]

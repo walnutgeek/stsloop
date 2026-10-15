@@ -19,7 +19,7 @@ holds the floor with you.
 The job that makes someone install stsloop is **supervising coding agents
 hands-free**. You start five agent sessions, get in the car, and the loop
 tells you when one is blocked and what it is asking. You answer by voice, hear
-your answer read back, and say "send". Nothing else does this well, and the
+your answer read back, and say "send it". Nothing else does this well, and the
 people who run several agents at once are the people who will try it.
 
 Capture is the base layer under the wedge. Notes filed into Buckets work with
@@ -195,7 +195,7 @@ The ladder still sets how far a Provider may reach:
 | 1 | **Read state.** Which agents are blocked, done, working. | None |
 | 2 | **Read content.** Bounded, summarised agent output. | Leakage into transcripts and models |
 | 3 | **Draft.** Compose a reply by voice; nothing is sent. | None |
-| 4 | **Send, confirmed.** Send a Draft after a spoken readback and "send". | Wrong agent, duplicate sends |
+| 4 | **Send, confirmed.** Send a Draft after a spoken readback and "send it". | Wrong agent, duplicate sends |
 | 5 | **Execute.** Approve an agent's permission request, run a command. | Real, and permanent |
 
 v0.1 goes up to rung 4. Most blocked agents are asking a question, and

@@ -3,8 +3,8 @@
   "buckets": [
     {
       "id": "hub",
-      "name": "hub",
-      "aliases": ["the hub"],
+      "name": "the hub",
+      "aliases": ["hub"],
       "type": "hub",
       "primitives": [],
       "commands": []

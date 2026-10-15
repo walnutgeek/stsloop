@@ -64,9 +64,9 @@ string `type`.
    start. The hub stores the Turn as the phone wrote it,
    `<corpus>/<started_at>-<id>/{turn.json,audio.wav}`, so
    `scripts/corpus_load.py` reads the hub's Corpus unchanged.
-7. **Sends.** The `draft` Primitive's "send" delivers a Draft to an agent
+7. **Sends.** The `draft` Primitive's "send it" delivers a Draft to an agent
    Bucket: the phone sends `send` with the Descriptor's `id`, the `text`, and
-   an idempotency `key` (128 random bits, new for every "send"). The hub
+   an idempotency `key` (128 random bits, new for every "send it"). The hub
    answers one `sent` carrying the same `key`: a sentence to speak, and no
    `reason` when the Draft was delivered (`unknown_bucket` or `refused`: not
    sent; `uncertain`: it may have arrived). The hub tries each key at most
@@ -74,7 +74,7 @@ string `type`.
    a restart), and answers a key it has seen with the answer it gave the
    first time. So the phone sends the same `send` again on every welcome
    until a `sent` answers it, and a reconnect never delivers a Draft twice.
-   The `draft` commands themselves ("read it back", "send", "cancel": ids
+   The `draft` commands themselves ("read it back", "send it" or "send", "cancel": ids
    `read_back`, `send`, `cancel`) run on the phone. No capability is needed:
    a hub that declares a `draft` command answers `send`.
 8. **Items.** The hub sends an `item` when a Bucket that uses `speak_item`

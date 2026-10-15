@@ -216,7 +216,7 @@ class WithoutHerdrTest(Setup):
     def test_two_sessions_in_one_directory(self):
         self.hook(*INTERACTIVE[:2])
         self.hook(*[(None, 7, e | {"session_id": "second"}) for _, _, e in INTERACTIVE[:2]])
-        self.assertEqual([d.name for d in self.buckets.descriptors()], ["hub", "woodglue agent", "woodglue agent two"])
+        self.assertEqual([d.name for d in self.buckets.descriptors()], ["the hub", "woodglue agent", "woodglue agent two"])
 
     def test_status_says_why_it_is_blocked(self):
         self.hook(*INTERACTIVE[:3], after=30)
@@ -358,7 +358,7 @@ class WithHerdrTest(Setup):
     def test_a_session_outside_herdr_has_its_own_bucket_and_name(self):
         self.poll(agent("w4:p1", "woodglue", "working"))
         self.hook(*INTERACTIVE[:2])
-        self.assertEqual([d.name for d in self.buckets.descriptors()], ["hub", "woodglue agent", "woodglue agent two"])
+        self.assertEqual([d.name for d in self.buckets.descriptors()], ["the hub", "woodglue agent", "woodglue agent two"])
 
     def test_herdr_away_leaves_its_sessions_as_claude_code_buckets(self):
         self.poll(agent("w8:p1", "stsloop", "working"))

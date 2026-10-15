@@ -67,7 +67,7 @@ class ProtocolFixturesTest {
     @Test
     fun `the stub hub's Descriptors parse to the stub Bucket`() {
         val stub = (Protocol.decode(Fixtures.text("v1", "descriptors/stub.json")) as Descriptors).buckets.single()
-        assertEquals(HubDescriptor("hub", "hub", listOf("the hub"), "hub", emptyList(), emptyList()), stub)
+        assertEquals(HubDescriptor("hub", "the hub", listOf("hub"), "hub", emptyList(), emptyList()), stub)
     }
 
     @Test

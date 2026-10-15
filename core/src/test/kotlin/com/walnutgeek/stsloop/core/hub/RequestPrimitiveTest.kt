@@ -62,10 +62,10 @@ class RequestPrimitiveTest {
     @Test
     fun `an anywhere command is heard whatever has Focus`() {
         val g = grammar()
-        for (focused in listOf(null, "inbox", "errands", "stsloop agent", "hub")) {
+        for (focused in listOf(null, "inbox", "errands", "stsloop agent", "the hub")) {
             for (said in listOf("what's blocked", "WHATS BLOCKED", "um, what is blocked?")) {
                 val c = g.classify(said, focus = null, focused = focused).command
-                assertEquals(BucketRequest("hub", "hub", "blocked"), c?.request, "$said under $focused")
+                assertEquals(BucketRequest("the hub", "hub", "blocked"), c?.request, "$said under $focused")
             }
         }
     }
