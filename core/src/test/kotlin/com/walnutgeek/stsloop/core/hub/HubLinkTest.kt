@@ -4,6 +4,7 @@ import com.walnutgeek.stsloop.core.corpus.Json
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.Test
@@ -131,14 +132,17 @@ class HubLinkTest {
         when {
             "http" in last -> {
                 assertEquals(HubStatus.Unauthorised, link.status)
+                assertEquals(HubFailure.TokenRefused, link.status.failure)
                 assertEquals(emptyList<Long>(), scheduler.pending(), "a wrong token is not retried")
             }
             "close" in last && refusal != null -> {
                 assertEquals(HubStatus.Refused(refusal), link.status)
+                assertEquals(HubFailure.of(refusal), link.status.failure)
                 assertEquals(emptyList<Long>(), scheduler.pending(), "a refusal is not retried")
             }
             "close" in last -> {
                 assertInstanceOf(HubStatus.Offline::class.java, link.status)
+                assertEquals(HubFailure.NoWelcome, link.status.failure, "the hub answered, and closed before any welcome")
                 assertEquals(listOf(HubLink.FIRST_RETRY_MS), scheduler.pending(), "a plain close is retried")
             }
             else -> {
@@ -289,6 +293,73 @@ class HubLinkTest {
         assertEquals(2, transport.sockets.size)
     }
 
+    // --- why the hub cannot be used (#74) ------------------------------------------
+
+    private val unreachable = HubFailure.Unreachable("100.101.102.103:7717")
+
+    @Test
+    fun `a connect that hangs gives up sooner than the welcome wait, as unreachable, and is retried`() {
+        assertTrue(HubLink.CONNECT_TIMEOUT_MS < HubLink.WELCOME_TIMEOUT_MS)
+        link.start()
+        scheduler.advance(HubLink.CONNECT_TIMEOUT_MS - 1)
+        assertEquals(HubStatus.Connecting, link.status)
+        scheduler.advance(1)
+        assertEquals(1000, transport.sockets[0].closedWith)
+        assertEquals(unreachable, link.status.failure)
+        assertTrue(link.offline)
+        assertEquals(listOf(HubLink.FIRST_RETRY_MS), scheduler.pending())
+        // The hung socket's late failure changes nothing.
+        transport.sockets[0].events.failed(null, java.net.SocketTimeoutException("connect timed out"))
+        assertEquals(listOf(HubLink.FIRST_RETRY_MS), scheduler.pending())
+    }
+
+    @Test
+    fun `a connect that fails with no HTTP answer is unreachable`() {
+        link.start()
+        transport.last.events.failed(null, java.net.ConnectException("no route to host"))
+        assertEquals(unreachable, link.status.failure)
+        assertEquals("java.net.ConnectException: no route to host", (link.status as HubStatus.Offline).why)
+    }
+
+    @Test
+    fun `the welcome wait starts once the connection opens, and running out of it is no welcome`() {
+        link.start()
+        scheduler.advance(HubLink.CONNECT_TIMEOUT_MS - 1)
+        transport.last.events.opened()
+        scheduler.advance(HubLink.WELCOME_TIMEOUT_MS - 1)
+        assertEquals(HubStatus.Connecting, link.status)
+        scheduler.advance(1)
+        assertEquals(1000, transport.sockets[0].closedWith)
+        assertEquals(HubStatus.Offline("no welcome in 10 s", HubFailure.NoWelcome), link.status)
+    }
+
+    @Test
+    fun `an HTTP answer other than 401 is no welcome, and is retried`() {
+        link.start()
+        transport.last.events.failed(502, java.net.ProtocolException("Expected HTTP 101 response but was '502 Bad Gateway'"))
+        assertEquals(HubFailure.NoWelcome, link.status.failure)
+        assertEquals(listOf(HubLink.FIRST_RETRY_MS), scheduler.pending())
+    }
+
+    @Test
+    fun `a connection lost after its welcome is no failure of its own, the retry tells`() {
+        welcomed()
+        transport.last.events.closed(1006, "gone")
+        assertEquals(HubStatus.Offline("closed 1006 gone"), link.status)
+        assertNull(link.status.failure)
+        scheduler.advance(HubLink.FIRST_RETRY_MS)
+        transport.last.events.failed(null, null)
+        assertEquals(unreachable, link.status.failure)
+    }
+
+    @Test
+    fun `a welcome in another major names the side to update`() {
+        link.start()
+        transport.last.events.opened()
+        transport.last.events.received("""{"type": "welcome", "protocol": {"major": 2, "minor": 0}, "capabilities": []}""")
+        assertEquals(HubFailure.Update.APP, (link.status.failure as HubFailure.ProtocolRefused).update)
+    }
+
     @Test
     fun `the hub is offline only once a connection has failed, until the next welcome`() {
         assertTrue(link.offline, "not started")
@@ -359,7 +430,7 @@ class HubLinkTest {
         scheduler.advance(500)
         link.networkChanged()
         assertEquals(2, transport.sockets.size)
-        assertEquals(listOf(HubLink.WELCOME_TIMEOUT_MS), scheduler.pending())
+        assertEquals(listOf(HubLink.CONNECT_TIMEOUT_MS), scheduler.pending())
     }
 
     @Test

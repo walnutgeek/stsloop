@@ -14,7 +14,7 @@ import com.walnutgeek.stsloop.audio.speech.SayAloud
 import com.walnutgeek.stsloop.audio.hub.HubConnection
 import com.walnutgeek.stsloop.core.hub.BadMessage
 import com.walnutgeek.stsloop.core.hub.Descriptors
-import com.walnutgeek.stsloop.core.hub.HubStatus
+import com.walnutgeek.stsloop.core.hub.HubFailure
 import com.walnutgeek.stsloop.core.hub.HubStore
 import com.walnutgeek.stsloop.core.hub.Pairing
 import com.walnutgeek.stsloop.core.hub.Protocol
@@ -30,10 +30,14 @@ import java.util.concurrent.Executors
  * applies from the next Session, and is not tried from here meanwhile (the
  * hub keeps one connection, so a second would push the Session's off).
  *
+ * Under the address, the hub line says whether the last try connected, or
+ * why it failed and when ([HubReach]). A first connection that fails opens
+ * the reconnect nudge ([HubNudge]).
+ *
  * Store reads and writes run on a background thread; the screen is updated
  * on the UI thread.
  */
-class HubPairingPane(private val activity: Activity) {
+class HubPairingPane(private val activity: Activity, private val nudge: HubNudge) {
     private val store = HubStore(activity.filesDir)
     private val status = TextView(activity).apply { textSize = 16f; setPadding(0, 24, 0, 0) }
     private val pair = Button(activity).apply {
@@ -97,12 +101,7 @@ class HubPairingPane(private val activity: Activity) {
             val checked = java.util.concurrent.atomic.AtomicBoolean()
             connection = HubConnection( // here, off the UI thread: it reads the pairing just stored
                 activity, store, "pairing",
-                onStatus = { s ->
-                    when (s) {
-                        is HubStatus.Refused, HubStatus.Unauthorised -> done(connection, "The hub ${HubConnection.describe(s)}.")
-                        else -> Unit
-                    }
-                },
+                onStatus = { s -> s.failure?.let { f -> done(connection, "Paired with ${pairing.url}, but could not connect.", f) } },
                 onDescriptors = { d ->
                     done(connection, "Paired. ${describe(d)}")
                     // Onboarding step 3 (docs/mvp.md): check the new names, then say the phone is ready.
@@ -137,12 +136,13 @@ class HubPairingPane(private val activity: Activity) {
         }, FETCH_TIMEOUT_MS)
     }
 
-    /** Any thread: the fetch on [connection] is over; say [message] and show what is stored. */
-    private fun done(connection: HubConnection, message: String) = activity.runOnUiThread {
+    /** Any thread: the fetch on [connection] is over; say [message], show what is stored, and nudge about a [failure]. */
+    private fun done(connection: HubConnection, message: String, failure: HubFailure? = null) = activity.runOnUiThread {
         if (fetching !== connection) return@runOnUiThread
         fetching = null
         connection.stop()
         io.execute { show(note = message, changed = true) }
+        failure?.let(nudge::show)
     }
 
     /** Background thread: reads the store and shows it, with [note] under it; [changed] tells [onChanged]. */
@@ -155,7 +155,7 @@ class HubPairingPane(private val activity: Activity) {
         }
         val text = when (pairing) {
             null -> "Hub: not paired."
-            else -> "Hub: ${pairing.url}\n${cached?.let(::describe) ?: "No hub Buckets yet."}"
+            else -> "Hub: ${pairing.url}\n${HubNudge.line(activity, store.reach())}\n${cached?.let(::describe) ?: "No hub Buckets yet."}"
         }
         activity.runOnUiThread {
             status.text = if (note == null) text else "$text\n$note"
@@ -181,7 +181,7 @@ class HubPairingPane(private val activity: Activity) {
 
     private companion object {
         const val TAG = "stsloop.Pairing"
-        const val FETCH_TIMEOUT_MS = 15_000L
+        const val FETCH_TIMEOUT_MS = 20_000L // past the link's own connect and welcome timeouts
         val io = Executors.newSingleThreadExecutor { r -> Thread(r, "stsloop-pairing").apply { isDaemon = true } }
     }
 }

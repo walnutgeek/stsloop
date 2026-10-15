@@ -43,6 +43,7 @@ import java.util.concurrent.Executors
  */
 class SettingsActivity : Activity() {
     private lateinit var hub: HubPairingPane
+    private lateinit var nudge: HubNudge
     private lateinit var trailingSilence: EditText
     private lateinit var focusTimeout: EditText
     private lateinit var timingsNote: TextView
@@ -58,7 +59,14 @@ class SettingsActivity : Activity() {
         bucketList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         bucketsNote = note()
         checkNote = note()
-        hub = HubPairingPane(this).apply {
+        // The reconnect nudge (#74): a Retry may fetch Descriptors, and either button changes the hub line.
+        nudge = HubNudge(this).apply {
+            onChanged = {
+                hub.refresh()
+                loadBuckets()
+            }
+        }
+        hub = HubPairingPane(this, nudge).apply {
             onChanged = {
                 loadBuckets()
                 NameCheck.request(this@SettingsActivity, "hub pairing changed")
@@ -114,11 +122,13 @@ class SettingsActivity : Activity() {
         loadBuckets()
         NameCheck.listener = { runOnUiThread(::showRecognisability) }
         NameCheck.request(this, "settings opened")
+        nudge.check()
     }
 
     override fun onPause() {
         NameCheck.listener = null
         hub.pause()
+        nudge.pause()
         super.onPause()
     }
 

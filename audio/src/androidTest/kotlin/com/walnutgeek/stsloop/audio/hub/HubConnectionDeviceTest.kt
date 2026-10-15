@@ -3,6 +3,8 @@ package com.walnutgeek.stsloop.audio.hub
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.walnutgeek.stsloop.core.hub.Descriptors
+import com.walnutgeek.stsloop.core.hub.HubFailure
+import com.walnutgeek.stsloop.core.hub.HubLink
 import com.walnutgeek.stsloop.core.hub.HubRequests
 import com.walnutgeek.stsloop.core.hub.HubStatus
 import com.walnutgeek.stsloop.core.hub.HubStore
@@ -14,12 +16,17 @@ import com.walnutgeek.stsloop.core.hub.Send
 import com.walnutgeek.stsloop.core.hub.Sent
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.security.MessageDigest
+import java.util.Base64
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -208,6 +215,96 @@ class HubConnectionDeviceTest {
         assertTrue("status ${c.status}", reached.await(10, TimeUnit.SECONDS))
         Thread.sleep(1_500)
         assertEquals(HubStatus.Unauthorised, c.status)
+        // Recorded before the status was told (#74), with the words the screen shows.
+        assertEquals(HubFailure.TokenRefused, store.reach().failure)
+    }
+
+    @Test
+    fun aWelcomeIsRecordedAsConnected() {
+        val p = pairing
+        assumeTrue("no hubUrl and hubToken arguments", p != null)
+        store.pair(p!!)
+        store.updateReach { it.failed(HubFailure.NoWelcome, 1) }
+        val reached = CountDownLatch(1)
+        val c = HubConnection(context, store, "device test", onStatus = { if (it is HubStatus.Online) reached.countDown() })
+        connection = c
+        c.start()
+        assertTrue("status ${c.status}", reached.await(10, TimeUnit.SECONDS))
+        val reach = store.reach()
+        assertNull(reach.failure)
+        assertTrue(reach.connectedAtMs!! > 1)
+    }
+
+    // --- why the hub cannot be used (#74), no hub needed ------------------------------
+
+    /**
+     * The owner's phone had no Tailscale: the connect to the tailnet address
+     * hung, and the only log was "no welcome in 10 s". A hang is now given up
+     * as unreachable, sooner than the welcome wait. A tailnet address that
+     * nothing here routes to hangs, or fails at once; both are unreachable.
+     */
+    @Test
+    fun aConnectThatHangsIsUnreachableSoonerThanTheWelcomeWait() {
+        val (c, reached) = connect(Pairing(Protocol.VERSION, "ws://100.100.100.250:7717/", "n".repeat(43))) { it.failure != null }
+        val t0 = System.nanoTime()
+        assertTrue("status ${c.status}", reached.await(HubLink.CONNECT_TIMEOUT_MS + 2_000, TimeUnit.MILLISECONDS))
+        val ms = (System.nanoTime() - t0) / 1_000_000
+        assertTrue("gave up after $ms ms", ms < HubLink.WELCOME_TIMEOUT_MS)
+        assertEquals(HubFailure.Unreachable("100.100.100.250:7717"), c.status.failure)
+        assertEquals(HubFailure.Unreachable("100.100.100.250:7717"), store.reach().failure)
+    }
+
+    @Test
+    fun somethingAnsweringHttpButNoWebSocketIsNoWelcome() {
+        FakeHub(upgrade = false).use { hub ->
+            val (c, reached) = connect(Pairing(Protocol.VERSION, "ws://127.0.0.1:${hub.port}/", "n".repeat(43))) { it.failure != null }
+            assertTrue("status ${c.status}", reached.await(HubLink.CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS))
+            assertEquals(HubFailure.NoWelcome, c.status.failure)
+        }
+    }
+
+    @Test
+    fun aWebSocketThatNeverWelcomesIsNoWelcome() {
+        FakeHub(upgrade = true).use { hub ->
+            val (c, reached) = connect(Pairing(Protocol.VERSION, "ws://127.0.0.1:${hub.port}/", "n".repeat(43))) { it.failure != null }
+            assertTrue("status ${c.status}", reached.await(HubLink.WELCOME_TIMEOUT_MS + 2_000, TimeUnit.MILLISECONDS))
+            assertEquals(HubFailure.NoWelcome, c.status.failure)
+            assertEquals(HubFailure.NoWelcome, store.reach().failure)
+        }
+    }
+
+    /**
+     * A one-connection server on the phone: it answers the upgrade with a 101
+     * and then says nothing ([upgrade]), or with a 404.
+     */
+    private class FakeHub(private val upgrade: Boolean) : AutoCloseable {
+        private val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+        val port: Int get() = server.localPort
+        private val thread = Thread {
+            runCatching {
+                server.accept().use { socket ->
+                    val reader = socket.getInputStream().bufferedReader()
+                    val headers = generateSequence { reader.readLine() }.takeWhile { it.isNotEmpty() }.toList()
+                    val key = headers.firstOrNull { it.startsWith("Sec-WebSocket-Key:", ignoreCase = true) }?.substringAfter(":")?.trim()
+                    val out = socket.getOutputStream()
+                    if (upgrade && key != null) {
+                        val accept = Base64.getEncoder().encodeToString(
+                            MessageDigest.getInstance("SHA-1").digest((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").toByteArray()),
+                        )
+                        out.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: $accept\r\n\r\n".toByteArray())
+                    } else {
+                        out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+                    }
+                    out.flush()
+                    Thread.sleep(HubLink.WELCOME_TIMEOUT_MS + 5_000) // holds the connection, silent
+                }
+            }
+        }.apply { isDaemon = true; start() }
+
+        override fun close() {
+            server.close()
+            thread.interrupt()
+        }
     }
 
     @Test

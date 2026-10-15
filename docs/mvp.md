@@ -71,6 +71,14 @@ Then a Show HN.
 Tailscale is the documented path. The hub listens on its tailnet address
 only. Underneath, any address the phone can reach works with the same token.
 
+When the phone cannot use the hub, it says why, naming the one thing to check
+(#74): the hub is unreachable (Tailscale off, or `stsloop-hub serve` not
+running), it does not know the phone's token, one side needs updating, or it
+answered and did not finish the handshake. A dialog with Retry and Ignore
+shows after a pairing whose first connection fails, and when the app or the
+settings screen opens after a Session that could not reach the hub. A Session
+shows no dialog: it says "can't reach the hub." once.
+
 Herdr is optional. Without it, Claude Code hooks still give blocked and done
 events and summaries (rungs 1–2). Sending a reply needs a way into the
 agent's terminal, which herdr provides.
@@ -169,7 +177,8 @@ adb. v0.1 adds one screen with:
 
 - trailing silence;
 - focus timeout;
-- hub pairing (scan, forget);
+- hub pairing (scan, forget), and the hub line: connected, or the last
+  failure and when;
 - Buckets and their aliases, with each one's recognisability result.
 
 ## Phase 0 findings, settled
