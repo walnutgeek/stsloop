@@ -45,6 +45,9 @@ fun interface Cancellable {
 
 /** Where the phone's connection to the hub stands. */
 sealed interface HubStatus {
+    /** What is wrong with the hub, for a person; null unless this status is a failure to use it. */
+    val failure: HubFailure? get() = null
+
     /** No hub has been paired. */
     data object Unpaired : HubStatus
 
@@ -54,14 +57,22 @@ sealed interface HubStatus {
     /** Welcomed: the hub's Descriptors arrive as it sends them. */
     data class Online(val welcome: Welcome) : HubStatus
 
-    /** Not connected; [why] for the log. A retry is pending unless the link is stopped. */
-    data class Offline(val why: String) : HubStatus
+    /**
+     * Not connected; [why] for the log. A retry is pending unless the link is
+     * stopped. [failure] is null when the link was stopped, or lost a
+     * connection the hub had welcomed: the retry's own outcome tells.
+     */
+    data class Offline(val why: String, override val failure: HubFailure? = null) : HubStatus
 
     /** The hub refused the handshake; nothing is retried until the next [HubLink.start]. */
-    data class Refused(val refusal: Refusal) : HubStatus
+    data class Refused(val refusal: Refusal) : HubStatus {
+        override val failure: HubFailure get() = HubFailure.of(refusal)
+    }
 
     /** The hub answered 401: the token is wrong, and the phone must be paired again. Not retried. */
-    data object Unauthorised : HubStatus
+    data object Unauthorised : HubStatus {
+        override val failure: HubFailure get() = HubFailure.TokenRefused
+    }
 }
 
 /**
@@ -71,8 +82,11 @@ sealed interface HubStatus {
  * phone's requests. The link never holds up the loop: the loop only reads
  * [status] (or [online]), which is a volatile field, and [send] only queues.
  *
- * - On open it sends [Protocol.HELLO] and waits [WELCOME_TIMEOUT_MS] for the
- *   `welcome`. Messages it does not know, broken frames, and `descriptors`
+ * - A connection that has not opened within [CONNECT_TIMEOUT_MS] is given up
+ *   as [HubFailure.Unreachable]. On open it sends [Protocol.HELLO] and waits
+ *   [WELCOME_TIMEOUT_MS] for the `welcome`, else [HubFailure.NoWelcome]: the
+ *   connect timeout is the shorter, so "cannot connect" is told apart from
+ *   "connected, no welcome" ([HubStatus.failure]). Messages it does not know, broken frames, and `descriptors`
  *   before the welcome are ignored.
  * - A connection that is lost, fails, or is not welcomed in time is retried,
  *   after [FIRST_RETRY_MS], doubling to [MAX_RETRY_MS]; a welcome resets the
@@ -143,6 +157,11 @@ class HubLink(
     private var timer: Cancellable? = null
     private var retryMs = FIRST_RETRY_MS
 
+    /** Whether the current connection has opened (its WebSocket upgrade was answered). */
+    private var opened = false
+
+    private val unreachable: HubFailure get() = HubFailure.Unreachable(HubFailure.address(checkNotNull(pairing).url))
+
     @Synchronized
     fun start() {
         if (started) return
@@ -191,8 +210,17 @@ class HubLink(
         socket?.close(NORMAL, "reconnecting")
         val id = ++attempt
         set(HubStatus.Connecting)
+        opened = false
         socket = transport.open(pairing.url, pairing.token, Events(id))
-        timer = scheduler.schedule(WELCOME_TIMEOUT_MS) { welcomeTimedOut(id) }
+        timer = scheduler.schedule(CONNECT_TIMEOUT_MS) { connectTimedOut(id) }
+    }
+
+    @Synchronized
+    private fun connectTimedOut(id: Int) {
+        if (id != attempt || status != HubStatus.Connecting || opened) return
+        socket?.close(NORMAL, "no connection")
+        socket = null
+        lost("no connection in ${CONNECT_TIMEOUT_MS / 1000} s", unreachable)
     }
 
     @Synchronized
@@ -200,12 +228,13 @@ class HubLink(
         if (id != attempt || status != HubStatus.Connecting) return
         socket?.close(NORMAL, "no welcome")
         socket = null
-        lost("no welcome in ${WELCOME_TIMEOUT_MS / 1000} s")
+        lost("no welcome in ${WELCOME_TIMEOUT_MS / 1000} s", HubFailure.NoWelcome)
     }
 
-    private fun lost(why: String) {
+    /** The connection is gone, for [why] (the log), as [failure], or as none when the hub had welcomed it. */
+    private fun lost(why: String, failure: HubFailure?) {
         cancelTimer()
-        set(HubStatus.Offline(why))
+        set(HubStatus.Offline(why, failure))
         // Retires the lost connection: its late events (a close after a failure, say) are stale.
         val id = ++attempt
         val delay = retryMs
@@ -233,7 +262,11 @@ class HubLink(
         private val current get() = started && id == attempt
 
         override fun opened(): Unit = synchronized(this@HubLink) {
-            if (current) socket?.send(Protocol.encode(Protocol.HELLO))
+            if (!current || status != HubStatus.Connecting) return
+            opened = true
+            cancelTimer()
+            timer = scheduler.schedule(WELCOME_TIMEOUT_MS) { welcomeTimedOut(id) }
+            socket?.send(Protocol.encode(Protocol.HELLO))
         }
 
         override fun received(text: String): Unit = synchronized(this@HubLink) {
@@ -260,6 +293,7 @@ class HubLink(
                         "unsupported_protocol",
                         "The hub answered in protocol $major and the phone speaks ${Protocol.VERSION.major}. " +
                             if (major > Protocol.VERSION.major) "Update the phone app." else "Upgrade the hub.",
+                        listOf(message.protocol),
                     )))
                 }
                 message is Refusal && waiting -> {
@@ -278,7 +312,7 @@ class HubLink(
         override fun closed(code: Int, reason: String): Unit = synchronized(this@HubLink) {
             if (!current) return
             socket = null
-            if (status !is HubStatus.Refused) lost("closed $code $reason".trim())
+            if (status !is HubStatus.Refused) lost("closed $code $reason".trim(), if (online) null else HubFailure.NoWelcome)
         }
 
         override fun failed(httpStatus: Int?, error: Throwable?): Unit = synchronized(this@HubLink) {
@@ -290,13 +324,28 @@ class HubLink(
                     set(HubStatus.Unauthorised)
                 }
                 status is HubStatus.Refused -> Unit
-                else -> lost(listOfNotNull(httpStatus?.let { "HTTP $it" }, error?.toString()).joinToString(": ").ifEmpty { "failed" })
+                else -> lost(
+                    listOfNotNull(httpStatus?.let { "HTTP $it" }, error?.toString()).joinToString(": ").ifEmpty { "failed" },
+                    when {
+                        online -> null
+                        // Something answered: at the hub address, but not with a WebSocket, or not with a welcome.
+                        httpStatus != null || opened -> HubFailure.NoWelcome
+                        else -> unreachable
+                    },
+                )
             }
         }
     }
 
     companion object {
-        /** How long the phone waits, from opening a connection, for the hub's welcome. */
+        /**
+         * How long the phone waits for a connection to open (TCP, and the
+         * WebSocket upgrade answered) before it calls the hub unreachable.
+         * Shorter than [WELCOME_TIMEOUT_MS], so a hang is told apart from a hub that will not welcome.
+         */
+        const val CONNECT_TIMEOUT_MS = 5_000L
+
+        /** How long the phone waits, from the connection opening, for the hub's welcome. */
         const val WELCOME_TIMEOUT_MS = 10_000L
         const val FIRST_RETRY_MS = 1_000L
         const val MAX_RETRY_MS = 30_000L

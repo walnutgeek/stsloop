@@ -35,10 +35,12 @@ class MainActivity : Activity() {
     private lateinit var modelAction: Button
     private var testMode: TestModePane? = null
     private lateinit var openSettings: Button
+    private lateinit var nudge: HubNudge
     private val modelsChanged: () -> Unit = { refreshModels() }
     // The screen follows the Session's state (#70). When a capture ends its last Turn is
     // published, so the Corpus is re-listed too, in case the pane's watcher missed it (#68).
     private val sessionChanged: (Boolean) -> Unit = { captureEnded ->
+        if (SessionService.isActive) nudge.pause() // never during a Session (#74)
         refresh()
         if (captureEnded) transcripts.load()
     }
@@ -79,6 +81,8 @@ class MainActivity : Activity() {
             text = "Settings"
             setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
         }
+        // Why the hub could not be reached, on opening the app after a Session that could not (#74).
+        nudge = HubNudge(this)
         // Bluetooth test mode (#27) is a debug-build experiment, never part of the product UI.
         if (SessionService.testModeAllowed(this)) testMode = TestModePane()
         setContentView(LinearLayout(this).apply {
@@ -129,12 +133,14 @@ class MainActivity : Activity() {
         SessionService.observe(sessionChanged)
         refresh()
         transcripts.start()
+        nudge.check()
     }
 
     override fun onPause() {
         ModelDownloads.unobserve(modelsChanged)
         SessionService.unobserve(sessionChanged)
         transcripts.stop()
+        nudge.pause()
         super.onPause()
     }
 

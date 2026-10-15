@@ -13,26 +13,32 @@ import kotlin.reflect.cast
  * - `descriptors.json`: the last `descriptors` snapshot, the cache that lets
  *   hub Buckets resolve by name while the hub is offline;
  * - `uploaded.txt`: the Turns this hub has acknowledged as stored ([uploads]),
- *   so the Corpus upload never offers them again.
+ *   so the Corpus upload never offers them again;
+ * - `reach.json`: what the phone last learnt about reaching the hub, and
+ *   whether the person ignored it ([HubReach]).
  *
- * Each file holds its protocol message as the hub sent it, re-encoded, and
- * is replaced atomically. Reads throw [BadMessage] for a file that is not
- * its message, and [IOException] when it cannot be read; a missing file is null.
- * Calls are not synchronised: the pairing is written by the app's screen and
- * the cache by a Session's link, and a write is one rename.
+ * Every file is replaced atomically. The pairing and the cache hold their
+ * protocol message as the hub sent it, re-encoded; their reads throw
+ * [BadMessage] for a file that is not its message, and [IOException] when it
+ * cannot be read; a missing file is null. Those calls are not synchronised:
+ * the pairing is written by the app's screen and the cache by a Session's
+ * link, and a write is one rename. `reach.json` is read and changed under one
+ * lock for the process, and a file that cannot be read is [HubReach.EMPTY].
  */
 class HubStore(files: File) {
     private val dir = File(files, DIR)
     private val pairingFile = File(dir, PAIRING)
     private val descriptorsFile = File(dir, DESCRIPTORS)
     private val uploadsFile = File(dir, UPLOADED)
+    private val reachFile = File(dir, REACH)
 
     fun pairing(): Pairing? = read(pairingFile, Pairing::class)
 
     /**
      * Stores [pairing]. Pairing with a hub at another address drops the cached
      * Descriptors and the record of uploaded Turns, which are that other hub's;
-     * a new token for the same hub keeps them.
+     * a new token for the same hub keeps them. Any pairing drops [reach]:
+     * the hub is paired again, so an ignored failure nudges anew.
      */
     fun pair(pairing: Pairing) {
         // An unreadable old pairing counts as another hub's: its cache cannot be trusted either.
@@ -41,14 +47,37 @@ class HubStore(files: File) {
             descriptorsFile.delete()
             uploadsFile.delete()
         }
+        synchronized(REACH_LOCK) { reachFile.delete() }
         write(pairingFile, pairing)
     }
 
-    /** Drops the pairing, the cached Descriptors and the record of uploaded Turns. */
+    /** Drops the pairing, the cached Descriptors, the record of uploaded Turns, and [reach]. */
     fun forget() {
         pairingFile.delete()
         descriptorsFile.delete()
         uploadsFile.delete()
+        synchronized(REACH_LOCK) { reachFile.delete() }
+    }
+
+    /** What the phone last learnt about reaching the hub; [HubReach.EMPTY] when nothing, or the file cannot be read. */
+    fun reach(): HubReach = synchronized(REACH_LOCK) { readReach() }
+
+    private fun readReach(): HubReach = try {
+        if (reachFile.exists()) HubReach.parse(reachFile.readText()) else HubReach.EMPTY
+    } catch (e: IOException) {
+        HubReach.EMPTY
+    }
+
+    /**
+     * Replaces [reach] with [change] of it, read and written under one lock
+     * for the process: a Session's connection and the screen's Ignore may
+     * change it at once. Returns what was stored.
+     */
+    fun updateReach(change: (HubReach) -> HubReach): HubReach = synchronized(REACH_LOCK) {
+        val before = readReach()
+        val after = change(before)
+        if (after != before) writeText(reachFile, after.toJson())
+        after
     }
 
     /** The Turns the paired hub has acknowledged as stored. */
@@ -65,11 +94,13 @@ class HubStore(files: File) {
         return expected.cast(message)
     }
 
-    private fun write(file: File, message: Message) {
+    private fun write(file: File, message: Message) = writeText(file, Protocol.encode(message))
+
+    private fun writeText(file: File, text: String) {
         if (!dir.isDirectory && !dir.mkdirs()) throw IOException("cannot create $dir")
         val tmp = File(dir, "${file.name}.tmp")
         FileOutputStream(tmp).use { out ->
-            out.write(Protocol.encode(message).toByteArray())
+            out.write(text.toByteArray())
             out.fd.sync()
         }
         if (!tmp.renameTo(file)) throw IOException("cannot replace $file")
@@ -80,5 +111,8 @@ class HubStore(files: File) {
         const val PAIRING = "pairing.json"
         const val DESCRIPTORS = "descriptors.json"
         const val UPLOADED = "uploaded.txt"
+        const val REACH = "reach.json"
+
+        private val REACH_LOCK = Any()
     }
 }

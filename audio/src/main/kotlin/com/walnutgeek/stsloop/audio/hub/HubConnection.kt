@@ -46,6 +46,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * put while Wi-Fi hands over to mobile data underneath it.
  * Each snapshot of Descriptors is cached in [store], on the timer thread so
  * no disk write happens under the link's lock, before [onDescriptors] hears of it.
+ * Each welcome and each failure is recorded in [store] ([HubReach]) the same
+ * way, so the app can say why the hub could not be reached when it next
+ * opens (#74); [onRecorded] hears of each once it is recorded.
  *
  * Given the [corpus] directory, it also uploads the Corpus while the hub is
  * online ([CorpusUploader]): on its own background-priority thread, one piece
@@ -62,7 +65,14 @@ class HubConnection(
     private val store: HubStore,
     /** Who holds it, for the log ("Session 5e55…", "pairing"). */
     private val owner: String,
+    /** The link's status changed; called with the link's lock held, so it must return at once. */
     private val onStatus: (HubStatus) -> Unit = {},
+    /**
+     * A welcome or a failure ([HubStatus.failure]) has been recorded in the
+     * store; called on the connection's timer thread, in order, and not once
+     * it is stopped. For a screen that reads the record back.
+     */
+    private val onRecorded: (HubStatus) -> Unit = {},
     private val onDescriptors: (Descriptors) -> Unit = {},
     /** The hub answered a request; called on OkHttp's thread with the link's lock held, so it must return at once. */
     private val onReply: (Reply) -> Unit = {},
@@ -78,7 +88,8 @@ class HubConnection(
         Thread(r, "hub-$owner").apply { isDaemon = true }
     }
     private val client = OkHttpClient.Builder()
-        .connectTimeout(HubLink.WELCOME_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        // The link gives up at the same moment, as unreachable; this is for OkHttp's own, more telling, error.
+        .connectTimeout(HubLink.CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         // A ping unanswered for one interval fails the socket: how a connection on a dead network is noticed.
         .pingInterval(PING_S, TimeUnit.SECONDS)
         .build()
@@ -114,6 +125,19 @@ class HubConnection(
             Log.i(TAG, "$owner: hub ${describe(status)}")
             uploader?.status(status)
             onStatus(status)
+            if (status !is HubStatus.Online && status.failure == null) return
+            val at = System.currentTimeMillis()
+            // On the timer thread, so no disk write happens under the link's lock; dropped once stopped.
+            runCatching {
+                timers.execute {
+                    try {
+                        store.updateReach { it.record(status, at) }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "$owner: cannot record how the hub was reached", e)
+                    }
+                    onRecorded(status)
+                }
+            }
         }
 
         override fun item(item: Item) = onItem(item)
@@ -262,7 +286,7 @@ class HubConnection(
             HubStatus.Unpaired -> "not paired"
             HubStatus.Connecting -> "connecting"
             is HubStatus.Online -> "online (protocol ${status.welcome.protocol.major}.${status.welcome.protocol.minor})"
-            is HubStatus.Offline -> "offline: ${status.why}"
+            is HubStatus.Offline -> "offline: ${status.why}" + (status.failure?.let { " (${it.kind.json})" } ?: "")
             is HubStatus.Refused -> "refused: ${status.refusal.message}"
             HubStatus.Unauthorised -> "refused the token; pair again"
         }

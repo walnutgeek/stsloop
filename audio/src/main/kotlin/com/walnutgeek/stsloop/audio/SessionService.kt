@@ -38,6 +38,7 @@ import com.walnutgeek.stsloop.core.Transition
 import com.walnutgeek.stsloop.core.turn.SttTiming
 import com.walnutgeek.stsloop.core.Wav
 import com.walnutgeek.stsloop.core.hub.HubStore
+import com.walnutgeek.stsloop.core.hub.HubStartNotice
 import com.walnutgeek.stsloop.core.hub.HubStatus
 import com.walnutgeek.stsloop.core.testmode.TestConfig
 import java.io.File
@@ -327,6 +328,11 @@ class SessionService : Service() {
             // The aliases given hub Buckets on the settings screen, which outlive every snapshot.
             val hubAliases = TurnCapture.loadHubAliases(filesDir)
             val registry = TurnCapture.registry(buckets, cached, hubAliases)
+            // A hub that cannot be used is said once, at the Session's first failure to reach it (#74).
+            val hubNotice = HubStartNotice { say ->
+                Log.i(TAG, "Session $sessionId: saying \"$say\"")
+                turnCapture?.announce(say)
+            }
             // The Corpus goes up to the hub while it is online, read-only and in the background (#51).
             val hubLink = HubConnection(
                 this, hubStore, "Session $sessionId",
@@ -334,7 +340,10 @@ class SessionService : Service() {
                 onReply = { r -> turnCapture?.replied(r) },
                 onSent = { s -> turnCapture?.sent(s) },
                 // The welcome resends every Draft the hub has not answered, with its key: delivered at most once.
-                onStatus = { s -> if (s is HubStatus.Online) turnCapture?.welcomed() },
+                onStatus = { s ->
+                    hubNotice.status(s)
+                    if (s is HubStatus.Online) turnCapture?.welcomed()
+                },
                 onItem = { i -> turnCapture?.item(i) },
                 corpus = corpusDir(this),
             )
