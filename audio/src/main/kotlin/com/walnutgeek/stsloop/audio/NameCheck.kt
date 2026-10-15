@@ -6,7 +6,9 @@ import android.util.Log
 import com.walnutgeek.stsloop.audio.speech.InstalledModels
 import com.walnutgeek.stsloop.audio.speech.ModelDownloads
 import com.walnutgeek.stsloop.audio.speech.TtsSynth
+import com.walnutgeek.stsloop.core.grammar.BucketConfig
 import com.walnutgeek.stsloop.core.grammar.BucketRegistry
+import com.walnutgeek.stsloop.core.hub.HubAliases
 import com.walnutgeek.stsloop.core.hub.HubProvider
 import com.walnutgeek.stsloop.core.hub.HubStore
 import com.walnutgeek.stsloop.core.recognisability.NameCheckResults
@@ -14,6 +16,7 @@ import com.walnutgeek.stsloop.core.recognisability.NameCheckStore
 import com.walnutgeek.stsloop.core.recognisability.NameChecker
 import com.walnutgeek.stsloop.core.recognisability.Probe
 import com.walnutgeek.stsloop.core.recognisability.Probes
+import com.walnutgeek.stsloop.core.settings.BucketSettings
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -37,6 +40,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * may have changed: at pairing, when a Session ends (the hub may have sent
  * new Descriptors), after an alias edit, and when the app or the settings
  * screen opens.
+ *
+ * After each run it learns aliases (#81): a Bucket phrase heard consistently
+ * as other words gains them ([BucketSettings.learn]), written to the Bucket
+ * files under [SettingsFiles.LOCK]; the new aliases are then checked too.
  */
 object NameCheck {
     private const val TAG = "stsloop.NameCheck"
@@ -51,6 +58,9 @@ object NameCheck {
     @Volatile
     private var noTtsAtMs: Long? = null
     private const val NO_TTS_RETRY_MS = 10 * 60_000L
+
+    /** At most this many rounds of checking, then learning, per run. */
+    private const val MAX_ROUNDS = 3
 
     /** Called on the check's thread after each phrase is filed, and when a run ends. */
     @Volatile
@@ -92,21 +102,59 @@ object NameCheck {
     fun modelId(context: Context): String? = ModelDownloads.locate(context)?.modelId
 
     /**
-     * Session start: the announcement for the Bucket phrases of [registry]
-     * that [models] cannot reliably hear and no Session has announced,
-     * marking them announced; null when there are none. They are marked
-     * before they are said: a Session stopped before its first Silence never
-     * says them, which is better than saying them every Session.
+     * Session start: what the loop says once about [registry] on [models]
+     * ([NameCheckResults.announce]): the aliases it learned, then the Bucket
+     * phrases it still cannot reliably hear, each marked announced; null
+     * when there is nothing new. They are marked before they are said: a
+     * Session stopped before its first Silence never says them, which is
+     * better than saying them every Session.
      */
     fun announceOnce(files: File, models: InstalledModels, registry: BucketRegistry): String? {
-        val probes = Probes.of(registry)
-        val model = models.modelId
-        var say = emptyList<String>()
+        var say: String? = null
         NameCheckStore(files).update { r ->
-            say = r.toAnnounce(probes, model)
-            r.announced(say, model)
+            r.announce(registry, models.modelId).let { (after, text) ->
+                say = text
+                after
+            }
         }
-        return NameCheckResults.announcement(say)
+        return say
+    }
+
+    /**
+     * Background thread: the Bucket files' settings, as the next Session
+     * would hear them. Call under [SettingsFiles.LOCK] to change them. Throws
+     * when a file exists but cannot be read.
+     */
+    fun bucketSettings(files: File): BucketSettings {
+        val snapshot = try {
+            HubStore(files).descriptors()
+        } catch (e: Exception) {
+            Log.e(TAG, "cannot read the cached hub Descriptors", e)
+            null
+        }
+        return BucketSettings(SettingsFiles.read(files, BucketConfig.FILE), SettingsFiles.read(files, HubAliases.FILE), snapshot)
+    }
+
+    /**
+     * Learns what [model] consistently heard a Bucket phrase as (#81),
+     * writing the Bucket files and recording each alias in the results; logs
+     * what was refused. Returns how many aliases were learned.
+     */
+    fun learn(files: File, model: String): Int = synchronized(SettingsFiles.LOCK) {
+        val store = NameCheckStore(files)
+        val learning = try {
+            bucketSettings(files).learn(store.read(), model)
+        } catch (e: java.io.IOException) {
+            Log.e(TAG, "not learning aliases: cannot read the Bucket files", e)
+            return 0
+        }
+        for (r in learning.refused) Log.w(TAG, r.message)
+        if (learning.learned.isEmpty()) return 0
+        // Recorded first: if the write fails, the next run finds the phrase still flagged and learns it again.
+        store.update { it.learned(learning.learned) }
+        for (save in learning.saves) SettingsFiles.write(files, save.file, save.text)
+        for (l in learning.learned) Log.i(TAG, "learned \"${l.alias}\" for \"${l.phrase}\" on ${l.model}")
+        learning.learned.size
     }
 
     /** Every phrase the next Session would listen for, from the same files it reads. */
@@ -118,7 +166,7 @@ object NameCheck {
             null
         }
         val aliases = TurnCapture.loadHubAliases(files)
-        val registry = HubProvider.registry(TurnCapture.loadBuckets(files), aliases.applyTo(snapshot))
+        val registry = HubProvider.registry(TurnCapture.loadBuckets(files), snapshot, aliases)
         return Probes.of(registry)
     }
 
@@ -132,22 +180,32 @@ object NameCheck {
             Log.i(TAG, "not checking ($why): no speech models yet")
             return
         }
+        // A learned alias is a new phrase, so it is checked in another round; a learned alias is usually
+        // heard as itself, so the rounds end at once, and are bounded in case they do not.
+        repeat(MAX_ROUNDS) {
+            if (!check(context, models, why)) return
+            if (learn(context.filesDir, models.modelId) == 0) return
+        }
+    }
+
+    /** Checks every phrase not yet checked on [models]; false when it stopped (no voice, or a Session started). */
+    private fun check(context: Context, models: InstalledModels, why: String): Boolean {
         val model = models.modelId
         val store = NameCheckStore(context.filesDir)
         val all = probes(context.filesDir)
         val pending = store.read().pending(all, model)
-        if (pending.isEmpty()) return
+        if (pending.isEmpty()) return true
         Log.i(TAG, "checking ${pending.size} phrase(s) ($why): ${pending.joinToString { it.key }}")
         val t0 = SystemClock.elapsedRealtime()
         val noTts = noTtsAtMs
         if (noTts != null && SystemClock.elapsedRealtime() - noTts < NO_TTS_RETRY_MS) {
             Log.i(TAG, "not checking ($why): there was no TTS engine a moment ago")
-            return
+            return false
         }
         val synth = TtsSynth.open(context, File(context.cacheDir, "name-check"))
         if (synth == null) {
             noTtsAtMs = SystemClock.elapsedRealtime()
-            return
+            return false
         }
         noTtsAtMs = null
         synth.use {
@@ -163,7 +221,7 @@ object NameCheck {
                     if (heard == null) {
                         if (SessionService.isActive) {
                             Log.i(TAG, "a Session started; stopping after $done of ${pending.size}")
-                            return
+                            return false
                         }
                         Log.w(TAG, "could not speak \"${p.spoken}\" in any voice")
                         continue
@@ -177,5 +235,6 @@ object NameCheck {
             }
         }
         Log.i(TAG, "checked ${pending.size} phrase(s) in ${SystemClock.elapsedRealtime() - t0} ms")
+        return true
     }
 }

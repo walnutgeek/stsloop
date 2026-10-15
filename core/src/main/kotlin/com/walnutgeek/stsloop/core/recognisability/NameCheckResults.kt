@@ -4,6 +4,8 @@ import com.walnutgeek.stsloop.core.UtcTimestamp
 import com.walnutgeek.stsloop.core.corpus.Json
 import com.walnutgeek.stsloop.core.corpus.JsonException
 import com.walnutgeek.stsloop.core.corpus.JsonWriter
+import com.walnutgeek.stsloop.core.grammar.BucketConfig
+import com.walnutgeek.stsloop.core.grammar.BucketRegistry
 
 /**
  * What the name-recognisability check has heard, and which flagged phrases
@@ -13,14 +15,25 @@ import com.walnutgeek.stsloop.core.corpus.JsonWriter
  * { "results": [ { "phrase": "stsloop", "model": "…/int8 greedy_search",
  *                  "heard": [ { "variant": "en-us-x-iol-local@1.0", "text": "St. Loop." } ],
  *                  "checked_at": "2026-10-12T10:00:00.000Z" } ],
- *   "announced": [ { "phrase": "stsloop", "model": "…/int8 greedy_search" } ] }
+ *   "announced": [ { "phrase": "stsloop", "model": "…/int8 greedy_search" } ],
+ *   "learned": [ { "phrase": "stsloop", "model": "…", "alias": "STS loop", "announced": true } ],
+ *   "removed": [ { "phrase": "woodglue", "model": "…", "alias": "Wood glue" } ] }
  * ```
+ * It also keeps each alias learned from what was heard ([learned], #81;
+ * the alias itself lives in the Bucket files, where the grammar reads it),
+ * and each learned alias the person removed ([removed]), which is not
+ * learned again for that phrase and model.
  * The file keeps what was heard, not a verdict, so the policy ([Verdict]) can
  * change without checking again. A result is filed by its phrase's
  * [Probes.key] and the model (`transcript.model`): a new model checks every
  * phrase again. Immutable; each change returns a new value.
  */
-data class NameCheckResults(val results: List<Checked>, val announced: Set<Announced>) {
+data class NameCheckResults(
+    val results: List<Checked>,
+    val announced: Set<Announced>,
+    val learned: List<LearnedAlias> = emptyList(),
+    val removed: List<RemovedAlias> = emptyList(),
+) {
     /** What [model] heard for [phrase] (a [Probes.key]), in each variant, at [checkedAtMs]. */
     data class Checked(val phrase: String, val model: String, val heard: List<Heard>, val checkedAtMs: Long)
 
@@ -66,6 +79,57 @@ data class NameCheckResults(val results: List<Checked>, val announced: Set<Annou
     fun announced(phrases: List<String>, model: String): NameCheckResults =
         copy(announced = announced + phrases.map { Announced(Probes.key(it), model) })
 
+    /** With [aliases] recorded as learned, each (phrase, model, alias) once. */
+    fun learned(aliases: List<LearnedAlias>): NameCheckResults {
+        val out = learned.toMutableList()
+        for (a in aliases) if (out.none { it.phrase == a.phrase && it.model == a.model && sameWords(it.alias, a.alias) }) out += a
+        return copy(learned = out)
+    }
+
+    /**
+     * With the learned [alias] removed by the person: its records go, and
+     * each phrase it was learned for, on the model it was learned on, is not
+     * learned again there. So is each phrase the current [model] heard
+     * consistently as it ([AliasLearner.consistent]), since an alias written
+     * over adb has no record; other models are left to learn it.
+     */
+    fun unlearned(alias: String, model: String?): NameCheckResults {
+        val gone = learned.filter { sameWords(it.alias, alias) }.map { RemovedAlias(it.phrase, it.model, it.alias) } +
+            results.filter { r -> r.model == model && AliasLearner.consistent(r.heard)?.let { sameWords(it, alias) } == true }
+                .map { RemovedAlias(it.phrase, it.model, alias) }
+        val out = removed.toMutableList()
+        for (g in gone) if (out.none { it.phrase == g.phrase && it.model == g.model }) out += g
+        return copy(learned = learned.filterNot { sameWords(it.alias, alias) }, removed = out)
+    }
+
+    /** Whether the person removed what [phrase] (a [Probes.key]) was learned as on [model]. */
+    fun isRemoved(phrase: String, model: String): Boolean = removed.any { it.phrase == phrase && it.model == model }
+
+    /**
+     * Session start (#49, #81): what the loop says once on [model] over
+     * [registry], and the results with it marked said. First each learned
+     * alias the registry hears and no Session has announced ("stsloop agent
+     * also answers to STS loop agent."), then the Bucket phrases still hard
+     * to hear ([toAnnounce]). Marked before they are said, so a Session
+     * stopped before its first Silence never says them, rather than every
+     * Session saying them.
+     */
+    fun announce(registry: BucketRegistry, model: String): Pair<NameCheckResults, String?> {
+        val byBucket = LinkedHashMap<String, MutableList<String>>()
+        val told = mutableListOf<LearnedAlias>()
+        for (l in learned) {
+            if (l.model != model || l.announced) continue
+            val bucket = registry.buckets.firstOrNull { b -> b.learned.any { sameWords(it, l.alias) } } ?: continue
+            byBucket.getOrPut(bucket.name) { mutableListOf() } += bucket.learned.first { sameWords(it, l.alias) }
+            told += l
+        }
+        val probes = Probes.of(registry)
+        val hard = toAnnounce(probes, model)
+        val after = copy(learned = learned.map { if (it in told) it.copy(announced = true) else it }).announced(hard, model)
+        val say = listOfNotNull(learnedAnnouncement(byBucket), announcement(hard)).joinToString(" ").ifEmpty { null }
+        return after to say
+    }
+
     /**
      * One line for the settings screen about [probes] (a Bucket's name and
      * aliases, or the commands) on [model]; null [model] means no speech
@@ -95,7 +159,7 @@ data class NameCheckResults(val results: List<Checked>, val announced: Set<Annou
 
     /** The file format [parse] reads. */
     fun toJson(): String = JsonWriter.pretty(
-        linkedMapOf(
+        linkedMapOf<String, Any>(
             RESULTS to results.map { r ->
                 linkedMapOf(
                     PHRASE to r.phrase,
@@ -105,7 +169,12 @@ data class NameCheckResults(val results: List<Checked>, val announced: Set<Annou
                 )
             },
             ANNOUNCED to announced.map { linkedMapOf(PHRASE to it.phrase, MODEL to it.model) },
-        ),
+        ).apply {
+            if (learned.isNotEmpty()) {
+                put(LEARNED, learned.map { linkedMapOf(PHRASE to it.phrase, MODEL to it.model, ALIAS to it.alias, ANNOUNCED to it.announced) })
+            }
+            if (removed.isNotEmpty()) put(REMOVED, removed.map { linkedMapOf(PHRASE to it.phrase, MODEL to it.model, ALIAS to it.alias) })
+        },
     )
 
     /** The result of [parse]: the results to use, and each problem found, as `"where: why"`. */
@@ -125,6 +194,16 @@ data class NameCheckResults(val results: List<Checked>, val announced: Set<Annou
         private const val VARIANT = "variant"
         private const val TEXT = "text"
         private const val CHECKED_AT = "checked_at"
+        private const val LEARNED = "learned"
+        private const val REMOVED = "removed"
+        private const val ALIAS = "alias"
+
+        /** Whether [a] and [b] are heard as the same words. */
+        private fun sameWords(a: String, b: String) = BucketConfig.formsOf(a).any { it in BucketConfig.formsOf(b) }
+
+        /** What the loop says, once, about the aliases it learned, by Bucket name; null when there are none. */
+        fun learnedAnnouncement(byBucket: Map<String, List<String>>): String? =
+            if (byBucket.isEmpty()) null else byBucket.entries.joinToString(" ") { (name, aliases) -> "$name also answers to ${aliases.joinToString(" and ")}." }
 
         /** What the loop says, once, about [phrases] it cannot reliably hear; null when there are none. */
         fun announcement(phrases: List<String>): String? =
@@ -171,7 +250,31 @@ data class NameCheckResults(val results: List<Checked>, val announced: Set<Annou
                 }
                 announced += Announced(Probes.key(phrase), model)
             }
-            return Parsed(NameCheckResults(results, announced), rejected)
+            val learned = mutableListOf<LearnedAlias>()
+            for ((i, raw) in (root[LEARNED] as? List<*>).orEmpty().withIndex()) {
+                val a = raw as? Map<*, *>
+                val phrase = a?.get(PHRASE) as? String
+                val model = a?.get(MODEL) as? String
+                val alias = a?.get(ALIAS) as? String
+                if (phrase.isNullOrEmpty() || model.isNullOrEmpty() || alias.isNullOrBlank()) {
+                    rejected += "$LEARNED[$i]: not a phrase, a model and an alias; dropped"
+                    continue
+                }
+                learned += LearnedAlias(Probes.key(phrase), model, alias, a[ANNOUNCED] == true)
+            }
+            val removed = mutableListOf<RemovedAlias>()
+            for ((i, raw) in (root[REMOVED] as? List<*>).orEmpty().withIndex()) {
+                val a = raw as? Map<*, *>
+                val phrase = a?.get(PHRASE) as? String
+                val model = a?.get(MODEL) as? String
+                val alias = a?.get(ALIAS) as? String
+                if (phrase.isNullOrEmpty() || model.isNullOrEmpty() || alias == null) {
+                    rejected += "$REMOVED[$i]: not a phrase, a model and an alias; dropped"
+                    continue
+                }
+                removed += RemovedAlias(Probes.key(phrase), model, alias)
+            }
+            return Parsed(NameCheckResults(results, announced, learned, removed), rejected)
         }
     }
 }

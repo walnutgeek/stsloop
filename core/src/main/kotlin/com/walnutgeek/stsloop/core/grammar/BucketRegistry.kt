@@ -87,7 +87,9 @@ data class Dialog(val kind: String, val id: String? = null, val questions: List<
  * says it is published by a Provider on the hub, so it can be named with the
  * hub offline; such a Bucket has the Descriptor [id] its Provider knows it
  * by. [degraded] says its Descriptor named a Primitive the phone does not
- * know, so only its `request` commands are kept (ADR-0006).
+ * know, so only its `request` commands are kept (ADR-0006). [learned] are
+ * the aliases the phone learned from what its recogniser hears (#81): heard
+ * like [aliases], but kept apart so the person can see and remove them.
  */
 data class Descriptor(
     val name: String,
@@ -99,7 +101,11 @@ data class Descriptor(
     val degraded: Boolean = false,
     /** The dialog an agent Bucket is blocked on, while it is (#80); null when it is not known to wait on one. */
     val dialog: Dialog? = null,
+    val learned: List<String> = emptyList(),
 ) {
+    /** Every phrase the Bucket is heard by: its name, its [aliases] and its [learned] aliases. */
+    val phrases: List<String> get() = listOf(name) + aliases + learned
+
     companion object {
         /**
          * The Inbox (`CONTEXT.md`): the capture Bucket Focus falls back to. A
@@ -121,7 +127,7 @@ fun interface Provider {
  */
 class CaptureProvider(private val config: BucketConfig) : Provider {
     override fun descriptors(): List<Descriptor> =
-        listOf(Descriptor.INBOX) + config.buckets.map { Descriptor(it.name, it.aliases, setOf(Primitive.NOTE)) }
+        listOf(Descriptor.INBOX) + config.buckets.map { Descriptor(it.name, it.aliases, setOf(Primitive.NOTE), learned = it.learned) }
 }
 
 /**
@@ -184,7 +190,7 @@ class BucketRegistry(providers: List<Provider>) {
         // Who claims each form; the Inbox's forms are its alone.
         val claims = LinkedHashMap<List<String>, MutableSet<String>>()
         for (d in kept) {
-            for (phrase in listOf(d.name) + d.aliases) {
+            for (phrase in d.phrases) {
                 val forms = BucketConfig.formsOf(phrase)
                 if (d !== inbox && forms.any { it in reserved }) {
                     problems += "${jsonString(d.name)}: alias ${jsonString(phrase)} is reserved for the Inbox; dropped"
