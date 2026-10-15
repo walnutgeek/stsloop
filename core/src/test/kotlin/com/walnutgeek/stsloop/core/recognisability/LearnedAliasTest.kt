@@ -181,6 +181,24 @@ class LearnedAliasTest {
     }
 
     @Test
+    fun `the dialog phrases of #80 are refused too`() {
+        val herdr = Protocol.decode(Fixtures.text("v1", "descriptors/herdr.json")) as Descriptors
+        val s = BucketSettings(null, null, herdr)
+        val r = checked(
+            s,
+            mapOf("stsloop" to six("Option one."), "woodglue" to six("My answer."), "stsloop agent two" to six("Answer with my draft.")),
+        )
+        assertEquals(
+            mapOf(
+                "stsloop" to "\"Option one\" is already the command \"option one\".",
+                "woodglue" to "\"My answer\" is already the command \"my answer\".",
+                "stsloop agent two" to "\"Answer with my draft\" is already the command \"answer with my draft\".",
+            ),
+            s.learn(r, model).refused.associate { it.probe.key to it.why },
+        )
+    }
+
+    @Test
     fun `two Buckets heard as the same words both go without`() {
         val s = BucketSettings("""{"buckets": [{"name": "woodglue"}, {"name": "woodgloo"}]}""", null, null)
         val learning = s.learn(checked(s, mapOf("woodglue" to six("Would glue."), "woodgloo" to six("Would glue."))), model)
