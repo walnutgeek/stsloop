@@ -59,6 +59,9 @@ object NameCheck {
     private var noTtsAtMs: Long? = null
     private const val NO_TTS_RETRY_MS = 10 * 60_000L
 
+    /** At most this many rounds of checking, then learning, per run. */
+    private const val MAX_ROUNDS = 3
+
     /** Called on the check's thread after each phrase is filed, and when a run ends. */
     @Volatile
     var listener: (() -> Unit)? = null
@@ -177,8 +180,9 @@ object NameCheck {
             Log.i(TAG, "not checking ($why): no speech models yet")
             return
         }
-        // A learned alias is a new phrase, so it is checked in a second round; that round learns nothing new from it.
-        for (round in 1..2) {
+        // A learned alias is a new phrase, so it is checked in another round; a learned alias is usually
+        // heard as itself, so the rounds end at once, and are bounded in case they do not.
+        repeat(MAX_ROUNDS) {
             if (!check(context, models, why)) return
             if (learn(context.filesDir, models.modelId) == 0) return
         }

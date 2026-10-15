@@ -88,13 +88,14 @@ data class NameCheckResults(
 
     /**
      * With the learned [alias] removed by the person: its records go, and
-     * each phrase it was learned for, or that some model heard consistently as
-     * it ([AliasLearner.consistent]; an alias written over adb has no record),
-     * is not learned again on that model.
+     * each phrase it was learned for, on the model it was learned on, is not
+     * learned again there. So is each phrase the current [model] heard
+     * consistently as it ([AliasLearner.consistent]), since an alias written
+     * over adb has no record; other models are left to learn it.
      */
-    fun unlearned(alias: String): NameCheckResults {
+    fun unlearned(alias: String, model: String?): NameCheckResults {
         val gone = learned.filter { sameWords(it.alias, alias) }.map { RemovedAlias(it.phrase, it.model, it.alias) } +
-            results.filter { r -> AliasLearner.consistent(r.heard)?.let { sameWords(it, alias) } == true }
+            results.filter { r -> r.model == model && AliasLearner.consistent(r.heard)?.let { sameWords(it, alias) } == true }
                 .map { RemovedAlias(it.phrase, it.model, alias) }
         val out = removed.toMutableList()
         for (g in gone) if (out.none { it.phrase == g.phrase && it.model == g.model }) out += g

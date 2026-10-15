@@ -124,7 +124,7 @@ class BucketSettings(
         val save = if (row.hubId == null) captureEdit(row, "aliases", aliases) else hubEdit(row.hubId, aliases)
         if (save !is Edit.Save) return save
         // A backstop for whatever the checks above miss: the Session must hear exactly what was asked, and nothing new may break.
-        val after = if (row.hubId == null) BucketSettings(save.text, hubAliasesFile, snapshot) else BucketSettings(bucketsFile, save.text, snapshot)
+        val after = with(save)
         after.rejected.firstOrNull { it !in rejected }?.let { return Edit.Refused("That would break another Bucket: $it") }
         if (after.rows.firstOrNull { it.name == row.name }?.aliases != aliases) return Edit.Refused("Could not set the aliases of ${row.name}.")
         return save

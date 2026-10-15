@@ -237,7 +237,8 @@ class SettingsActivity : Activity() {
             val s = buckets()
             val current = s.rows.firstOrNull { it.name == row.name && it.hubId == row.hubId }
             val e = if (current == null) Edit.Refused("${row.name} is gone; reopen the screen.") else s.unlearn(current, alias)
-            if (e is Edit.Save) NameCheckStore(filesDir).update { it.unlearned(alias) }
+            // Marked removed first, as the check records before it writes: if the write fails, Remove again works.
+            if (e is Edit.Save) NameCheckStore(filesDir).update { it.unlearned(alias, NameCheck.modelId(this@SettingsActivity)) }
             e
         }
         runOnUiThread {

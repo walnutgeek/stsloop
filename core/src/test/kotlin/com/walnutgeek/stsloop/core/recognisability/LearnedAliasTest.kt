@@ -162,6 +162,15 @@ class LearnedAliasTest {
     }
 
     @Test
+    fun `a refusal that does not start with the alias still reads as a sentence`() {
+        val p = Probes.probe("stsloop")!!
+        assertEquals(
+            "Not learned: \"stsloop\" is heard as \"STS loop\". That would break another Bucket: x.",
+            AliasLearner.Refusal(p, "STS loop", "That would break another Bucket: x.").message,
+        )
+    }
+
+    @Test
     fun `the longer command phrases of #82 are refused too`() {
         val s = BucketSettings(null, null, agents)
         val r = checked(s, mapOf("stsloop" to six("Send it."), "house site" to six("How is the hub?")))
@@ -212,7 +221,7 @@ class LearnedAliasTest {
         assertEquals(emptyList<String>(), removed.rows.single { it.name == "stsloop agent" }.learned)
         assertEquals(mapOf<String, List<String>>(), HubAliases.parse((learned.unlearn(row, "STS loop agent") as Edit.Save).text).aliases.learned)
 
-        val results = withRecord.unlearned("STS loop agent")
+        val results = withRecord.unlearned("STS loop agent", model)
         assertEquals(listOf(RemovedAlias("stsloop agent", model, "STS loop agent")), results.removed)
         assertEquals(emptyList<LearnedAlias>(), removed.learn(results, model).learned, "the removal sticks")
 
@@ -226,7 +235,10 @@ class LearnedAliasTest {
         val r = checked(s, mapOf("stsloop agent" to six("STS loop agent.")))
         val row = s.rows.single { it.name == "stsloop agent" }
         val removed = after(s, listOf(s.unlearn(row, "STS loop agent") as Edit.Save))
-        assertEquals(emptyList<LearnedAlias>(), removed.learn(r.unlearned("STS loop agent"), model).learned)
+        assertEquals(emptyList<LearnedAlias>(), removed.learn(r.unlearned("STS loop agent", model), model).learned)
+        // Another model that heard the same, already on file, is left to learn it.
+        val both = checked(s, mapOf("stsloop agent" to six("STS loop agent.")), on = other, from = r)
+        assertEquals(listOf(LearnedAlias("stsloop agent", other, "STS loop agent")), removed.learn(both.unlearned("STS loop agent", model), other).learned)
     }
 
     @Test
@@ -278,7 +290,7 @@ class LearnedAliasTest {
     fun `learned and removed aliases round-trip through the results file`() {
         val r = NameCheckResults.EMPTY.with("stsloop", model, six("STS loop."), 1_000L)
             .learned(listOf(LearnedAlias("stsloop", model, "STS loop"), LearnedAlias("woodglue", model, "Wood glue", announced = true)))
-            .unlearned("Wood glue")
+            .unlearned("Wood glue", model)
         assertEquals(NameCheckResults.Parsed(r, emptyList()), NameCheckResults.parse(r.toJson()))
         assertEquals(listOf(LearnedAlias("stsloop", model, "STS loop")), r.learned)
     }

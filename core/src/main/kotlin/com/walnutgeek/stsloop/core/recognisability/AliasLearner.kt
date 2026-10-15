@@ -44,7 +44,11 @@ object AliasLearner {
     data class Refusal(val probe: Probe, val alias: String, val why: String) {
         /** For the settings screen and the log. */
         val message: String
-            get() = "Not learned: \"${probe.spoken}\" is heard as \"$alias\", which " + why.removePrefix("\"$alias\" ").removeSuffix(".") + "."
+            get() {
+                val heard = "Not learned: \"${probe.spoken}\" is heard as \"$alias\""
+                val prefix = "\"$alias\" "
+                return if (why.startsWith(prefix)) "$heard, which ${why.removePrefix(prefix)}" else "$heard. $why"
+            }
     }
 
     /** What to [learn] on a model, and what was [refused]. */
