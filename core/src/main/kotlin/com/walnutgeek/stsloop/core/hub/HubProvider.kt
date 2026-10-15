@@ -15,10 +15,11 @@ import com.walnutgeek.stsloop.core.grammar.Provider
  * the commands those run; a Bucket whose Primitives the phone knows none of
  * can still be named and focused. A Bucket that names a Primitive the phone
  * does not know is [Descriptor.degraded]: of its commands, only its
- * `request` ones are kept (ADR-0006).
+ * `request` ones are kept (ADR-0006). The phone's own [aliases] for them
+ * replace the hub's, and their learned aliases are added (#81).
  */
-class HubProvider(private val snapshot: Descriptors?) : Provider {
-    override fun descriptors(): List<Descriptor> = snapshot?.buckets.orEmpty().map { d ->
+class HubProvider(private val snapshot: Descriptors?, private val aliases: HubAliases = HubAliases.NONE) : Provider {
+    override fun descriptors(): List<Descriptor> = aliases.applyTo(snapshot)?.buckets.orEmpty().map { d ->
         val degraded = d.primitives.any { Primitive.of(it) == null }
         val commands = d.commands.mapNotNull { c ->
             val primitive = Primitive.of(c.primitive) ?: return@mapNotNull null
@@ -28,12 +29,16 @@ class HubProvider(private val snapshot: Descriptors?) : Provider {
         Descriptor(
             d.name, d.aliases, d.primitives.mapNotNull(Primitive::of).toSet(), hub = true,
             id = d.id, commands = commands, degraded = degraded, dialog = d.dialog,
+            learned = aliases.learned[d.id].orEmpty(),
         )
     }
 
     companion object {
-        /** Every Bucket the phone can address: the capture Buckets of [config], then the hub's of [snapshot]. */
-        fun registry(config: BucketConfig, snapshot: Descriptors?) =
-            BucketRegistry(listOf(CaptureProvider(config), HubProvider(snapshot)))
+        /**
+         * Every Bucket the phone can address: the capture Buckets of [config],
+         * then the hub's of [snapshot], with the phone's [aliases] for them.
+         */
+        fun registry(config: BucketConfig, snapshot: Descriptors?, aliases: HubAliases = HubAliases.NONE) =
+            BucketRegistry(listOf(CaptureProvider(config), HubProvider(snapshot, aliases)))
     }
 }

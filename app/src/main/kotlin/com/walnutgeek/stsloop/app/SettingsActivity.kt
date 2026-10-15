@@ -12,11 +12,11 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.walnutgeek.stsloop.audio.NameCheck
+import com.walnutgeek.stsloop.audio.SettingsFiles
 import com.walnutgeek.stsloop.audio.SessionService
-import com.walnutgeek.stsloop.core.grammar.BucketConfig
-import com.walnutgeek.stsloop.core.hub.HubAliases
-import com.walnutgeek.stsloop.core.hub.HubStore
+import com.walnutgeek.stsloop.core.recognisability.AliasLearner
 import com.walnutgeek.stsloop.core.recognisability.NameCheckResults
+import com.walnutgeek.stsloop.core.recognisability.NameCheckStore
 import com.walnutgeek.stsloop.core.recognisability.ProbeKind
 import com.walnutgeek.stsloop.core.recognisability.Probes
 import com.walnutgeek.stsloop.core.settings.AliasText
@@ -25,8 +25,6 @@ import com.walnutgeek.stsloop.core.settings.Edit
 import com.walnutgeek.stsloop.core.settings.Seconds
 import com.walnutgeek.stsloop.core.settings.TimingsSettings
 import com.walnutgeek.stsloop.core.turn.Timings
-import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.Executors
 
@@ -39,7 +37,12 @@ import java.util.concurrent.Executors
  *
  * Each save re-reads its file on a background thread and merges the one
  * change into it (`:core`'s [TimingsSettings] and [BucketSettings]), so a file
- * pushed over adb meanwhile is not overwritten wholesale.
+ * pushed over adb meanwhile is not overwritten wholesale. Saves hold
+ * [SettingsFiles.LOCK], so an alias the check learns meanwhile (#81) is kept.
+ *
+ * Each Bucket lists the aliases the phone learned for it apart from the
+ * person's, each with a Remove button; a removed one is not learned again on
+ * that recogniser model. An alias the check could not learn is said why.
  */
 class SettingsActivity : Activity() {
     private lateinit var hub: HubPairingPane
@@ -86,7 +89,8 @@ class SettingsActivity : Activity() {
             addView(heading("Hub"))
             addView(hub.view)
             addView(heading("Buckets"))
-            addView(text("Aliases are what else a Bucket is heard by, separated by commas. Its name always counts.", 14f))
+            addView(text("Aliases are what else a Bucket is heard by, separated by commas. Its name always counts. " +
+                "Learned aliases are what the phone hears when you say a name it cannot hear as written.", 14f))
             addView(checkNote)
             addView(bucketList)
             addView(bucketsNote)
@@ -185,7 +189,7 @@ class SettingsActivity : Activity() {
     // --- Buckets ---
 
     /** Rebuilds the list from the files, keeping any unsaved typing of a Bucket still listed. */
-    private fun loadBuckets() = io.execute {
+    private fun loadBuckets(): Unit = io.execute {
         val (s, unreadable) = try {
             buckets() to null
         } catch (e: IOException) {
@@ -209,8 +213,14 @@ class SettingsActivity : Activity() {
         val model = NameCheck.modelId(this)
         val commands = NameCheck.probes(filesDir).filter { it.kind == ProbeKind.COMMAND }
         val progress = NameCheck.progress
+        // Why the check could not learn an alias (#81); the check itself learns the rest.
+        val refused = try {
+            if (model == null) emptyList() else buckets().learn(results, model).refused
+        } catch (e: IOException) {
+            emptyList()
+        }
         runOnUiThread {
-            for (row in rows) row.recognised(results, model)
+            for (row in rows) row.recognised(results, model, refused)
             val running = progress?.let { (done, of) -> "Checking how the recogniser hears each name: $done of $of.\n" } ?: ""
             checkNote.text = running + "Commands: " + results.summary(commands, model)
         }
@@ -219,14 +229,20 @@ class SettingsActivity : Activity() {
     private var rows: List<BucketRow> = emptyList()
 
     /** Background thread: the Buckets as the next Session would hear them. Throws when a file exists but cannot be read. */
-    private fun buckets(): BucketSettings {
-        val snapshot = try {
-            HubStore(filesDir).descriptors()
-        } catch (e: Exception) {
-            Log.e(TAG, "cannot read the cached hub Descriptors", e)
-            null
+    private fun buckets(): BucketSettings = NameCheck.bucketSettings(filesDir)
+
+    /** Removes the learned [alias] from [row], and marks it removed so the check does not learn it again on this model. */
+    private fun unlearn(row: BucketSettings.Row, alias: String, status: TextView): Unit = io.execute {
+        val outcome = edit("Removed. The next Session no longer hears it.") {
+            val s = buckets()
+            val current = s.rows.firstOrNull { it.name == row.name && it.hubId == row.hubId }
+            val e = if (current == null) Edit.Refused("${row.name} is gone; reopen the screen.") else s.unlearn(current, alias)
+            if (e is Edit.Save) NameCheckStore(filesDir).update { it.unlearned(alias) }
+            e
         }
-        return BucketSettings(read(BucketConfig.FILE), read(HubAliases.FILE), snapshot)
+        runOnUiThread {
+            if (outcome.saved) loadBuckets() else status.text = outcome.message
+        }
     }
 
     /** One Bucket: its name, its aliases to edit, and a place for its recognisability result. */
@@ -249,10 +265,23 @@ class SettingsActivity : Activity() {
         /** The name-recognisability check's result for the name and each alias (#49). */
         private val recognisability = note()
 
-        /** Shows how [results] say [model] hears the name and aliases as saved (not as typed). */
-        fun recognised(results: NameCheckResults, model: String?) {
-            val phrases = (listOf(row.name) + AliasText.parse(shown)).mapNotNull { Probes.probe(it, ProbeKind.BUCKET, row.name) }
-            recognisability.text = results.summary(phrases, model)
+        /** Shows how [results] say [model] hears the name and aliases as saved (not as typed), and why an alias was [refused]. */
+        fun recognised(results: NameCheckResults, model: String?, refused: List<AliasLearner.Refusal>) {
+            val phrases = (listOf(row.name) + AliasText.parse(shown) + row.learned).mapNotNull { Probes.probe(it, ProbeKind.BUCKET, row.name) }
+            val notLearned = refused.filter { it.probe.owner == row.name }.joinToString("") { "\n" + it.message }
+            recognisability.text = results.summary(phrases, model) + notLearned
+        }
+
+        /** Each learned alias, with a button to remove it. */
+        private val learned = LinearLayout(this@SettingsActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            for (alias in row.learned) {
+                addView(LinearLayout(this@SettingsActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    addView(text("Learned: \"$alias\"", 14f))
+                    addView(button("Remove") { unlearn(row, alias, status) })
+                })
+            }
         }
 
         val view = LinearLayout(this@SettingsActivity).apply {
@@ -261,6 +290,7 @@ class SettingsActivity : Activity() {
             addView(text(if (row.hubId == null) row.name else "${row.name}  (hub)", 18f))
             addView(recognisability)
             addView(aliases)
+            addView(learned)
             addView(button("Save aliases", ::save))
             addView(status)
         }
@@ -297,14 +327,14 @@ class SettingsActivity : Activity() {
      * [Edit.Save], or says why not. A file that exists but cannot be read
      * refuses the edit, so it is never replaced by one built from the defaults.
      */
-    private fun edit(saved: String, make: () -> Edit): Outcome {
+    private fun edit(saved: String, make: () -> Edit): Outcome = synchronized(SettingsFiles.LOCK) {
         val edit = try {
             make()
         } catch (e: IOException) {
             Log.e(TAG, "cannot read the settings files", e)
             return Outcome(false, "Could not read the file to change: ${e.message}")
         }
-        return when (edit) {
+        when (edit) {
             is Edit.Refused -> Outcome(false, edit.problem)
             Edit.Unchanged -> Outcome(true, "Nothing to save: that is what the next Session uses.")
             is Edit.Save -> try {
@@ -318,25 +348,10 @@ class SettingsActivity : Activity() {
     }
 
     /** The text of `files/<name>`, or null when there is none. Throws [IOException] when it exists but cannot be read. */
-    private fun read(name: String): String? {
-        val file = File(filesDir, name)
-        if (!file.exists()) return null
-        return file.readText()
-    }
+    private fun read(name: String): String? = SettingsFiles.read(filesDir, name)
 
     /** Replaces `files/<name>` atomically, so a Session starting meanwhile reads the old file or the new, never half of one. */
-    private fun write(name: String, text: String) {
-        val file = File(filesDir, name)
-        val dir = file.parentFile!!
-        if (!dir.isDirectory && !dir.mkdirs()) throw IOException("cannot create $dir")
-        val tmp = File(dir, "${file.name}.tmp")
-        FileOutputStream(tmp).use { out ->
-            out.write(text.toByteArray())
-            out.fd.sync()
-        }
-        if (!tmp.renameTo(file)) throw IOException("cannot replace $file")
-        Log.i(TAG, "saved $file")
-    }
+    private fun write(name: String, text: String) = SettingsFiles.write(filesDir, name, text)
 
     private fun ignored(what: String, rejected: List<String>): String =
         if (rejected.isEmpty()) "" else "A Session ignores ${rejected.size} thing(s) in $what:\n" + rejected.joinToString("\n") { "• $it" }

@@ -7,9 +7,10 @@ import com.walnutgeek.stsloop.core.jsonString
 /**
  * A Bucket as configured: its canonical [name] (written to `turn.json` as
  * `bucket`) and the [aliases] it may be declared by aloud. The name is always
- * an alias too, so it need not be listed.
+ * an alias too, so it need not be listed. [learned] are aliases the phone
+ * learned from what its recogniser hears (#81), heard like the others.
  */
-data class Bucket(val name: String, val aliases: List<String>)
+data class Bucket(val name: String, val aliases: List<String>, val learned: List<String> = emptyList())
 
 /**
  * The Buckets a Declaration may name (`docs/phase0.md`, "Phrase grammar").
@@ -30,7 +31,7 @@ data class BucketConfig(val buckets: List<Bucket>) {
         val owner = HashMap<List<String>, String>()
         for (b in buckets) {
             require(Words.normalise(b.name).isNotEmpty()) { "Bucket name \"${b.name}\" has no words" }
-            for (phrase in listOf(b.name) + b.aliases) {
+            for (phrase in listOf(b.name) + b.aliases + b.learned) {
                 val f = formsOf(phrase)
                 require(f.isNotEmpty()) { "${b.name}: alias \"$phrase\" has no words" }
                 for (form in f) {
@@ -44,8 +45,11 @@ data class BucketConfig(val buckets: List<Bucket>) {
 
     /** The file format [parse] reads. */
     fun toJson(): String = buckets.joinToString(",\n", prefix = "{\n  \"buckets\": [\n", postfix = "\n  ]\n}\n") { b ->
-        "    { \"name\": ${quote(b.name)}, \"aliases\": ${b.aliases.joinToString(", ", "[", "]") { quote(it) }} }"
+        val learned = if (b.learned.isEmpty()) "" else ", \"$LEARNED\": ${list(b.learned)}"
+        "    { \"name\": ${quote(b.name)}, \"aliases\": ${list(b.aliases)}$learned }"
     }
+
+    private fun list(phrases: List<String>) = phrases.joinToString(", ", "[", "]") { quote(it) }
 
     /** The result of [parse]: the config to use, and each problem found, as `"where: why"`. */
     data class Parsed(val config: BucketConfig, val rejected: List<String>)
@@ -67,6 +71,7 @@ data class BucketConfig(val buckets: List<Bucket>) {
         private const val BUCKETS = "buckets"
         private const val NAME = "name"
         private const val ALIASES = "aliases"
+        internal const val LEARNED = "learned"
 
         /** A phrase's words, plus the words run together when there are several. */
         internal fun formsOf(phrase: String): Set<List<String>> {
@@ -87,7 +92,8 @@ data class BucketConfig(val buckets: List<Bucket>) {
          * - a Bucket that is not an object, has no usable name, or repeats an
          *   earlier Bucket's name is dropped;
          * - an alias that is not a string or has no words is dropped, and so is
-         *   an unknown key (the Bucket stays);
+         *   an unknown key (the Bucket stays); a `learned` alias is read as an
+         *   alias, and kept apart;
          * - an alias that is another Bucket's name is dropped (names win);
          * - an alias shared by two Buckets is dropped from both: either Bucket
          *   could be meant, and an unlabelled Turn is better than a wrong label.
@@ -102,7 +108,7 @@ data class BucketConfig(val buckets: List<Bucket>) {
             val list = root[BUCKETS] as? List<*> ?: return Parsed(DEFAULT, listOf("file: must have a \"$BUCKETS\" array"))
             for (key in root.keys) if (key != BUCKETS) rejected += "$key: unknown key; known keys: [$BUCKETS]"
 
-            class Draft(val label: String, val name: String, val aliases: MutableList<String>)
+            class Draft(val label: String, val name: String, val aliases: MutableList<String>, val learned: MutableList<String>)
 
             val drafts = mutableListOf<Draft>()
             for ((index, values) in list.withIndex()) {
@@ -122,23 +128,28 @@ data class BucketConfig(val buckets: List<Bucket>) {
                     rejected += "$label: same name as ${sameName.label}; Bucket dropped"
                     continue
                 }
-                for (key in values.keys) if (key != NAME && key != ALIASES) rejected += "$label: $key: unknown key; known keys: [$NAME, $ALIASES]"
-                val aliases = mutableListOf<String>()
-                when (val raw = values[ALIASES]) {
-                    null -> if (ALIASES in values) rejected += "$label: $ALIASES must be an array of strings"
-                    !is List<*> -> rejected += "$label: $ALIASES must be an array of strings, was ${show(raw)}"
-                    else -> for (a in raw) when {
-                        a !is String -> rejected += "$label: alias ${show(a)} must be a string; dropped"
-                        formsOf(a).isEmpty() -> rejected += "$label: alias ${quote(a)} has no words; dropped"
-                        else -> aliases += a
-                    }
+                for (key in values.keys) if (key != NAME && key != ALIASES && key != LEARNED) {
+                    rejected += "$label: $key: unknown key; known keys: [$NAME, $ALIASES, $LEARNED]"
                 }
-                drafts += Draft(label, name, aliases)
+                fun phrases(key: String): MutableList<String> {
+                    val out = mutableListOf<String>()
+                    when (val raw = values[key]) {
+                        null -> if (key in values) rejected += "$label: $key must be an array of strings"
+                        !is List<*> -> rejected += "$label: $key must be an array of strings, was ${show(raw)}"
+                        else -> for (a in raw) when {
+                            a !is String -> rejected += "$label: alias ${show(a)} must be a string; dropped"
+                            formsOf(a).isEmpty() -> rejected += "$label: alias ${quote(a)} has no words; dropped"
+                            else -> out += a
+                        }
+                    }
+                    return out
+                }
+                drafts += Draft(label, name, phrases(ALIASES), phrases(LEARNED))
             }
 
             // Names win over aliases.
             for (d in drafts) {
-                d.aliases.removeAll { alias ->
+                for (list in listOf(d.aliases, d.learned)) list.removeAll { alias ->
                     val other = drafts.firstOrNull { o -> o !== d && formsOf(o.name).any { it in formsOf(alias) } }
                     other?.let { rejected += "${d.label}: alias ${quote(alias)} is the name of ${it.label}; dropped" }
                     other != null
@@ -147,7 +158,7 @@ data class BucketConfig(val buckets: List<Bucket>) {
             // An alias two Buckets share is dropped from both.
             data class Claim(val draft: Draft, val alias: String, val forms: Set<List<String>>)
 
-            val claims = drafts.flatMap { d -> d.aliases.map { Claim(d, it, formsOf(it)) } }
+            val claims = drafts.flatMap { d -> (d.aliases + d.learned).map { Claim(d, it, formsOf(it)) } }
             val shared = mutableSetOf<Claim>()
             for ((i, c) in claims.withIndex()) {
                 for (earlier in claims.subList(0, i)) {
@@ -159,8 +170,11 @@ data class BucketConfig(val buckets: List<Bucket>) {
                     }
                 }
             }
-            for (c in shared) c.draft.aliases.removeAll { it == c.alias }
-            return Parsed(BucketConfig(drafts.map { Bucket(it.name, it.aliases.toList()) }), rejected)
+            for (c in shared) {
+                c.draft.aliases.removeAll { it == c.alias }
+                c.draft.learned.removeAll { it == c.alias }
+            }
+            return Parsed(BucketConfig(drafts.map { Bucket(it.name, it.aliases.toList(), it.learned.toList()) }), rejected)
         }
 
         private fun show(v: Any?): String = when (v) {

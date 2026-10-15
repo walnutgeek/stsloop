@@ -572,7 +572,7 @@ class TurnCapture(
          * snapshot), if any, with the phone's [aliases] for them. Each conflict is logged.
          */
         fun registry(config: BucketConfig, hub: Descriptors?, aliases: HubAliases = HubAliases.NONE): BucketRegistry =
-            HubProvider.registry(config, aliases.applyTo(hub)).also { r -> for (p in r.rejected) Log.e(TAG, "Buckets: ignoring $p") }
+            HubProvider.registry(config, hub, aliases).also { r -> for (p in r.rejected) Log.e(TAG, "Buckets: ignoring $p") }
 
         /**
          * The Bluetooth test mode [TestConfig] in `<dir>/testmode.json`, read at

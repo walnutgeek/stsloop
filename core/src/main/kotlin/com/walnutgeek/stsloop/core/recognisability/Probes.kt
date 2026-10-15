@@ -20,7 +20,7 @@ data class Probe(val spoken: String, val key: String, val kind: ProbeKind, val o
 /** Every phrase the loop listens for, as the check speaks it. */
 object Probes {
     /**
-     * Every Bucket name and alias of [registry], then every fixed command
+     * Every Bucket name and alias (learned ones too) of [registry], then every fixed command
      * phrase ([Command]), the Inbox's name, and every command phrase its
      * Buckets declare (those the phone runs, as the grammar hears them).
      * Each phrase once, by [Probe.key]: the first listing wins, so an alias
@@ -33,7 +33,7 @@ object Probes {
         }
         for (b in registry.buckets) {
             if (b === registry.inbox) continue
-            for (phrase in listOf(b.name) + b.aliases) add(probe(phrase, ProbeKind.BUCKET, b.name))
+            for (phrase in b.phrases) add(probe(phrase, ProbeKind.BUCKET, b.name))
         }
         for (c in Command.entries) for (phrase in c.phrases) add(probe(phrase, ProbeKind.COMMAND, c.json))
         add(probe(registry.inbox.name, ProbeKind.COMMAND, registry.inbox.name))

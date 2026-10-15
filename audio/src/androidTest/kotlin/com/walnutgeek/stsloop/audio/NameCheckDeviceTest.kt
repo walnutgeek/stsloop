@@ -8,6 +8,10 @@ import com.walnutgeek.stsloop.audio.speech.SttRecognizer
 import com.walnutgeek.stsloop.audio.speech.TtsSynth
 import com.walnutgeek.stsloop.core.Command
 import com.walnutgeek.stsloop.core.grammar.BucketConfig
+import com.walnutgeek.stsloop.core.grammar.PhraseGrammar
+import com.walnutgeek.stsloop.core.hub.HubAliases
+import com.walnutgeek.stsloop.core.recognisability.AliasLearner
+import com.walnutgeek.stsloop.core.settings.BucketSettings
 import com.walnutgeek.stsloop.core.hub.Descriptors
 import com.walnutgeek.stsloop.core.hub.HubProvider
 import com.walnutgeek.stsloop.core.hub.Protocol
@@ -153,20 +157,72 @@ class NameCheckDeviceTest {
             assertTrue("the check did not end", done.await(10, TimeUnit.MINUTES))
             val model = required(NameCheck.modelId(target))
             val probes = NameCheck.probes(files)
-            assertEquals(listOf("stsloop", "the loop"), probes.filter { it.kind == ProbeKind.BUCKET }.map { it.key })
+            // "stsloop" is heard as other words (#49), which it learns (#81) and then checks too.
+            val config = TurnCapture.loadBuckets(files).buckets.single()
+            Log.i(TAG, "buckets.json: ${buckets.readText()}")
+            assertEquals(listOf("the loop"), config.aliases)
+            assertTrue("learned ${config.learned}", config.learned.isNotEmpty())
+            assertEquals(listOf("stsloop", "the loop") + config.learned.map(Probes::key), probes.filter { it.kind == ProbeKind.BUCKET }.map { it.key })
             assertEquals("every phrase the Session hears was checked", emptyList<Any>(), NameCheck.results(target).pending(probes, model))
             for (p in probes) Log.i(TAG, "request: \"${p.spoken}\": ${NameCheck.results(target).verdict(p, probes, model)!!.level}")
 
             val models = required(ModelDownloads.locate(target))
             val registry = HubProvider.registry(TurnCapture.loadBuckets(files), null)
-            val flagged = NameCheck.results(target).toAnnounce(probes, model)
             val first = NameCheck.announceOnce(files, models, registry)
             Log.i(TAG, "first Session says: $first")
-            assertEquals(NameCheckResults.announcement(flagged), first)
+            assertEquals(NameCheckResults.learnedAnnouncement(mapOf("stsloop" to config.learned)), first)
             assertNull("said once, not every Session", NameCheck.announceOnce(files, models, registry))
         } finally {
             buckets.delete()
             results.delete()
+        }
+    }
+
+    /**
+     * Learned aliases (#81) with the shipped recogniser: the herdr agents'
+     * names are checked, "stsloop agent" learns what the phone really hears
+     * for it, and that is then focused when the voice says "stsloop agent".
+     * The announcement is said once. Writes only under the test's cache.
+     */
+    @Test
+    fun stsloopAgentLearnsWhatThePhoneHearsAndIsFocusedByIt() {
+        val settings = BucketSettings(null, null, Protocol.decode(HERDR) as Descriptors)
+        val agents = setOf("stsloop agent", "woodglue agent")
+        val probes = settings.probes.filter { it.kind == ProbeKind.BUCKET && it.owner in agents }
+        val store = NameCheckStore(File(root, "files"))
+        val synth = required(TtsSynth.open(target, File(root, "tts")))
+        val stt = SttRecognizer.load(context.assets)
+        val model = stt.model
+        try {
+            val variants = NameChecker.variants(synth.voices)
+            val checker = NameChecker(stt, SAMPLE_RATE_HZ)
+            for (p in probes) store.update { it.with(p.key, model, checker.check(p, variants, synth) { false }!!, System.currentTimeMillis()) }
+
+            val learning = settings.learn(store.read(), model)
+            for (l in learning.learned) Log.i(TAG, "learned: \"${l.phrase}\" -> \"${l.alias}\"")
+            for (r in learning.refused) Log.i(TAG, "refused: ${r.message}")
+            assertTrue("stsloop agent learned nothing: ${learning.learned}", learning.learned.any { it.phrase == "stsloop agent" })
+            store.update { it.learned(learning.learned) }
+            val learned = learning.saves.fold(settings) { s, save -> s.with(save) }
+            Log.i(TAG, "hub/aliases.json: ${learning.saves.single { it.file == HubAliases.FILE }.text}")
+
+            // Said aloud as written, "stsloop agent" now focuses its Bucket.
+            val grammar = PhraseGrammar(learned.registry)
+            val focused = variants.count { v ->
+                val text = checker.hear(synth.synthesize("stsloop agent", v)!!)
+                val focus = grammar.classify(text).command?.focus
+                Log.i(TAG, "said \"stsloop agent\" (${v.id}): heard \"$text\", focus $focus")
+                focus == "stsloop agent"
+            }
+            assertTrue("focused $focused of ${variants.size}", focused * AliasLearner.OUT_OF >= variants.size * AliasLearner.AGREE)
+
+            val (said, first) = store.read().announce(learned.registry, model)
+            Log.i(TAG, "first Session says: $first")
+            assertTrue(first, first!!.contains("stsloop agent also answers to "))
+            assertNull("said once", said.announce(learned.registry, model).second)
+        } finally {
+            synth.close()
+            stt.close()
         }
     }
 
