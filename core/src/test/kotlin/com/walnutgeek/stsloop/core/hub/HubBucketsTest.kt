@@ -36,10 +36,10 @@ class HubBucketsTest {
     @Test
     fun `hub Buckets come after the capture Buckets, marked as the hub's`() {
         val r = HubProvider.registry(BucketConfig.DEFAULT, stub)
-        assertEquals(listOf("inbox", "errands", "house-project", "work", "ideas", "hub"), r.buckets.map { it.name })
-        val hub = r.named("hub")!!
+        assertEquals(listOf("inbox", "errands", "house-project", "work", "ideas", "the hub"), r.buckets.map { it.name })
+        val hub = r.named("the hub")!!
         assertTrue(hub.hub)
-        assertEquals(listOf("the hub"), hub.aliases)
+        assertEquals(listOf("hub"), hub.aliases)
         assertFalse(r.named("errands")!!.hub)
         assertFalse(r.takesNotes(hub), "the stub uses no Primitive, so nothing is filed in it")
     }
@@ -58,10 +58,10 @@ class HubBucketsTest {
 
     @Test
     fun `a hub Bucket whose name a capture Bucket has is dropped, and reported`() {
-        val config = BucketConfig(listOf(Bucket("hub", emptyList())))
+        val config = BucketConfig(listOf(Bucket("the hub", emptyList())))
         val r = HubProvider.registry(config, stub)
-        assertFalse(r.named("hub")!!.hub)
-        assertTrue(r.rejected.any { "hub" in it }, r.rejected.toString())
+        assertFalse(r.named("the hub")!!.hub)
+        assertTrue(r.rejected.any { "the hub" in it }, r.rejected.toString())
     }
 
     @Test
@@ -70,7 +70,7 @@ class HubBucketsTest {
         for (said in listOf("Hub.", "the hub", "um, the hub")) {
             val c = grammar.classify(said, focus = null).command!!
             assertEquals(Command.FOCUS, c.command, said)
-            assertEquals("hub", c.focus)
+            assertEquals("the hub", c.focus)
         }
         assertEquals(Classification.UNCLASSIFIED, grammar.classify("hub buy milk"), "a Bucket without note is never Declared into")
     }
@@ -87,11 +87,11 @@ class HubBucketsTest {
     fun `Focus follows the grammar's Buckets, and ignores a Bucket that has gone`() {
         val grammar = PhraseGrammar(HubProvider.registry(BucketConfig.DEFAULT, null))
         val focus = Focus({ grammar.buckets }, timeoutMs = 120_000)
-        assertFalse(focus.set("hub", atMs = 0))
+        assertFalse(focus.set("the hub", atMs = 0))
         assertEquals("inbox", focus.bucket.name)
         grammar.replace(HubProvider.registry(BucketConfig.DEFAULT, stub))
-        assertTrue(focus.set("hub", atMs = 0))
-        assertEquals("hub", focus.bucket.name)
+        assertTrue(focus.set("the hub", atMs = 0))
+        assertEquals("the hub", focus.bucket.name)
     }
 
     // --- the loop's replies -----------------------------------------------------
@@ -130,19 +130,19 @@ class HubBucketsTest {
     fun `naming the hub Bucket says its name while the hub is online`() {
         val s = sink(online = { true })
         s.hear("THE HUB")
-        assertEquals(listOf("hub."), said)
-        assertEquals("hub", turns.single().classification!!.command!!.focus)
+        assertEquals(listOf("the hub."), said)
+        assertEquals("the hub", turns.single().classification!!.command!!.focus)
         s.hear("WHERE AM I")
-        assertEquals("hub.", said.last())
+        assertEquals("the hub.", said.last())
     }
 
     @Test
     fun `with the hub down, a cached hub Bucket still takes Focus and the loop says hub offline`() {
         val s = sink(online = { false })
         s.hear("HUB")
-        assertEquals("hub. ${SessionCommands.HUB_OFFLINE}", said.single())
+        assertEquals("the hub. ${SessionCommands.HUB_OFFLINE}", said.single())
         s.hear("WHERE AM I")
-        assertEquals("hub. ${SessionCommands.HUB_OFFLINE}", said.last())
+        assertEquals("the hub. ${SessionCommands.HUB_OFFLINE}", said.last())
         s.hear("ROOF NEEDS SCREWS")
         assertEquals(TurnKind.UNCLASSIFIED, turns.last().kind, "the stub takes no Notes")
         assertEquals("ROOF NEEDS SCREWS", said.last())
@@ -165,6 +165,6 @@ class HubBucketsTest {
         )
         val s = sink(online = { link.online })
         repeat(3) { s.hear("THE HUB") }
-        assertEquals(List(3) { "hub. ${SessionCommands.HUB_OFFLINE}" }, said)
+        assertEquals(List(3) { "the hub. ${SessionCommands.HUB_OFFLINE}" }, said)
     }
 }

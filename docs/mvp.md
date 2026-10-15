@@ -98,7 +98,7 @@ directory, and its aliases can be edited in settings.
 Settled in #47: each hook posts its event to the hub on loopback with the
 session's herdr pane (`$HERDR_PANE_ID`) and Claude Code pid, so a session in
 a herdr pane is that pane's Bucket (`herdr:<pane>`), and one outside herdr is
-`claude-code:<session id>`, whose "send" is a `request` that says sending
+`claude-code:<session id>`, whose "send it" is a `request` that says sending
 needs herdr. Where the two disagree, the state that began later wins. The
 hooks also tell why an agent is blocked (a question dialog or a permission
 prompt), which "status" says and the hub keeps for a later rung.
@@ -106,30 +106,56 @@ prompt), which "status" says and the hub keeps for a later rung.
 ### Commands
 
 Commands are a deterministic grammar declared in the Descriptor, with at most
-one free-text slot each, as the payload. Starting set for agent Buckets:
+one free-text slot each, as the payload.
+
+**Every primary phrase must score 6/6 on the dev phone.** A command's first
+phrase, and a Bucket's name, is its primary: the one the docs and every
+spoken prompt teach ("say send it"). It must be heard as itself in all six
+variants of `NameCheckDeviceTest` (two voices × three speech rates, the
+shipped recogniser) on the dev phone, because the grammar is exact and a
+phrase missed one time in six fails one time in six. A phrase that scores
+less can stay as an alias, but never as the primary; a one-word phrase is the
+usual casualty, so the fix is a longer primary (#82). Results for every
+phrase are in #82, #75 and #49.
+
+Starting set for agent Buckets (primary first, then aliases):
 
 | Phrase | Does |
 | --- | --- |
 | "status" | Blocked, working or done, and how long |
-| "what does it say" / "read it" | The summary of the agent's last output |
+| "what does it say" (or "read it") | The summary of the agent's last output |
 | "read it back" | Read the Draft |
-| "send" | Read the Draft back, then send it |
+| "send it" (or "send") | Read the Draft back, then send it |
 | "cancel" | Drop the Draft |
-| "quiet" / "unmute" | Mute or unmute this Bucket's alerts |
+| "quiet" (or "mute alerts") / "unmute" (or "unmute alerts") | Mute or unmute this Bucket's alerts |
 
 Loop-wide, whatever has Focus:
 
 | Phrase | Does |
 | --- | --- |
-| a Bucket name on its own | Focus that Bucket, and say its name |
-| "where am I" | Say the focused Bucket |
-| "what's blocked" | List blocked agents |
+| a Bucket name on its own ("the hub", or "hub") | Focus that Bucket, and say its name |
+| "where am I" (or "what bucket", "which bucket") | Say the focused Bucket |
+| "what's blocked" (or "what is blocked") | List blocked agents |
 | "inbox" | Focus the Inbox |
-| "hub status" (or "hub health", "how is the hub") | "hub connected, 6 agents, 2 blocked."; offline, the phone alone: "hub offline for 12 minutes, last saw 6 agents." |
-| "hub details" (or "hub info", "details of the hub") | Connected for how long, or offline and the last failure; agents; herdr's state; the Claude Code hooks; Turns waiting to upload |
+| "how is the hub" (or "hub status", "hub health") | "hub connected, 6 agents, 2 blocked."; offline, the phone alone: "hub offline for 12 minutes, last saw 6 agents." |
+| "details of the hub" (or "hub details", "hub info") | Connected for how long, or offline and the last failure; agents; herdr's state; the Claude Code hooks; Turns waiting to upload |
+| "summarize bucket" (or "summarize", "sum it up") | Summarise the focused capture Bucket's new Notes (see "Summaries") |
 
-Settled in #75: "hub status" and "hub details" are the loop's own
-commands, so they are heard with no hub and no cached Descriptors. Online,
+Phase 0's, also loop-wide: "scratch that" (or "discard that"), "repeat" (or
+"say that again"), "stop listening" (or "end session").
+
+On the dev phone (#82; nemotron int8, `en-US-language` and
+`en-us-x-iob-local` at 0.8×, 1× and 1.25×), every primary above scores 6/6.
+The aliases that do not: "send" 2/6 (four times heard as nothing), "hub"
+4/6 (twice nothing), "hub status" 3/6 ("Hob status"), "hub details" 2/6
+("Hug details", "Hog details") and "unmute alerts" 5/6 ("On mute alerts").
+They stay, because a mishearing falls through to what any unheard phrase
+does. Agent names are a separate matter (#81).
+
+Settled in #75: "hub status" and "hub details" (`hub_status` and
+`hub_details`, whose primaries became "how is the hub" and "details of the
+hub" in #82) are the loop's own commands, so they are heard with no hub and
+no cached Descriptors. Online,
 the phone asks the hub (`status_request`) and words its `status_report`
 itself; offline it answers at once from `reach.json` (since when the last
 welcomed connection ended, `left_at`, and the last failure) and the cached
@@ -140,7 +166,6 @@ against the running herdr server and saves the first it answers in
 `hub.json` for `serve`; a binary that does not match is said, at `init` and
 when `serve` starts.
 
-Phase 0's commands ("scratch that", "repeat", "stop listening") keep working.
 "What bucket" stays as an alias of "where am I". Every phrase here goes
 through the recognisability check before it ships.
 
@@ -158,7 +183,7 @@ through the recognisability check before it ships.
 
 ### Send
 
-"Send" always reads the Draft back first, then sends it with an idempotency
+"Send it" always reads the Draft back first, then sends it with an idempotency
 key. The hub delivers a key at most once, so a reconnect cannot resend. With
 the hub offline, the loop says "hub offline, draft kept".
 

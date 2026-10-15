@@ -6,6 +6,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.walnutgeek.stsloop.audio.speech.ModelDownloads
 import com.walnutgeek.stsloop.audio.speech.SttRecognizer
 import com.walnutgeek.stsloop.audio.speech.TtsSynth
+import com.walnutgeek.stsloop.core.Command
 import com.walnutgeek.stsloop.core.grammar.BucketConfig
 import com.walnutgeek.stsloop.core.hub.Descriptors
 import com.walnutgeek.stsloop.core.hub.HubProvider
@@ -15,6 +16,7 @@ import com.walnutgeek.stsloop.core.recognisability.NameCheckStore
 import com.walnutgeek.stsloop.core.recognisability.NameChecker
 import com.walnutgeek.stsloop.core.recognisability.ProbeKind
 import com.walnutgeek.stsloop.core.recognisability.Probes
+import com.walnutgeek.stsloop.core.recognisability.Verdict
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -44,14 +46,16 @@ class NameCheckDeviceTest {
         /** What a herdr hub sends (protocol/fixtures/v1/descriptors/herdr.json). */
         val HERDR = """
             {"type": "descriptors", "buckets": [
-              {"id": "hub", "name": "hub", "aliases": ["the hub"], "type": "hub", "primitives": ["request"],
+              {"id": "hub", "name": "the hub", "aliases": ["hub"], "type": "hub", "primitives": ["request"],
                "commands": [{"id": "blocked", "phrases": ["what's blocked", "what is blocked"], "primitive": "request", "anywhere": true}]},
-              {"id": "herdr:w4:p1", "name": "woodglue agent", "aliases": ["woodglue"], "type": "agent", "primitives": ["request"],
-               "commands": [{"id": "status", "phrases": ["status"], "primitive": "request"}, {"id": "read", "phrases": ["what does it say", "read it"], "primitive": "request"}]},
-              {"id": "herdr:w8:p1", "name": "stsloop agent", "aliases": ["stsloop"], "type": "agent", "primitives": ["request", "draft"],
+              {"id": "herdr:w4:p1", "name": "woodglue agent", "aliases": ["woodglue"], "type": "agent", "primitives": ["request", "speak_item"],
                "commands": [{"id": "status", "phrases": ["status"], "primitive": "request"}, {"id": "read", "phrases": ["what does it say", "read it"], "primitive": "request"},
-                 {"id": "read_back", "phrases": ["read it back"], "primitive": "draft"}, {"id": "send", "phrases": ["send"], "primitive": "draft"},
-                 {"id": "cancel", "phrases": ["cancel"], "primitive": "draft"}]}
+                 {"id": "quiet", "phrases": ["quiet", "mute alerts"], "primitive": "request"}, {"id": "unmute", "phrases": ["unmute", "unmute alerts"], "primitive": "request"}]},
+              {"id": "herdr:w8:p1", "name": "stsloop agent", "aliases": ["stsloop"], "type": "agent", "primitives": ["request", "draft", "speak_item"],
+               "commands": [{"id": "status", "phrases": ["status"], "primitive": "request"}, {"id": "read", "phrases": ["what does it say", "read it"], "primitive": "request"},
+                 {"id": "read_back", "phrases": ["read it back"], "primitive": "draft"}, {"id": "send", "phrases": ["send it", "send"], "primitive": "draft"},
+                 {"id": "cancel", "phrases": ["cancel"], "primitive": "draft"},
+                 {"id": "quiet", "phrases": ["quiet", "mute alerts"], "primitive": "request"}, {"id": "unmute", "phrases": ["unmute", "unmute alerts"], "primitive": "request"}]}
             ]}
         """.trimIndent()
     }
@@ -101,6 +105,19 @@ class NameCheckDeviceTest {
         }
         assertEquals(emptyList<Any>(), results.pending(probes, model))
         assertEquals("each variant files a transcript", variants.size, results.verdict("errands", model)!!.heard.size)
+
+        // docs/mvp.md, "Commands" (#82): every primary command phrase, and the hub Bucket's name, is heard as
+        // itself in every variant. Agent names are not the loop's to choose (#81), nor the person's capture names.
+        val primaries = Command.entries.mapNotNull { it.phrases.firstOrNull() } + registry.inbox.name +
+            registry.buckets.filter { it.hub }.flatMap { b -> b.commands.map { it.phrases.first() } } +
+            registry.buckets.filter { it.id == "hub" }.map { it.name }
+        val weak = primaries.distinct().mapNotNull { phrase ->
+            val heard = results.verdict(Probes.key(phrase), model)!!.heard
+            val passes = heard.count { Verdict.isPhrase(phrase, it.text) }
+            Log.i(TAG, "primary \"$phrase\": $passes/${heard.size}")
+            if (passes == heard.size) null else "$phrase $passes/${heard.size}"
+        }
+        assertEquals("primary phrases heard less than every time", emptyList<String>(), weak)
 
         // A Session's start: the flagged Bucket phrases are said once, and never again.
         val flagged = probes.filter { it.kind == ProbeKind.BUCKET && results.verdict(it, probes, model)!!.flagged }.map { it.spoken }

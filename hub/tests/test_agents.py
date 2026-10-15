@@ -76,6 +76,17 @@ class BucketsTest(Setup):
         [blocked] = hub.commands
         self.assertEqual((blocked.id, blocked.phrases, blocked.anywhere), ("blocked", ("what's blocked", "what is blocked"), True))
 
+    def test_the_hub_bucket_is_named_the_hub_with_hub_as_an_alias(self):
+        # #82: "hub" alone is heard 4 times in 6 on the dev phone, "the hub" every time.
+        hub = self.buckets.descriptors()[0]
+        self.assertEqual((hub.name, hub.aliases), ("the hub", ("hub",)))
+
+    def test_send_is_said_as_send_it_and_send_still_works(self):
+        # #82: "send" alone is heard 2 times in 6 on the dev phone; the first phrase is the one guidance says.
+        self.poll(agent("w8:p1", "stsloop", "working"))
+        [send] = [c for c in self.provider.descriptors()[0].commands if c.id == "send"]
+        self.assertEqual(send.phrases, ("send it", "send"))
+
     def test_herdr_not_answering_means_no_agent_buckets(self):
         self.poll(agent("w8:p1", "stsloop", "working"))
         self.herdr.error = "protocol_mismatch"

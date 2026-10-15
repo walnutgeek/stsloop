@@ -94,7 +94,7 @@ class HubStatusCommandTest {
     @Test
     fun `the two phrases are loop commands, heard whatever has Focus`() {
         val g = PhraseGrammar(HubProvider.registry(BucketConfig.DEFAULT, herdr))
-        for (focused in listOf(null, "inbox", "errands", "stsloop agent", "hub")) {
+        for (focused in listOf(null, "inbox", "errands", "stsloop agent", "the hub")) {
             assertEquals(Classification.command(CommandInvocation(Command.HUB_STATUS, "hub status")), g.classify("Hub status.", focused = focused))
             assertEquals(Classification.command(CommandInvocation(Command.HUB_DETAILS, "hub details")), g.classify("um, hub details", focused = focused))
         }
@@ -102,6 +102,13 @@ class HubStatusCommandTest {
         for (said in listOf("hub health", "How is the hub?")) assertEquals(Command.HUB_STATUS, g.classify(said)?.command?.command, said)
         for (said in listOf("hub info", "details of the hub")) assertEquals(Command.HUB_DETAILS, g.classify(said)?.command?.command, said)
         assertEquals("hub status of the roof", g.classify("hub status of the roof", focus = "inbox").content, "only as the whole utterance")
+    }
+
+    @Test
+    fun `the primaries are the phrases heard 6 of 6, and the two-word ones stay aliases`() {
+        // #82: "hub status" is heard 3 times in 6 on the dev phone, "hub details" 2; the primaries every time.
+        assertEquals(listOf("how is the hub", "hub status", "hub health"), Command.HUB_STATUS.phrases)
+        assertEquals(listOf("details of the hub", "hub details", "hub info"), Command.HUB_DETAILS.phrases)
     }
 
     @Test

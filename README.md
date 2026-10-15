@@ -65,8 +65,8 @@ eventually makes declaring optional.
 
 `stsloop-hub` runs on the machine where your agents run, and publishes Buckets
 to the phone over one WebSocket on your tailnet
-([ADR-0008](./docs/adr/0008-python-hub.md)). It always publishes the "hub"
-Bucket, and one Bucket per coding agent: each herdr agent, with herdr (the
+([ADR-0008](./docs/adr/0008-python-hub.md)). It always publishes its own
+Bucket, "the hub", and one Bucket per coding agent: each herdr agent, with herdr (the
 terminal multiplexer for coding agents) installed, and each Claude Code
 session, with its hooks installed.
 It is not on PyPI yet, so install it from the repo with
@@ -110,8 +110,8 @@ the first that answers for `serve`. `serve` runs `$HERDR_BIN_PATH` when set,
 else that one, else `herdr` on the PATH, and says at start if it does not
 match. Without herdr, the hub starts as before.
 
-"Hub status" (or "hub health", "how is the hub"), said whatever has Focus, gives the hub in one line ("hub
-connected, 6 agents, 2 blocked."); "hub details" (or "hub info", "details of the hub") adds how long it has been
+"How is the hub" (or "hub status", "hub health"), said whatever has Focus, gives the hub in one line ("hub
+connected, 6 agents, 2 blocked."); "details of the hub" (or "hub details", "hub info") adds how long it has been
 connected (or the last failure, while it is offline), herdr's state, whether
 the Claude Code hooks are installed, and how many Turns wait to upload. With
 the hub offline, the phone answers them alone.
@@ -133,7 +133,7 @@ make its state precise, and "status" says why it is blocked: "blocked on a
 question" or "blocked on a permission prompt". A session outside herdr is
 its own Bucket, named from its project directory, with "status", "what does
 it say" (a summary of what its hooks reported: what it asks, the tool it
-wants, its last message) and blocked alerts; "send" there says sending needs
+wants, its last message) and blocked alerts; "send it" there says sending needs
 herdr, since only herdr can type into the agent. The hub forgets a session
 when it ends or its Claude Code process goes, and hears of one again at its
 next event after a hub restart.

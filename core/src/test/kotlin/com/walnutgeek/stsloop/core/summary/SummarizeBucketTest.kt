@@ -124,7 +124,7 @@ class SummarizeBucketTest {
             assertEquals(Command.REQUEST, c.command, said)
             assertEquals(BucketRequest("stsloop agent", "herdr:w8:p1", "read", replyWithinMs = 30_000), c.request)
         }
-        assertEquals(SummaryCommand("hub"), g.classify("summarize", focused = "hub").command!!.summary, "the hub Bucket has no read")
+        assertEquals(SummaryCommand("the hub"), g.classify("summarize", focused = "the hub").command!!.summary, "the hub Bucket has no read")
     }
 
     @Test
@@ -200,7 +200,7 @@ class SummarizeBucketTest {
         val s = Session()
         s.hear("THE HUB")
         s.hear("SUMMARIZE")
-        assertEquals("hub has no notes to summarize.", s.said.last())
+        assertEquals("the hub has no notes to summarize.", s.said.last())
         assertTrue(s.sent.isEmpty())
         assertEquals(TurnKind.COMMAND, s.turns.last().kind)
     }
