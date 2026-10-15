@@ -122,12 +122,17 @@ class SettingsActivity : Activity() {
         loadBuckets()
         NameCheck.listener = { runOnUiThread(::showRecognisability) }
         NameCheck.request(this, "settings opened")
+        SessionService.observe(sessionChanged)
         nudge.check()
     }
+
+    /** Never a nudge during a Session (#74): one starting from its notification closes it. */
+    private val sessionChanged: (Boolean) -> Unit = { if (SessionService.isActive) nudge.pause() }
 
     override fun onPause() {
         NameCheck.listener = null
         hub.pause()
+        SessionService.unobserve(sessionChanged)
         nudge.pause()
         super.onPause()
     }

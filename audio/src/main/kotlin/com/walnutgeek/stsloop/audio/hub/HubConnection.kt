@@ -47,8 +47,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Each snapshot of Descriptors is cached in [store], on the timer thread so
  * no disk write happens under the link's lock, before [onDescriptors] hears of it.
  * Each welcome and each failure is recorded in [store] ([HubReach]) the same
- * way, before [onStatus] hears of it, so the app can say why the hub could
- * not be reached when it next opens (#74).
+ * way, so the app can say why the hub could not be reached when it next
+ * opens (#74); [onRecorded] hears of each once it is recorded.
  *
  * Given the [corpus] directory, it also uploads the Corpus while the hub is
  * online ([CorpusUploader]): on its own background-priority thread, one piece
@@ -65,8 +65,14 @@ class HubConnection(
     private val store: HubStore,
     /** Who holds it, for the log ("Session 5e55…", "pairing"). */
     private val owner: String,
-    /** The link's status changed; called on the connection's timer thread, in order, once a welcome or failure is recorded. */
+    /** The link's status changed; called with the link's lock held, so it must return at once. */
     private val onStatus: (HubStatus) -> Unit = {},
+    /**
+     * A welcome or a failure ([HubStatus.failure]) has been recorded in the
+     * store; called on the connection's timer thread, in order, and not once
+     * it is stopped. For a screen that reads the record back.
+     */
+    private val onRecorded: (HubStatus) -> Unit = {},
     private val onDescriptors: (Descriptors) -> Unit = {},
     /** The hub answered a request; called on OkHttp's thread with the link's lock held, so it must return at once. */
     private val onReply: (Reply) -> Unit = {},
@@ -118,16 +124,18 @@ class HubConnection(
         override fun status(status: HubStatus) {
             Log.i(TAG, "$owner: hub ${describe(status)}")
             uploader?.status(status)
+            onStatus(status)
+            if (status !is HubStatus.Online && status.failure == null) return
+            val at = System.currentTimeMillis()
+            // On the timer thread, so no disk write happens under the link's lock; dropped once stopped.
             runCatching {
                 timers.execute {
-                    if (status is HubStatus.Online || status.failure != null) {
-                        try {
-                            store.updateReach { it.record(status, System.currentTimeMillis()) }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "$owner: cannot record how the hub was reached", e)
-                        }
+                    try {
+                        store.updateReach { it.record(status, at) }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "$owner: cannot record how the hub was reached", e)
                     }
-                    onStatus(status)
+                    onRecorded(status)
                 }
             }
         }

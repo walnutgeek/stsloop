@@ -76,7 +76,8 @@ class HubConnectionDeviceTest {
     private fun connect(p: Pairing, until: (HubStatus) -> Boolean): Pair<HubConnection, CountDownLatch> {
         store.pair(p)
         val reached = CountDownLatch(1)
-        val c = HubConnection(context, store, "device test", onStatus = { if (until(it)) reached.countDown() })
+        // Once recorded: every status these tests wait for is a welcome or a failure.
+        val c = HubConnection(context, store, "device test", onRecorded = { if (until(it)) reached.countDown() })
         connection = c
         c.start()
         return c to reached
@@ -215,7 +216,7 @@ class HubConnectionDeviceTest {
         assertTrue("status ${c.status}", reached.await(10, TimeUnit.SECONDS))
         Thread.sleep(1_500)
         assertEquals(HubStatus.Unauthorised, c.status)
-        // Recorded before the status was told (#74), with the words the screen shows.
+        // Recorded (#74), with the words the screen shows.
         assertEquals(HubFailure.TokenRefused, store.reach().failure)
     }
 
@@ -226,7 +227,7 @@ class HubConnectionDeviceTest {
         store.pair(p!!)
         store.updateReach { it.failed(HubFailure.NoWelcome, 1) }
         val reached = CountDownLatch(1)
-        val c = HubConnection(context, store, "device test", onStatus = { if (it is HubStatus.Online) reached.countDown() })
+        val c = HubConnection(context, store, "device test", onRecorded = { if (it is HubStatus.Online) reached.countDown() })
         connection = c
         c.start()
         assertTrue("status ${c.status}", reached.await(10, TimeUnit.SECONDS))

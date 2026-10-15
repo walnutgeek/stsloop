@@ -17,11 +17,13 @@ import kotlin.reflect.cast
  * - `reach.json`: what the phone last learnt about reaching the hub, and
  *   whether the person ignored it ([HubReach]).
  *
- * Each file but `reach.json` holds its protocol message as the hub sent it, re-encoded, and
- * is replaced atomically. Reads throw [BadMessage] for a file that is not
- * its message, and [IOException] when it cannot be read; a missing file is null.
- * Calls are not synchronised: the pairing is written by the app's screen and
- * the cache by a Session's link, and a write is one rename.
+ * Every file is replaced atomically. The pairing and the cache hold their
+ * protocol message as the hub sent it, re-encoded; their reads throw
+ * [BadMessage] for a file that is not its message, and [IOException] when it
+ * cannot be read; a missing file is null. Those calls are not synchronised:
+ * the pairing is written by the app's screen and the cache by a Session's
+ * link, and a write is one rename. `reach.json` is read and changed under one
+ * lock for the process, and a file that cannot be read is [HubReach.EMPTY].
  */
 class HubStore(files: File) {
     private val dir = File(files, DIR)

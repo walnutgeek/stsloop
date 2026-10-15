@@ -25,25 +25,29 @@ import com.walnutgeek.stsloop.core.corpus.JsonWriter
 data class HubReach(
     /** When the hub last welcomed the phone. */
     val connectedAtMs: Long?,
-    /** Why the last try failed; null when it connected, or none was made. */
-    val failure: HubFailure?,
-    /** When [failure] last happened. */
-    val failedAtMs: Long?,
+    /** How the last try failed; null when it connected, or none was made. */
+    val lastFailure: Failed?,
     /** The kind of failure the person chose to ignore. */
     val ignored: HubFailure.Kind?,
 ) {
+    /** A try that failed with [failure] at [atMs]. */
+    data class Failed(val failure: HubFailure, val atMs: Long)
+
+    /** Why the last try failed; null when it connected, or none was made. */
+    val failure: HubFailure? get() = lastFailure?.failure
+
     /** Whether to nudge: the last try failed, and not in a way the person has ignored. */
-    val nudge: Boolean get() = failure != null && failure.kind != ignored
+    val nudge: Boolean get() = lastFailure != null && lastFailure.failure.kind != ignored
 
     /** The hub welcomed the phone at [atMs]: no failure, and Ignore ends. */
-    fun connected(atMs: Long) = HubReach(atMs, null, null, null)
+    fun connected(atMs: Long) = HubReach(atMs, null, null)
 
     /** A try failed with [failure] at [atMs]; Ignore holds only while the kind is the ignored one. */
     fun failed(failure: HubFailure, atMs: Long) =
-        HubReach(connectedAtMs, failure, atMs, ignored?.takeIf { it == failure.kind })
+        HubReach(connectedAtMs, Failed(failure, atMs), ignored?.takeIf { it == failure.kind })
 
     /** The person chose Ignore for the current failure. */
-    fun ignore(): HubReach = if (failure == null) this else copy(ignored = failure.kind)
+    fun ignore(): HubReach = if (lastFailure == null) this else copy(ignored = lastFailure.failure.kind)
 
     /** With [status] recorded at [atMs]: a welcome or a failure; anything else changes nothing. */
     fun record(status: HubStatus, atMs: Long): HubReach {
@@ -57,7 +61,7 @@ data class HubReach(
 
     /** The settings screen's hub line: connected, or the last failure and when; [time] formats a moment. */
     fun line(time: (Long) -> String): String = when {
-        failure != null -> "Could not connect (${time(checkNotNull(failedAtMs))}). ${failure.text}"
+        lastFailure != null -> "Last try failed (${time(lastFailure.atMs)}). ${lastFailure.failure.text}"
         connectedAtMs != null -> "Connected (${time(connectedAtMs)})."
         else -> "Not connected yet."
     }
@@ -66,14 +70,14 @@ data class HubReach(
     fun toJson(): String = JsonWriter.pretty(
         linkedMapOf(
             CONNECTED_AT to connectedAtMs?.let(UtcTimestamp::format),
-            FAILURE to failure?.toJson(),
-            FAILED_AT to failedAtMs?.let(UtcTimestamp::format),
+            FAILURE to lastFailure?.failure?.toJson(),
+            FAILED_AT to lastFailure?.atMs?.let(UtcTimestamp::format),
             IGNORED to ignored?.json,
         ),
     )
 
     companion object {
-        val EMPTY = HubReach(null, null, null, null)
+        val EMPTY = HubReach(null, null, null)
 
         private const val CONNECTED_AT = "connected_at"
         private const val FAILURE = "failure"
@@ -94,8 +98,8 @@ data class HubReach(
             val connectedAt = (root[CONNECTED_AT] as? String)?.let(UtcTimestamp::parse)
             val failure = (root[FAILURE] as? Map<*, *>)?.let(HubFailure::fromJson)
             val failedAt = (root[FAILED_AT] as? String)?.let(UtcTimestamp::parse)
-            if (failure == null || failedAt == null) return HubReach(connectedAt, null, null, null)
-            return HubReach(connectedAt, failure, failedAt, HubFailure.Kind.of(root[IGNORED] as? String))
+            if (failure == null || failedAt == null) return HubReach(connectedAt, null, null)
+            return HubReach(connectedAt, Failed(failure, failedAt), HubFailure.Kind.of(root[IGNORED] as? String))
         }
     }
 }

@@ -157,6 +157,11 @@ class HubLink(
     private var timer: Cancellable? = null
     private var retryMs = FIRST_RETRY_MS
 
+    /** Whether the current connection has opened (its WebSocket upgrade was answered). */
+    private var opened = false
+
+    private val unreachable: HubFailure get() = HubFailure.Unreachable(HubFailure.address(checkNotNull(pairing).url))
+
     @Synchronized
     fun start() {
         if (started) return
@@ -209,11 +214,6 @@ class HubLink(
         socket = transport.open(pairing.url, pairing.token, Events(id))
         timer = scheduler.schedule(CONNECT_TIMEOUT_MS) { connectTimedOut(id) }
     }
-
-    /** Whether the current connection has opened (its WebSocket upgrade was answered). */
-    private var opened = false
-
-    private val unreachable: HubFailure get() = HubFailure.Unreachable(HubFailure.address(checkNotNull(pairing).url))
 
     @Synchronized
     private fun connectTimedOut(id: Int) {

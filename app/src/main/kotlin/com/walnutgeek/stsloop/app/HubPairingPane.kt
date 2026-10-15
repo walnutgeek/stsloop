@@ -101,7 +101,7 @@ class HubPairingPane(private val activity: Activity, private val nudge: HubNudge
             val checked = java.util.concurrent.atomic.AtomicBoolean()
             connection = HubConnection( // here, off the UI thread: it reads the pairing just stored
                 activity, store, "pairing",
-                onStatus = { s -> s.failure?.let { f -> done(connection, "Paired with ${pairing.url}, but could not connect.", f) } },
+                onRecorded = { s -> s.failure?.let { f -> done(connection, "Paired with ${pairing.url}, but could not connect.", f) } },
                 onDescriptors = { d ->
                     done(connection, "Paired. ${describe(d)}")
                     // Onboarding step 3 (docs/mvp.md): check the new names, then say the phone is ready.

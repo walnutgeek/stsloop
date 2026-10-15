@@ -22,7 +22,7 @@ class HubReachTest {
     fun `a failure nudges, and the line says which and when`() {
         val r = HubReach.EMPTY.failed(unreachable, 5)
         assertTrue(r.nudge)
-        assertEquals("Could not connect (t5). ${unreachable.text}", r.line { "t$it" })
+        assertEquals("Last try failed (t5). ${unreachable.text}", r.line { "t$it" })
     }
 
     @Test
@@ -39,8 +39,8 @@ class HubReachTest {
         assertFalse(ignored.nudge)
         val again = ignored.failed(HubFailure.Unreachable("100.101.102.103:7717"), 9)
         assertFalse(again.nudge, "the same kind, failing again")
-        assertEquals(9, again.failedAtMs)
-        assertEquals("Could not connect (t9). ${unreachable.text}", again.line { "t$it" }, "the line still says it")
+        assertEquals(9L, again.lastFailure?.atMs)
+        assertEquals("Last try failed (t9). ${unreachable.text}", again.line { "t$it" }, "the line still says it")
     }
 
     @Test

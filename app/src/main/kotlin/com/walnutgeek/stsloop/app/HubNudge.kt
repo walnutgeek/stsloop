@@ -3,6 +3,8 @@ package com.walnutgeek.stsloop.app
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.DialogInterface
+import android.os.Handler
+import android.os.Looper
 import android.text.format.DateUtils
 import android.util.Log
 import android.widget.ProgressBar
@@ -42,8 +44,18 @@ class HubNudge(private val activity: Activity) {
     /** The connection a Retry is trying; null when none is. */
     private var trying: HubConnection? = null
 
+    /** Whether the screen has gone away since the last [check]: a store read finishing late opens nothing. */
+    private var paused = false
+
+    private val handler = Handler(Looper.getMainLooper())
+
     /** On opening a screen: nudges if the last try failed, the person has not ignored it, and no Session runs. */
-    fun check() = io.execute {
+    fun check() {
+        paused = false
+        io.execute(::read)
+    }
+
+    private fun read() {
         val paired = try {
             store.pairing() != null
         } catch (e: Exception) {
@@ -51,8 +63,9 @@ class HubNudge(private val activity: Activity) {
             false
         }
         val reach = store.reach()
-        if (!paired || !reach.nudge || reach.failedAtMs == dismissedFor) return@execute
-        activity.runOnUiThread { if (!SessionService.isActive) open(reach.failure!!, reach.failedAtMs) }
+        val last = reach.lastFailure
+        if (!paired || !reach.nudge || last == null || last.atMs == dismissedFor) return
+        activity.runOnUiThread { if (!SessionService.isActive) open(last.failure, last.atMs) }
     }
 
     /** Nudges about [failure] now: a fresh pairing's first connection failed. */
@@ -62,6 +75,7 @@ class HubNudge(private val activity: Activity) {
 
     /** Closes the dialog and stops a Retry; call when the screen goes away. */
     fun pause() {
+        paused = true
         stopTrying()
         dialog?.setOnDismissListener(null)
         dialog?.dismiss()
@@ -69,7 +83,7 @@ class HubNudge(private val activity: Activity) {
     }
 
     private fun open(failure: HubFailure, failedAtMs: Long?) {
-        if (activity.isFinishing || activity.isDestroyed) return
+        if (paused || activity.isFinishing || activity.isDestroyed) return
         if (dialog != null) return run { dialog?.setMessage(failure.text) }
         val bar = ProgressBar(activity).apply {
             isIndeterminate = true
@@ -122,7 +136,8 @@ class HubNudge(private val activity: Activity) {
             lateinit var connection: HubConnection
             val probe = HubProbe { outcome -> activity.runOnUiThread { tried(connection, outcome) } }
             // Off the UI thread: it reads the stored pairing.
-            connection = HubConnection(activity, store, "retry", onStatus = probe::status, onDescriptors = probe::descriptors)
+            // A failure reaches the probe once recorded, so the hub line read back on onChanged shows it.
+            connection = HubConnection(activity, store, "retry", onRecorded = probe::status, onDescriptors = probe::descriptors)
             activity.runOnUiThread {
                 if (dialog !== d || connection.pairing == null) {
                     connection.stop()
@@ -132,18 +147,22 @@ class HubNudge(private val activity: Activity) {
                 trying = connection
                 connection.start()
                 // The link gives up within its connect and welcome timeouts; this only guards a hub that welcomes and never sends Descriptors.
-                d.window?.decorView?.postDelayed({ tried(connection, HubProbe.Outcome.Failed(HubFailure.NoWelcome)) }, RETRY_LIMIT_MS)
+                handler.postDelayed({ tried(connection, null) }, RETRY_LIMIT_MS)
             }
         }
     }
 
-    /** UI thread: the Retry over [connection] ended with [outcome]. */
-    private fun tried(connection: HubConnection, outcome: HubProbe.Outcome) {
+    /** UI thread: the Retry over [connection] ended with [outcome], or ran out of time (null). */
+    private fun tried(connection: HubConnection, outcome: HubProbe.Outcome?) {
         if (trying !== connection) return
         stopTrying()
-        Log.i(TAG, "retry: ${outcome.said}")
+        Log.i(TAG, "retry: ${outcome?.said ?: "no outcome in time"}")
         onChanged()
         when (outcome) {
+            null -> {
+                busy(false)
+                dialog?.setMessage("The hub did not send its Buckets in time. Try again.")
+            }
             is HubProbe.Outcome.Connected -> {
                 dialog?.dismiss()
                 Toast.makeText(activity, outcome.said, Toast.LENGTH_LONG).show()
@@ -156,6 +175,7 @@ class HubNudge(private val activity: Activity) {
     }
 
     private fun stopTrying() {
+        handler.removeCallbacksAndMessages(null)
         trying?.stop()
         trying = null
     }
