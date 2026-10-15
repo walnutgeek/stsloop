@@ -1,0 +1,88 @@
+{
+  "type": "descriptors",
+  "buckets": [
+    {
+      "id": "hub",
+      "name": "the hub",
+      "aliases": ["hub"],
+      "type": "hub",
+      "primitives": ["request"],
+      "commands": [
+        { "id": "blocked", "phrases": ["what's blocked", "what is blocked"], "primitive": "request", "anywhere": true }
+      ]
+    },
+    {
+      "id": "herdr:w4:p1",
+      "name": "woodglue agent",
+      "aliases": ["woodglue"],
+      "type": "agent",
+      "primitives": ["draft", "request", "speak_item"],
+      "commands": [
+        { "id": "status", "phrases": ["status"], "primitive": "request" },
+        { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 },
+        { "id": "read_back", "phrases": ["read it back"], "primitive": "draft" },
+        { "id": "send", "phrases": ["send it", "send"], "primitive": "draft" },
+        { "id": "cancel", "phrases": ["cancel"], "primitive": "draft" },
+        { "id": "option_1", "phrases": ["option one"], "primitive": "draft" },
+        { "id": "option_2", "phrases": ["option two"], "primitive": "draft" },
+        { "id": "option_3", "phrases": ["option three"], "primitive": "draft" },
+        { "id": "option_4", "phrases": ["option four"], "primitive": "draft" },
+        { "id": "my_answer", "phrases": ["my answer", "answer with my draft"], "primitive": "draft" },
+        { "id": "quiet", "phrases": ["quiet", "mute alerts"], "primitive": "request" },
+        { "id": "unmute", "phrases": ["unmute", "unmute alerts"], "primitive": "request" }
+      ],
+      "dialog": {
+        "kind": "question",
+        "id": "toolu_1792049416875",
+        "questions": [
+          { "question": "Should I rebase onto main or merge it?", "options": ["Rebase", "Merge"], "other": true },
+          { "question": "Which test suite should run after?", "options": ["Unit", "Device", "Both"], "other": true }
+        ]
+      }
+    },
+    {
+      "id": "herdr:w8:p1",
+      "name": "stsloop agent",
+      "aliases": ["stsloop"],
+      "type": "agent",
+      "primitives": ["draft", "request", "speak_item"],
+      "commands": [
+        { "id": "status", "phrases": ["status"], "primitive": "request" },
+        { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 },
+        { "id": "read_back", "phrases": ["read it back"], "primitive": "draft" },
+        { "id": "send", "phrases": ["send it", "send"], "primitive": "draft" },
+        { "id": "cancel", "phrases": ["cancel"], "primitive": "draft" },
+        { "id": "option_1", "phrases": ["option one"], "primitive": "draft" },
+        { "id": "option_2", "phrases": ["option two"], "primitive": "draft" },
+        { "id": "option_3", "phrases": ["option three"], "primitive": "draft" },
+        { "id": "option_4", "phrases": ["option four"], "primitive": "draft" },
+        { "id": "my_answer", "phrases": ["my answer", "answer with my draft"], "primitive": "draft" },
+        { "id": "quiet", "phrases": ["quiet", "mute alerts"], "primitive": "request" },
+        { "id": "unmute", "phrases": ["unmute", "unmute alerts"], "primitive": "request" }
+      ],
+      "dialog": { "kind": "permission" }
+    },
+    {
+      "id": "herdr:w5:p1",
+      "name": "direction wiki agent",
+      "aliases": ["direction wiki"],
+      "type": "agent",
+      "primitives": ["draft", "request", "speak_item"],
+      "commands": [
+        { "id": "status", "phrases": ["status"], "primitive": "request" },
+        { "id": "read", "phrases": ["what does it say", "read it"], "primitive": "request", "reply_within_ms": 30000 },
+        { "id": "read_back", "phrases": ["read it back"], "primitive": "draft" },
+        { "id": "send", "phrases": ["send it", "send"], "primitive": "draft" },
+        { "id": "cancel", "phrases": ["cancel"], "primitive": "draft" },
+        { "id": "option_1", "phrases": ["option one"], "primitive": "draft" },
+        { "id": "option_2", "phrases": ["option two"], "primitive": "draft" },
+        { "id": "option_3", "phrases": ["option three"], "primitive": "draft" },
+        { "id": "option_4", "phrases": ["option four"], "primitive": "draft" },
+        { "id": "my_answer", "phrases": ["my answer", "answer with my draft"], "primitive": "draft" },
+        { "id": "quiet", "phrases": ["quiet", "mute alerts"], "primitive": "request" },
+        { "id": "unmute", "phrases": ["unmute", "unmute alerts"], "primitive": "request" }
+      ],
+      "dialog": { "kind": "unknown" }
+    }
+  ]
+}

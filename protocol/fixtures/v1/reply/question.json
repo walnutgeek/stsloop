@@ -1,0 +1,1 @@
+{ "type": "reply", "id": "r1", "say": "woodglue agent asks two questions. question one: Should I rebase onto main or merge it? option one: Rebase; option two: Merge. question two: Which test suite should run after? option one: Unit; option two: Device; option three: Both. Or dictate your own answer and say my answer." }

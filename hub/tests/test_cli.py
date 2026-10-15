@@ -350,7 +350,7 @@ class ServeTest(unittest.TestCase):
 
         with mock.patch("stsloop_hub.agents.POLL_S", 0.01):
             asyncio.run(polls())
-        self.assertEqual(changed, [True], "one new snapshot: the agent came")
+        self.assertEqual(changed, [True, True], "two new snapshots: the agent came, then showed its dialog")
         self.assertEqual([d.id for d in hub._descriptors()], ["hub", "herdr:w8:p1"])
         self.assertEqual(hub._descriptors()[0].commands[0].id, "blocked")
         self.assertEqual([i.say for i in items], ["stsloop agent is blocked."])

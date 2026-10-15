@@ -49,6 +49,37 @@ data class BucketCommand(
 )
 
 /**
+ * One question of a [Dialog]: its text, its options' labels in order ("option
+ * one" is the first), whether the agent lets the person pick several
+ * ([multiSelect]; by voice, one is picked), and whether it takes a free-text
+ * answer ([other]).
+ */
+data class DialogQuestion(
+    val question: String,
+    val options: List<String>,
+    val multiSelect: Boolean = false,
+    val other: Boolean = false,
+)
+
+/**
+ * The dialog an agent Bucket is blocked on (`descriptors.schema.json`,
+ * `dialog`; #80). Only a [QUESTION] can be answered by voice, by its [id];
+ * a [PERMISSION] prompt is rung 5 of the ladder and never is, and neither is
+ * any other [kind] ([UNKNOWN]: the hub sees the agent blocked but cannot
+ * tell on what).
+ */
+data class Dialog(val kind: String, val id: String? = null, val questions: List<DialogQuestion> = emptyList()) {
+    /** Whether it is a question the loop can answer: one with an id and questions. */
+    val answerable: Boolean get() = kind == QUESTION && id != null && questions.isNotEmpty()
+
+    companion object {
+        const val QUESTION = "question"
+        const val PERMISSION = "permission"
+        const val UNKNOWN = "unknown"
+    }
+}
+
+/**
  * A Provider's description of one Bucket for the phone (`CONTEXT.md`,
  * Descriptor): its canonical [name] (written to `turn.json` as `bucket` or
  * `focus`), the [aliases] it may be addressed by aloud (the name is always
@@ -66,6 +97,8 @@ data class Descriptor(
     val id: String? = null,
     val commands: List<BucketCommand> = emptyList(),
     val degraded: Boolean = false,
+    /** The dialog an agent Bucket is blocked on, while it is (#80); null when it is not known to wait on one. */
+    val dialog: Dialog? = null,
 ) {
     companion object {
         /**

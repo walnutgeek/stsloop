@@ -77,6 +77,22 @@ string `type`.
    The `draft` commands themselves ("read it back", "send it" or "send", "cancel": ids
    `read_back`, `send`, `cancel`) run on the phone. No capability is needed:
    a hub that declares a `draft` command answers `send`.
+
+   **Answers** (#80). While an agent Bucket is blocked, its Descriptor
+   carries the `dialog`: a `question` (an `id`, and each question's text,
+   option labels, and whether it takes a free-text answer, `other`), a
+   `permission` prompt, or `unknown`. The `draft` commands `option_1` …
+   `option_4` ("option one" …) and `my_answer` ("my answer": the Draft as a
+   free-text answer) build an answer on the phone, a question at a time, and
+   "send it" sends it as a `send` whose `answer` names the dialog and holds
+   one choice per question (an `option`, 1 for the first, or a `text`); its
+   `text` is the answer as read back. It is a send like any other: one key,
+   answered by one `sent`, at most once. The hub answers it only while that
+   same question dialog is open and shown on the agent's screen, and types
+   it with herdr's keys; a permission prompt, an `unknown` dialog or another
+   dialog is `refused`. A phone that does not know `dialog` cannot answer;
+   a hub that does not know `answer` prompts `text`, which herdr refuses
+   while the agent is blocked.
 8. **Items.** The hub sends an `item` when a Bucket that uses `speak_item`
    raises one (an agent has become blocked): an `id`, the `buckets` it is
    about, and one sentence to `say`. Changes the hub sees together are one
@@ -147,7 +163,9 @@ Provider produces for a fake herdr and a fake summariser
 `reply/needs-herdr.json` what it publishes and answers for a Claude Code
 session its hooks report without herdr (`hub/tests/test_claude_code.py`,
 which replays recorded hook payloads), the `sent/` fixtures what it answers the
-`send/` ones with (`hub/tests/test_sends.py`), the `item/` fixtures
+`send/` ones with (`hub/tests/test_sends.py`; for `send/answer.json`,
+`hub/tests/test_dialogs.py`, which also produces `descriptors/dialogs.json`
+and `reply/question.json` from recorded hook payloads), the `item/` fixtures
 what it raises (`hub/tests/test_alerts.py`), and `reply/summary.json` and
 `reply/summary-fallback.json` what it answers `summarize/basic.json` with,
 given a fake summariser and none (`hub/tests/test_summary.py`), and
@@ -162,7 +180,8 @@ and checks it sends exactly the phone steps). The phone sends one message,
 `hello/basic.json`, whatever phone a given exchange stands for, then sends the
 exchange's `request`s, `send`s, `summarize`s and `status_request`s itself, each equal to its
 fixture (`DraftPrimitiveTest` checks the phone's own send against
-`send/basic.json`, and `BucketSummariesTest` its own summarize against
+`send/basic.json`, `AnswerDialogTest` its own answer against
+`send/answer.json`, and `BucketSummariesTest` its own summarize against
 `summarize/basic.json`, and its raw reading against the hub's in
 `reply/summary-fallback.json`; `HubStatusCommandTest` its own
 `status_request` against `status_request/basic.json`).

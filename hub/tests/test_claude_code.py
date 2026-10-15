@@ -316,7 +316,8 @@ class WithHerdrTest(Setup):
         self.hook(*PERMISSION[:3])
         self.assertEqual(self.ids(), ["hub", "herdr:w8:p1"])
         self.assertEqual([c.id for c in self.buckets.descriptors()[1].commands],
-                         ["status", "read", "read_back", "send", "cancel", "quiet", "unmute"])
+                         ["status", "read", "read_back", "send", "cancel", "option_1", "option_2", "option_3",
+                          "option_4", "my_answer", "quiet", "unmute"])
 
     def test_hooks_give_the_merged_agent_a_precise_state(self):
         self.poll(agent("w8:p1", "stsloop", "working"))

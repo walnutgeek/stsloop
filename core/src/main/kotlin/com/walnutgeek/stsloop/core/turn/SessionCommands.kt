@@ -6,6 +6,10 @@ import com.walnutgeek.stsloop.core.Command
 import com.walnutgeek.stsloop.core.CommandInvocation
 import com.walnutgeek.stsloop.core.Turn
 import com.walnutgeek.stsloop.core.TurnKind
+import com.walnutgeek.stsloop.core.DraftCommand
+import com.walnutgeek.stsloop.core.grammar.Dialog
+import com.walnutgeek.stsloop.core.hub.Choice
+import com.walnutgeek.stsloop.core.hub.DialogWords
 import com.walnutgeek.stsloop.core.hub.Drafts
 import com.walnutgeek.stsloop.core.hub.StatusQueries
 import com.walnutgeek.stsloop.core.grammar.Descriptor
@@ -143,6 +147,7 @@ class SessionCommands(
                 Outcome(plain, listOfNotNull(said, NEEDS_NEWER_APP.takeIf { degraded }, DRAFT_WAITING.takeIf { waiting }).joinToString(" "))
             }
             Command.READ_BACK, Command.CANCEL, Command.SEND -> draft(invocation)
+            Command.OPTION, Command.MY_ANSWER -> answer(invocation)
             Command.REQUEST -> Outcome(plain, null, request = invocation.request)
             Command.STOP_LISTENING -> Outcome(plain, STOPPED_LISTENING, endsSession = true)
             Command.SUMMARIZE -> summary(invocation)
@@ -162,20 +167,85 @@ class SessionCommands(
 
     private fun draft(invocation: CommandInvocation): Outcome {
         val d = invocation.draft!!
+        val bucket = focus.named(d.bucket)
+        val dialog = bucket?.dialog?.takeIf { it.answerable }
+        drafts.forgetStaleAnswer(d.bucketId, dialog?.id)
         val text = drafts.text(d.bucketId)
-        val name = bucketAsWords(d.bucket).removeSuffix(".")
+        val name = agentName(d)
         fun outcome(say: String, key: String? = null) =
             Outcome(Classification.command(invocation.copy(draft = d.copy(text = text, key = key))), say, sendKey = key)
+        val choices = dialog?.let { drafts.choices(d.bucketId, it.id!!) }.orEmpty()
+        if (dialog != null && choices.isNotEmpty()) return answering(invocation, bucket, dialog, choices, text)
         return when (invocation.command) {
             Command.READ_BACK -> outcome(if (text == null) NO_DRAFT else "draft for $name: $text.")
             Command.CANCEL -> outcome(if (text == null) NO_DRAFT else DRAFT_DROPPED)
             else -> when {
                 text == null -> outcome(NOTHING_TO_SEND)
+                // herdr would refuse it (agent_blocked): the dialog is answered with its options, or "my answer".
+                dialog != null -> outcome("$name is asking a question. say an option, or ${DialogWords.phrase(bucket, MY_ANSWER_ID, "my answer")} to answer with the draft.")
                 !hubOnline() -> outcome(Drafts.OFFLINE)
                 drafts.sending(d.bucketId) -> outcome(STILL_SENDING)
                 else -> outcome("sending to $name: $text.", key = drafts.newKey())
             }
         }
+    }
+
+    /** The agent a `draft` command names, as words: "stsloop agent". */
+    private fun agentName(d: DraftCommand): String = bucketAsWords(d.bucket).removeSuffix(".")
+
+    /** "read it back", "cancel" and "send it" while an answer to [dialog] is being put together (#80): they act on the answer. */
+    private fun answering(invocation: CommandInvocation, bucket: Descriptor, dialog: Dialog, choices: List<Choice>, text: String?): Outcome {
+        val d = invocation.draft!!
+        val name = agentName(d)
+        val said = DialogWords.answer(dialog, choices)
+        fun outcome(say: String, key: String? = null) =
+            Outcome(Classification.command(invocation.copy(draft = d.copy(text = said, key = key, dialog = dialog.id))), say, sendKey = key)
+        val complete = choices.size >= dialog.questions.size
+        return when (invocation.command) {
+            Command.READ_BACK -> outcome(
+                "answer for $name: $said." + (if (complete) "" else " " + DialogWords.question(dialog, choices.size)) +
+                    (if (text != null) " draft: $text." else ""),
+            )
+            Command.CANCEL -> outcome(ANSWER_DROPPED)
+            else -> when {
+                !complete -> outcome("question ${DialogWords.number(choices.size + 1)} is not answered yet. ${DialogWords.question(dialog, choices.size)}")
+                !hubOnline() -> outcome(Drafts.ANSWER_OFFLINE)
+                drafts.sending(d.bucketId) -> outcome(STILL_SENDING)
+                else -> outcome("answering $name: $said.", key = drafts.newKey())
+            }
+        }
+    }
+
+    /** "option one" … and "my answer" (#80): a choice for the next question of the focused agent's dialog, read back. */
+    private fun answer(invocation: CommandInvocation): Outcome {
+        val d = invocation.draft!!
+        val bucket = focus.named(d.bucket)
+        val dialog = bucket?.dialog
+        drafts.forgetStaleAnswer(d.bucketId, dialog?.takeIf { it.answerable }?.id)
+        val name = agentName(d)
+        fun outcome(say: String, draft: DraftCommand = d) = Outcome(Classification.command(invocation.copy(draft = draft)), say)
+        when {
+            dialog == null -> return outcome("$name is not asking anything.")
+            dialog.kind == Dialog.PERMISSION -> return outcome(PERMISSION_PROMPT)
+            !dialog.answerable -> return outcome("I can't tell what $name is asking, so I can't answer it.")
+        }
+        val send = DialogWords.phrase(bucket, SEND_ID, "send it")
+        val done = drafts.choices(d.bucketId, dialog!!.id!!)
+        if (done.size >= dialog.questions.size) return outcome("already answered: ${DialogWords.answer(dialog, done)}. say $send, or cancel.")
+        val at = done.size
+        val q = dialog.questions[at]
+        val choice = if (invocation.command == Command.OPTION) {
+            val n = d.option!!
+            if (n > q.options.size) return outcome("there is no option ${DialogWords.number(n)}. ${DialogWords.question(dialog, at)}")
+            Choice(option = n)
+        } else {
+            val myAnswer = DialogWords.phrase(bucket, MY_ANSWER_ID, "my answer")
+            if (!q.other) return outcome("this question takes no answer of your own. ${DialogWords.question(dialog, at)}")
+            Choice(text = drafts.text(d.bucketId) ?: return outcome("dictate your answer first, then say $myAnswer."))
+        }
+        val then = if (at + 1 < dialog.questions.size) DialogWords.question(dialog, at + 1) else "say $send to answer."
+        val picked = if (choice.option != null) q.options[choice.option - 1] else choice.text
+        return outcome("${DialogWords.choice(q, choice)}. $then", d.copy(text = picked, dialog = dialog.id))
     }
 
     /** A Bucket's name, and whether its hub is offline when it is the hub's. */
@@ -190,8 +260,10 @@ class SessionCommands(
         if (c?.kind == TurnKind.DRAFT) drafts.append(c.bucketId!!, c.bucket!!, turn.directoryName, c.content!!)
         command?.draft?.let { d ->
             when (command.command) {
-                Command.CANCEL -> drafts.cancel(d.bucketId)
-                Command.SEND -> d.key?.let { drafts.take(d.bucketId, it) }
+                Command.CANCEL -> if (d.dialog != null) drafts.cancelAnswer(d.bucketId) else drafts.cancel(d.bucketId)
+                Command.SEND -> d.key?.let { key -> if (d.dialog != null) drafts.takeAnswer(d.bucketId, key, d.text!!) else drafts.take(d.bucketId, key) }
+                Command.OPTION -> if (d.dialog != null && d.option != null) drafts.choose(d.bucketId, d.bucket, d.dialog, Choice(option = d.option))
+                Command.MY_ANSWER -> if (d.dialog != null && d.text != null) drafts.choose(d.bucketId, d.bucket, d.dialog, Choice(text = d.text))
                 else -> Unit
             }
         }
@@ -237,6 +309,16 @@ class SessionCommands(
 
         /** Said when "send" comes while the Bucket's last send is still waiting on the hub; the new Draft stays. */
         const val STILL_SENDING = "still sending the last one; draft kept."
+
+        /** Said for an option picked while the focused agent is blocked on a permission prompt: rung 5, never answered (#80). */
+        const val PERMISSION_PROMPT = "that's a permission prompt. I don't approve those."
+
+        /** Said once "cancel" has dropped the answer being put together. */
+        const val ANSWER_DROPPED = "answer dropped."
+
+        /** The Descriptor command ids whose first phrase the loop teaches: "send it" and "my answer". */
+        const val SEND_ID = "send"
+        const val MY_ANSWER_ID = "my_answer"
 
         /** Said after the name of a Bucket focused while it has a Draft. */
         const val DRAFT_WAITING = "a draft is waiting."

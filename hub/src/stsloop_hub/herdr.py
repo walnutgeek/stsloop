@@ -1,11 +1,14 @@
 """herdr, the terminal multiplexer for coding agents, as the hub uses it.
 
 The hub's herdr Provider (`agents.py`) sees herdr only through `Herdr`, so its
-tests run against a fake. `HerdrCli` is the real one, and it runs three herdr
+tests run against a fake. `HerdrCli` is the real one, and it runs five herdr
 commands only: two reads, `herdr api snapshot` for the agents and `herdr
-agent read` for one agent's recent output ("what does it say"), and `herdr
-agent prompt <pane> <text>`, to submit a Draft the person sent (rung 4). The
-hub never sends keys, renames, focuses, starts or stops anything in herdr.
+agent read` for one agent's recent output ("what does it say"), and three
+writes, all rung 4: `herdr agent prompt <pane> <text>`, to submit a Draft the
+person sent, and `herdr agent send-keys <pane> <key>` (a digit, Enter or Tab
+only) with `herdr pane send-text <pane> <text>`, to answer a question dialog
+the person answered (`dialogs.py`). The hub never renames, focuses, starts or
+stops anything in herdr.
 
 Which herdr binary: a herdr client only talks to a herdr server of its own
 protocol, and an older herdr earlier on the PATH (`/usr/bin/herdr` 0.8.2
@@ -41,6 +44,12 @@ SNAPSHOT = ("api", "snapshot")
 AGENT_READ = ("agent", "read")
 AGENT_READ_AS = ("--source", "recent", "--format", "text")
 PROMPT = ("agent", "prompt")
+#: Answering a question dialog (#80): key presses to the agent (`SEND_KEYS` + pane id + keys), and the text of a
+#: free-text answer (`SEND_TEXT` + pane id + text), which `agent send-keys` cannot type.
+SEND_KEYS = ("agent", "send-keys")
+SEND_TEXT = ("pane", "send-text")
+#: The only keys the hub ever presses: an option's digit, Enter and Tab.
+_KEY = re.compile(r"[1-9]|enter|tab")
 TIMEOUT_S = 5.0
 #: A pane id as herdr writes them ("w8:p1"); anything else is never passed to herdr.
 _PANE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9:_.\-]*")
@@ -94,6 +103,15 @@ class Herdr(Protocol):
     def prompt(self, pane_id: str, text: str) -> None:
         """Submits `text` to the agent in `pane_id`, as typed and then Enter. Blocking. Raises HerdrRefused
         when herdr sent nothing, and HerdrError when it is not known whether the agent got it."""
+        ...
+
+    def send_keys(self, pane_id: str, keys: list[str]) -> None:
+        """Presses `keys` (herdr's key names: a digit, `enter`, `tab`) in the agent's terminal. Blocking. Raises
+        as `prompt` does."""
+        ...
+
+    def send_text(self, pane_id: str, text: str) -> None:
+        """Types `text`, as it is, into the terminal of the pane `pane_id`. Blocking. Raises as `prompt` does."""
         ...
 
 
@@ -268,16 +286,31 @@ class HerdrCli:
             raise HerdrError(f"cannot run {self.path}: {e}") from None
 
     def prompt(self, pane_id: str, text: str) -> None:
+        # herdr reads an argument starting with "-" as an option, so such a text is given a leading space.
+        self._write(PROMPT, pane_id, [f" {text}" if text.startswith("-") else text])
+
+    def send_keys(self, pane_id: str, keys: list[str]) -> None:
+        if not keys or not all(_KEY.fullmatch(k) for k in keys):
+            raise HerdrRefused("not_a_key", repr(keys))
+        self._write(SEND_KEYS, pane_id, list(keys))
+
+    def send_text(self, pane_id: str, text: str) -> None:
+        if not text or text.startswith("-") or any(c in text for c in "\r\n\x00"):
+            raise HerdrRefused("not_text", "an empty text, one starting with -, or one with a line break")
+        self._write(SEND_TEXT, pane_id, [text])
+
+    def _write(self, command: tuple[str, ...], pane_id: str, args: list[str]) -> None:
+        """Runs a herdr command that writes to the agent: `command`, the pane, then `args`."""
         if not _PANE_ID.fullmatch(pane_id):
             raise HerdrRefused("not_a_pane", repr(pane_id))
-        # herdr reads an argument starting with "-" as an option, so such a text is given a leading space.
-        argv = [self.path, *PROMPT, pane_id, f" {text}" if text.startswith("-") else text]
+        what = "herdr " + " ".join(command)
         try:
             result = self._run(
-                argv, capture_output=True, text=True, timeout=self._timeout, stdin=subprocess.DEVNULL,
+                [self.path, *command, pane_id, *args], capture_output=True, text=True, timeout=self._timeout,
+                stdin=subprocess.DEVNULL,
             )
         except subprocess.TimeoutExpired:
-            raise HerdrError(f"herdr agent prompt did not finish in {self._timeout:g} s") from None
+            raise HerdrError(f"{what} did not finish in {self._timeout:g} s") from None
         except (OSError, ValueError) as e:  # herdr never ran (a NUL in the text is a ValueError)
             raise HerdrRefused("not_run", str(e)) from None
         if result.returncode == 0:
@@ -287,7 +320,7 @@ class HerdrCli:
         code, message = prompt_error(result.stderr or result.stdout)
         if code in NOT_SENT:
             raise HerdrRefused(code, message)
-        raise HerdrError(f"herdr agent prompt: {code}: {message}")
+        raise HerdrError(f"{what}: {code}: {message}")
 
 
 def _error(text: str) -> str:

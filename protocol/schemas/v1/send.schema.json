@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:stsloop:protocol:v1:send",
   "title": "send",
-  "description": "Phone to hub, once welcomed: deliver a Draft to an agent Bucket (the `draft` Primitive's \"send\"). The hub answers with one `sent` carrying the same `key`. Unlike a `request`, a send changes the world, so it carries an idempotency key: the hub tries to deliver each key at most once, ever, and answers a key it has seen before with the answer it gave the first time, without trying again. The phone sends the same key again, unchanged, after a reconnect when no `sent` came, and a new key for every new \"send\". No capability is needed: a hub that declares a `draft` command answers it.",
+  "description": "Phone to hub, once welcomed: deliver a Draft to an agent Bucket (the `draft` Primitive's \"send\"). The hub answers with one `sent` carrying the same `key`. Unlike a `request`, a send changes the world, so it carries an idempotency key: the hub tries to deliver each key at most once, ever, and answers a key it has seen before with the answer it gave the first time, without trying again. The phone sends the same key again, unchanged, after a reconnect when no `sent` came, and a new key for every new \"send\". With `answer`, it answers the agent's question dialog instead (#80). No capability is needed: a hub that declares a `draft` command answers it.",
   "type": "object",
   "required": ["type", "key", "bucket", "text"],
   "properties": {
@@ -18,9 +18,40 @@
       "minLength": 1
     },
     "text": {
-      "description": "The Draft, as the person heard it read back: the prompt the agent is to receive.",
+      "description": "The Draft, as the person heard it read back: the prompt the agent is to receive. With `answer`, the answer as the person heard it read back: the hub's record of the send, never typed.",
       "type": "string",
       "minLength": 1
+    },
+    "answer": {
+      "description": "Present when the send answers the question dialog its Bucket's Descriptor shows (`dialog`, kind `question`; #80), instead of delivering `text` as a prompt: one choice per question, in order. The hub answers it only while that same dialog is open, and on screen, and refuses it otherwise. A hub that does not know this field sends `text` as a prompt, which herdr refuses while the agent is blocked on a dialog.",
+      "type": "object",
+      "required": ["dialog", "choices"],
+      "properties": {
+        "dialog": {
+          "description": "The `id` of the dialog it answers.",
+          "type": "string",
+          "minLength": 1
+        },
+        "choices": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/choice" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "choice": {
+      "description": "One question's answer: the `option` picked (1 is the first), or, for a question that takes one (`other`), a free-text `text`.",
+      "type": "object",
+      "oneOf": [
+        { "required": ["option"], "not": { "required": ["text"] } },
+        { "required": ["text"], "not": { "required": ["option"] } }
+      ],
+      "properties": {
+        "option": { "type": "integer", "minimum": 1 },
+        "text": { "type": "string", "minLength": 1 }
+      }
     }
   }
 }

@@ -27,7 +27,7 @@ class HubProvider(private val snapshot: Descriptors?) : Provider {
         }
         Descriptor(
             d.name, d.aliases, d.primitives.mapNotNull(Primitive::of).toSet(), hub = true,
-            id = d.id, commands = commands, degraded = degraded,
+            id = d.id, commands = commands, degraded = degraded, dialog = d.dialog,
         )
     }
 

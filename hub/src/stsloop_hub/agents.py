@@ -40,6 +40,13 @@ session in a herdr pane has no Bucket, so the agent does not appear twice.
   `herdr agent prompt`. Each key is delivered at most once by
   `sends.Deliveries`, not here. A session without herdr has no Draft: there
   is no way into its terminal, and its "send" is a `request` that says so.
+- **Dialogs** (#80). A blocked herdr agent's Descriptor shows its `dialog`:
+  the questions of Claude Code's question dialog, from the hooks, a
+  permission prompt, or `unknown`. It also declares "option one" … "option
+  four" and "my answer", which the phone runs to build an answer; a `send`
+  with an `answer` is typed into the dialog with herdr's keys
+  (`dialogs.py`), and refused for anything but that same question dialog.
+  "What does it say" reads a question dialog as it is, with no model.
 - **Alerts.** An agent seen to become blocked is raised (`take_raised`) for
   the hub to speak (`alerts.py`), once, whichever source saw it first. herdr
   alone: from another state, blocked again since the last poll, or new and
@@ -61,6 +68,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import PurePath
 
+from . import dialogs
 from . import protocol as p
 from .alerts import Raised
 from .buckets import HUB, Delivery, unknown_bucket, unknown_bucket_sent, unknown_command
@@ -89,6 +97,13 @@ READ_BACK = p.Command(id="read_back", phrases=("read it back",), primitive="draf
 #: "send it" first: "send" alone is heard 2 times in 6 on the dev phone (#82). The phone says the first phrase.
 SEND = p.Command(id="send", phrases=("send it", "send"), primitive="draft")
 CANCEL = p.Command(id="cancel", phrases=("cancel",), primitive="draft")
+#: Answering a question dialog (#80), also run by the phone: "option one" … "option four" pick an option of the
+#: question at hand (AskUserQuestion offers at most four), and "my answer" takes the Draft as a free-text answer.
+#: "send it" then sends the whole answer.
+OPTIONS = tuple(
+    p.Command(id=f"option_{n}", phrases=(f"option {dialogs.number(n)}",), primitive="draft") for n in range(1, 5)
+)
+MY_ANSWER = p.Command(id="my_answer", phrases=("my answer", "answer with my draft"), primitive="draft")
 #: "send it" to a session without herdr: a `request`, answered with why it cannot be sent.
 SEND_NEEDS_HERDR = p.Command(id="send", phrases=SEND.phrases, primitive="request")
 POLL_S = 2.0
@@ -98,6 +113,8 @@ GRACE = 3
 MISMATCH = p.HERDR_PROTOCOL_MISMATCH
 
 NOT_ANSWERING = "herdr is not answering."
+#: Said for an answer to a permission prompt: approving one is rung 5 of the ladder, which the hub never climbs.
+PERMISSION_REFUSED = "that's a permission prompt. I don't approve those."
 NOTHING_BLOCKED = "nothing is blocked."
 #: How each state is said after the agent's name.
 STATES = {
@@ -187,7 +204,10 @@ class AgentsProvider:
         sessions: Sessions | None = None,
         session_summaries: Summaries | None = None,
         alive: Callable[[int], bool] = process_alive,
+        sleep: Callable[[float], None] = time.sleep,
     ):
+        #: Waits between the keys of an answer (`dialogs.KEY_GAP_S`), off the event loop.
+        self._sleep = sleep
         self._herdr = herdr
         self._sessions = sessions
         #: Without a model, "what does it say" gives the state and the last line.
@@ -392,14 +412,31 @@ class AgentsProvider:
             base, n = self._names[bucket_id]
             name = f"{base} agent" if n == 0 else f"{base} agent {ORDINALS[n] if n < len(ORDINALS) else n + 1}"
             aliases = (base,) if n == 0 else ()
+            dialog = None
             if entry.pane is not None:
-                primitives, commands = ("draft", "request", "speak_item"), (STATUS, READ, READ_BACK, SEND, CANCEL)
+                primitives = ("draft", "request", "speak_item")
+                commands = (STATUS, READ, READ_BACK, SEND, CANCEL, *OPTIONS, MY_ANSWER)
+                dialog = self._dialog(bucket_id, entry)
             else:
                 primitives, commands = ("request", "speak_item"), (STATUS, READ, SEND_NEEDS_HERDR)
             out.append(p.Descriptor(
                 id=bucket_id, name=name, aliases=aliases, type=p.AGENT, primitives=primitives, commands=commands,
+                dialog=dialog,
             ))
         return tuple(out)
+
+    def _dialog(self, bucket_id: str, entry: _Entry) -> p.Dialog | None:
+        """The dialog the agent is blocked on, as the Descriptor shows it; None when it is not blocked. A question
+        only when the hooks say so and gave its questions; `unknown` when they cannot tell (herdr alone)."""
+        state = self.state(bucket_id)
+        if state is None or state.status != SESSION_BLOCKED:
+            return None
+        if state.why == PERMISSION:
+            return p.Dialog(kind=p.PERMISSION_DIALOG)
+        session = self._sessions.get(entry.session) if entry.session and self._sessions is not None else None
+        if state.why == QUESTION and session is not None and session.status == SESSION_BLOCKED and session.questions:
+            return p.Dialog(kind=p.QUESTION_DIALOG, id=session.dialog_id, questions=session.questions)
+        return p.Dialog(kind=p.UNKNOWN_DIALOG)
 
     # --- alerts -----------------------------------------------------------------------
 
@@ -452,6 +489,10 @@ class AgentsProvider:
         return p.Reply(id=request.id, say=self._status(name, state) + ".")
 
     async def _read(self, request: p.Request, name: str, state: State, entry: _Entry) -> p.Reply:
+        dialog = self._dialog(request.bucket, entry) if entry.pane is not None else None
+        if dialog is not None and dialog.kind == p.QUESTION_DIALOG:
+            # A question is read as it is, with its numbered options, so the person can answer it: no model.
+            return p.Reply(id=request.id, say=dialogs.reading(name, dialog.questions, MY_ANSWER.phrases[0]))
         # What the summary needs is taken here, on the event loop; the reading and the model run off it.
         status = self._status(name, state)
         if entry.pane is not None:
@@ -473,6 +514,8 @@ class AgentsProvider:
             return lambda: unknown_bucket_sent(send)
         if entry.pane is None or self._herdr is None:
             return lambda: p.Sent(key=send.key, reason="refused", say=f"sending to {name} needs herdr, so it was not sent.")
+        if send.answer is not None:
+            return self._prepare_answer(send, name, entry)
         herdr, pane_id = self._herdr, entry.pane
 
         def deliver() -> p.Sent:
@@ -486,6 +529,67 @@ class AgentsProvider:
                 return p.Sent(key=send.key, reason="uncertain", say=f"herdr did not confirm that {name} got it.")
             log.info("sent %s to %s (%s)", send.key, name, pane_id)
             return p.Sent(key=send.key, say=f"sent to {name}.")
+
+        return deliver
+
+    def _prepare_answer(self, send: p.Send, name: str, entry: _Entry) -> Delivery:
+        """On the event loop: the delivery of an answer to the question dialog the agent shows now. Anything but
+        that same question dialog is refused here: a permission prompt is rung 5, and a dialog the hub cannot
+        tell is never answered."""
+        assert send.answer is not None and entry.pane is not None and self._herdr is not None
+
+        def refused(say: str) -> Delivery:
+            log.info("refused the answer %s to %s: %s", send.key, entry.pane, say)
+            return lambda: p.Sent(key=send.key, reason="refused", say=say)
+
+        dialog = self._dialog(send.bucket, entry)
+        if dialog is None:
+            return refused(f"{name} is not asking anything now, so it was not sent.")
+        if dialog.kind == p.PERMISSION_DIALOG:
+            return refused(PERMISSION_REFUSED)
+        if dialog.kind != p.QUESTION_DIALOG:
+            return refused(f"I can't tell what {name} is asking, so it was not sent.")
+        if dialog.id != send.answer.dialog:
+            return refused(f"{name} is asking something else now, so it was not sent.")
+        try:
+            steps = dialogs.keys(dialog.questions, send.answer.choices)
+        except dialogs.Unfit as e:
+            return refused(f"that answer does not fit: {e}. it was not sent.")
+        herdr, pane_id, sleep = self._herdr, entry.pane, self._sleep
+
+        def deliver() -> p.Sent:
+            for n, step in enumerate(steps):
+                if n:
+                    sleep(dialogs.KEY_GAP_S)
+                if isinstance(step, dialogs.Key) and step.expects is not None:
+                    # Each digit only on the screen it answers: on a permission prompt "1" would approve it.
+                    try:
+                        shown = dialogs.shows(herdr.read(pane_id, dialogs.SCREEN_LINES), step.expects)
+                    except HerdrError as e:
+                        log.warning("could not read %s before key %d of %s: %s", pane_id, n + 1, send.key, e)
+                        if n == 0:
+                            return p.Sent(key=send.key, reason="refused", say=f"herdr could not show {name}'s screen, so it was not sent.")
+                        return p.Sent(key=send.key, reason="uncertain", say=f"herdr stopped partway through the answer; check {name}.")
+                    if not shown:
+                        log.warning("%s does not show what key %d of %s answers; stopping", pane_id, n + 1, send.key)
+                        if n == 0:
+                            return p.Sent(key=send.key, reason="refused", say=f"{name}'s screen does not show that question, so it was not sent.")
+                        return p.Sent(key=send.key, reason="uncertain", say=f"{name}'s dialog changed partway through the answer; check it.")
+                try:
+                    if isinstance(step, dialogs.Key):
+                        herdr.send_keys(pane_id, [step.key])
+                    else:
+                        herdr.send_text(pane_id, step.text)
+                except HerdrRefused as e:
+                    log.warning("herdr refused key %d of the answer %s to %s: %s", n + 1, send.key, pane_id, e)
+                    if n == 0:
+                        return p.Sent(key=send.key, reason="refused", say=_refused(name, e.code))
+                    return p.Sent(key=send.key, reason="uncertain", say=f"herdr stopped partway through the answer; check {name}.")
+                except HerdrError as e:
+                    log.warning("herdr did not confirm key %d of the answer %s to %s: %s", n + 1, send.key, pane_id, e)
+                    return p.Sent(key=send.key, reason="uncertain", say=f"herdr did not confirm that {name} got the answer.")
+            log.info("answered %s's dialog %s (%s, %d keys)", name, send.answer.dialog, send.key, len(steps))
+            return p.Sent(key=send.key, say=f"answered {name}.")
 
         return deliver
 
