@@ -4,7 +4,13 @@ An audio-first personal context hub: a continuous speech-to-speech loop that
 mediates between you and the streams of information, attention demands, and
 capture surfaces in your life — hands-free and eyes-free.
 
-**Status: Phase 0 (the MVP) is built and in driving trials.** The Android app
+**Try it:** [Quick start](#quick-start) gets you talking to it in about
+fifteen minutes, and [Spoken commands](#spoken-commands) lists everything you
+can say.
+
+**Status: v0.1 is built and in daily use by its author.** Signed APKs are on
+[GitHub releases](https://github.com/walnutgeek/stsloop/releases/latest).
+Phase 0 built the loop: the Android app
 runs the whole loop on the phone, offline. It records each Turn, transcribes it
 on-device (sherpa-onnx, Nemotron 0.6B streaming), reads it back, and stores
 audio and transcript in an append-only Corpus. Naming a Bucket at the start or
@@ -15,7 +21,7 @@ bucket"), "inbox" and "stop listening". In the car it uses the hands-free
 mic and speaker. The loop says aloud when the mic or its speech fails silently.
 A script loads the pulled Corpus on Linux.
 
-**Next: v0.1, supervising coding agents from the car** ([`docs/mvp.md`](./docs/mvp.md)):
+**v0.1, supervising coding agents from the car** ([`docs/mvp.md`](./docs/mvp.md)):
 a hub on your own machine publishes your herdr and Claude Code sessions as
 Buckets, the loop tells you when one is blocked, and you answer by voice.
 
@@ -36,6 +42,99 @@ To build and install it, see [Development setup](#development-setup).
 | [`docs/adr/`](./docs/adr/) | Architectural decisions and the alternatives rejected |
 | [`docs/research/`](./docs/research/) | Primary-source verification of load-bearing technical claims |
 | [`docs/brainstorm/`](./docs/brainstorm/) | The original exploratory session, and Phase 0 findings that push on the vision. **Inputs, not requirements** |
+
+## Quick start
+
+You need an Android phone (Android 12 or later, 64-bit ARM) and, for the
+agent features, the Linux machine where your coding agents run (macOS is untested). Capture
+alone (steps 1–3) needs no machine at all.
+
+1. **Install the app.** On the phone, download the `.apk` from the
+   [latest release](https://github.com/walnutgeek/stsloop/releases/latest)
+   and open it. Android asks you to allow installs from your browser. Play
+   Protect may warn about an app it hasn't seen; the APK is signed, and its
+   source is this repo.
+2. **Let it download its speech models.** On first run the app downloads
+   about 465 MB, once, by itself on Wi-Fi (on mobile data it asks first).
+   Allow the microphone and notifications when asked.
+3. **Talk to it.** Tap **Start**. Say something, pause, and hear it read
+   back. Say "errands", pause, then "order roofing screws": the second Turn
+   is filed in errands. Say "stop listening" to end. It works best through a
+   car's hands-free; a phone mic in a moving car hears poorly.
+4. **Install the hub** on the machine where your agents run. It needs
+   [uv](https://docs.astral.sh/uv/) and [Tailscale](https://tailscale.com)
+   on both that machine and the phone, signed in to the same tailnet. For
+   agents to appear, it needs [herdr](https://herdr.dev/),
+   Claude Code, or both.
+
+   ```sh
+   uv tool install "git+https://github.com/walnutgeek/stsloop#subdirectory=hub"
+   stsloop-hub init     # asks before adding Claude Code hooks; prints a QR code
+   stsloop-hub serve    # keep it running
+   ```
+
+5. **Pair.** In the app, open **Settings**, tap **Pair with hub** and scan
+   the QR code. The phone says "ready, N agents." If it can't connect, it
+   shows a dialog: check that Tailscale is on, on the phone too, and that
+   `stsloop-hub serve` is running, then tap **Retry**.
+6. **Supervise an agent.** Start a Session and say "what's blocked". Name an
+   agent ("stsloop agent") to focus it, then say "status" or "what does it
+   say". Dictate a reply, say "read it back", then "send it". When an agent
+   becomes blocked, the loop tells you in the next pause.
+
+Updating later: install the new APK over the old one (your recordings are
+kept), and run `uv tool upgrade stsloop-hub`, then restart `serve`.
+
+## Spoken commands
+
+A command is obeyed only when it is everything you said, give or take "um"
+or "okay" at either end. Otherwise what you said is kept as a Note, so a
+sentence that merely contains a command phrase is never lost. The first
+phrase in each row is the one the recogniser hears every time on the dev
+phone; the ones in brackets also work but are heard less reliably.
+
+**Anywhere**, whatever has Focus:
+
+| Say | What happens |
+| --- | --- |
+| a Bucket's name on its own: "errands", "stsloop agent", "the hub" | Focus that Bucket; the loop says its name |
+| "inbox" | Focus the Inbox |
+| "where am I" ("what bucket", "which bucket") | Say which Bucket has Focus |
+| "scratch that" ("discard that") | Drop the last Turn read back to you (it stays in the Corpus, struck through) |
+| "repeat" ("say that again") | Read the last Turn back again |
+| "stop listening" ("end session") | End the Session |
+| "what's blocked" ("what is blocked") | List the blocked agents (needs the hub) |
+| "how is the hub" ("hub status", "hub health") | The hub in one line: "hub connected, 6 agents, 2 blocked." |
+| "details of the hub" ("hub details", "hub info") | Connected for how long or the last failure, herdr, the Claude Code hooks, Turns waiting to upload |
+
+**Filing Notes** in a capture Bucket (by default errands, house project,
+work and ideas; edit them in Settings):
+
+| Say | What happens |
+| --- | --- |
+| "errands, buy screws" or "buy screws, errands" | File this one Turn in errands; Focus doesn't move |
+| anything, while a capture Bucket has Focus | File it there as a Note |
+| "summarize bucket" ("summarize", "sum it up") | A short summary of the Notes said here since the last summary |
+
+**With an agent focused** (a herdr agent or a Claude Code session):
+
+| Say | What happens |
+| --- | --- |
+| "status" | Blocked, working or done, and for how long |
+| "what does it say" ("read it", "summarize bucket") | A sentence or two on the agent's screen, or its question and numbered options |
+| anything else | Added to your Draft reply |
+| "read it back" | Read the Draft |
+| "send it" ("send") | Read the Draft back, then send it to the agent, exactly once (needs herdr) |
+| "cancel" | Drop the Draft or the chosen answer |
+| "option one" … "option four" | Choose an option in the agent's question dialog; then "send it" |
+| "my answer" ("answer with my draft") | Use the Draft as the free-text answer to the dialog's question |
+| "quiet" ("mute alerts") / "unmute" ("unmute alerts") | Mute or unmute this agent's blocked alerts |
+
+Focus goes back to the Inbox after two minutes without speech (adjustable in
+Settings), and the loop says "back to inbox." An unsent Draft is kept and
+announced, never sent. Permission prompts are never approved by voice. A
+Bucket name the recogniser mishears is flagged in Settings, and the phone
+learns the way it actually hears it ("STS loop agent").
 
 ## In one page
 
